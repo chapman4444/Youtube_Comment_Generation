@@ -1,0 +1,129 @@
+# Spoken filler that omit_words.txt does not carry.
+#
+# Added here rather than edited into omit_words.txt so that file stays byte
+# identical to the copy in the parse_words project and can still be diffed
+# against it. Loaded by default alongside it.
+#
+# Everything here is a word people say while thinking, or a verb so general it
+# tells you nothing about a video's subject. Topic words are never added: on a
+# police video "police", "criminal", "case" and "report" all stay.
+#
+# Deliberately NOT here: people, real, right, part, one, time, way,
+# whole, great, huge, little, good. Each can be what a video is about,
+# and a filtered topic word is signal that vanishes without a trace,
+# where a surviving filler word is one line the reader skips.
+#
+# Measured, not guessed, by tools/measure_filler.py over 16 transcripts:
+# a word is filler when it appears in nearly every video AND its busiest
+# video uses it at close to its median rate. Document frequency alone is
+# not enough — on a corpus about one story, ben appears in 14 of 16.
+#
+# right, one, first, lets and happened are here because the corpus says
+# so. people, way, part, time and good are not, for the same reason:
+# they appear everywhere but spike 4x-5x where they are the subject.
+#
+# The corpus is 16 videos about largely one story, so this is provisional.
+# Re-run the tool when there are transcripts from unrelated channels.
+actually
+alright
+anyway
+anyways
+basically
+bit
+called
+came
+can
+come
+comes
+coming
+completely
+definitely
+even
+first
+gave
+get
+gets
+getting
+give
+gives
+go
+goes
+going
+gone
+got
+gotta
+gotten
+guess
+guys
+happened
+kind
+kinda
+know
+known
+knows
+lets
+literally
+look
+looked
+looking
+looks
+lot
+lots
+made
+make
+makes
+making
+maybe
+mean
+means
+much
+need
+needed
+needs
+nope
+obviously
+one
+pretty
+probably
+put
+puts
+putting
+really
+right
+said
+saw
+say
+saying
+says
+see
+seeing
+seen
+sort
+sorta
+stuff
+sure
+take
+taken
+takes
+taking
+tell
+telling
+tells
+thing
+things
+think
+thinking
+thinks
+thought
+told
+took
+totally
+try
+trying
+want
+wanted
+wants
+well
+went
+yep
+yup

@@ -1,0 +1,157 @@
+"""Staged, atomic artifact commit on a real filesystem.
+
+A half-written output set is worse than none: the operator cannot tell which
+half is stale.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from llm_youtube_comment_generation.domain.errors import ConfigurationError
+from llm_youtube_comment_generation.infrastructure.filesystem_artifacts import (
+    FilesystemArtifactStore,
+    atomic_write,
+    unique_run_root,
+)
+
+
+def test_nothing_is_visible_until_commit(tmp_path):
+    store = FilesystemArtifactStore(tmp_path / "run")
+    store.stage("packet.md", "content")
+
+    assert not (tmp_path / "run" / "packet.md").exists()
+
+    assert store.commit() == ("packet.md",)
+    assert store.read("packet.md") == "content"
+
+
+def test_rollback_leaves_the_previous_output_intact(tmp_path):
+    root = tmp_path / "run"
+    store = FilesystemArtifactStore(root)
+    store.stage("packet.md", "first run")
+    store.commit()
+
+    second = FilesystemArtifactStore(root)
+    second.stage("packet.md", "second run")
+    second.rollback()
+
+    assert (root / "packet.md").read_text(encoding="utf-8") == "first run"
+
+
+def test_a_failed_commit_restores_what_was_there_before(tmp_path, monkeypatch):
+    root = tmp_path / "run"
+    first = FilesystemArtifactStore(root)
+    first.stage("packet.md", "first run")
+    first.stage("report.md", "first report")
+    first.commit()
+
+    second = FilesystemArtifactStore(root)
+    second.stage("packet.md", "second run")
+    second.stage("report.md", "second report")
+
+    real_write = atomic_write
+    calls = {"n": 0}
+
+    def failing_write(path, text):
+        calls["n"] += 1
+        if calls["n"] == 2:                 # fail partway through the set
+            raise OSError("disk full")
+        return real_write(path, text)
+
+    monkeypatch.setattr(
+        "llm_youtube_comment_generation.infrastructure."
+        "filesystem_artifacts.atomic_write",
+        failing_write,
+    )
+
+    with pytest.raises(OSError):
+        second.commit()
+
+    assert (root / "packet.md").read_text(encoding="utf-8") == "first run"
+    assert (root / "report.md").read_text(encoding="utf-8") == "first report"
+
+
+def test_atomic_write_leaves_no_partial_file_on_failure(tmp_path, monkeypatch):
+    target = tmp_path / "out.md"
+
+    def exploding_replace(source, destination):
+        raise OSError("no")
+
+    monkeypatch.setattr("os.replace", exploding_replace)
+
+    with pytest.raises(OSError):
+        atomic_write(target, "content")
+
+    assert not target.exists()
+    assert list(tmp_path.glob(".*partial")) == []
+
+
+def test_atomic_write_replaces_existing_content(tmp_path):
+    target = tmp_path / "out.md"
+    atomic_write(target, "first")
+    atomic_write(target, "second")
+
+    assert target.read_text(encoding="utf-8") == "second"
+
+
+def test_a_directory_holding_foreign_files_is_refused(tmp_path):
+    """Explaining where somebody's files went is more expensive than refusing."""
+
+    root = tmp_path / "run"
+    root.mkdir()
+    (root / "holiday.jpg").write_bytes(b"not ours")
+
+    store = FilesystemArtifactStore(root)
+    store.stage("packet.md", "content")
+
+    with pytest.raises(ConfigurationError, match="did not write"):
+        store.commit()
+
+    assert (root / "holiday.jpg").exists()
+
+
+def test_our_own_artifacts_may_be_replaced(tmp_path):
+    root = tmp_path / "run"
+    first = FilesystemArtifactStore(root)
+    first.stage("packet.md", "first")
+    first.commit()
+
+    second = FilesystemArtifactStore(root)
+    second.stage("packet.md", "second")
+
+    assert second.commit() == ("packet.md",)
+    assert second.read("packet.md") == "second"
+
+
+def test_a_run_root_never_collides(tmp_path):
+    """The second run of a video is usually the one made after noticing
+    something wrong with the first."""
+
+    first = unique_run_root(tmp_path, "gC-J7zwYMAM", "20260727-120000")
+    first.mkdir(parents=True)
+    second = unique_run_root(tmp_path, "gC-J7zwYMAM", "20260727-120000")
+
+    assert first != second
+    assert not second.exists()
+
+
+def test_artifact_names_must_be_plain(tmp_path):
+    """A name with a path in it would escape the run directory."""
+
+    store = FilesystemArtifactStore(tmp_path)
+
+    for bad in ("../escape.md", "sub/dir.md"):
+        with pytest.raises(ConfigurationError, match="plain"):
+            store.stage(bad, "x")
+
+
+def test_files_are_written_with_unix_newlines(tmp_path):
+    """A packet is pasted into a web form; stray carriage returns travel."""
+
+    store = FilesystemArtifactStore(tmp_path / "run")
+    store.stage("packet.md", "line one\nline two\n")
+    store.commit()
+
+    raw = (tmp_path / "run" / "packet.md").read_bytes()
+    assert b"\r\n" not in raw

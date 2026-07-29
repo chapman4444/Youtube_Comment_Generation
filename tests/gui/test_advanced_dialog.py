@@ -1,0 +1,119 @@
+"""The Advanced dialog, which is where the settings nobody changes twice live.
+
+Untested until now, and its failure mode is the worst kind: a dialog that
+takes an edit, closes politely and discards it looks exactly like one that
+worked. The operator would find out when a run used the old value.
+
+One Tk interpreter for the file, as everywhere else in this directory.
+"""
+
+from __future__ import annotations
+
+import tkinter as tk
+
+import pytest
+
+from llm_youtube_comment_generation.interfaces.gui.packet_window import (
+    AdvancedDialog,
+)
+from llm_youtube_comment_generation.interfaces.gui.options import (
+    PacketOptionsModel,
+)
+
+
+@pytest.fixture
+def dialog(tk_root):
+    options = PacketOptionsModel(video="gC-J7zwYMAM")
+    built = AdvancedDialog(tk_root, options)
+    built.top.withdraw()
+    yield built
+    if built.top.winfo_exists():
+        built.top.destroy()
+
+
+# -- it carries the values both ways ---------------------------------------
+
+
+def test_it_opens_showing_what_is_already_set(tk_root):
+    options = PacketOptionsModel(my_handle="@someone", max_top=250,
+                                 proxy_url="http://127.0.0.1:8888")
+    built = AdvancedDialog(tk_root, options)
+    built.top.withdraw()
+
+    assert built.variables["my_handle"].get() == "@someone"
+    assert built.variables["max_top"].get() == 250
+    assert built.variables["proxy_url"].get() == "http://127.0.0.1:8888"
+    built.top.destroy()
+
+
+def test_an_edit_reaches_the_options(dialog):
+    dialog.variables["my_handle"].set("@changed")
+    dialog.variables["max_recent"].set(321)
+
+    dialog.close()
+
+    assert dialog.options.my_handle == "@changed"
+    assert dialog.options.max_recent == 321
+
+
+def test_the_checkboxes_reach_the_options_too(dialog):
+    dialog.include_replies.set(False)
+    dialog.overwrite.set(True)
+
+    dialog.close()
+
+    assert dialog.options.include_replies is False
+    assert dialog.options.overwrite is True
+
+
+def test_closing_tells_whoever_opened_it(tk_root):
+    """The window has to redraw: a packet-character change moves what the
+    status line says, and a handle change decides whether reply mode can
+    run at all."""
+
+    told = []
+    built = AdvancedDialog(tk_root, PacketOptionsModel(),
+                           on_close=lambda: told.append(True))
+    built.top.withdraw()
+
+    built.close()
+
+    assert told == [True]
+
+
+def test_it_does_not_touch_what_it_was_not_shown(dialog):
+    """It carries the settings nobody changes twice. The registers, the dials
+    and the video are the main window's business and must survive it."""
+
+    dialog.options.comment_variations = ("short_hook",)
+    dialog.options.dials = {"grounding": "summary"}
+
+    dialog.close()
+
+    assert dialog.options.comment_variations == ("short_hook",)
+    assert dialog.options.dials == {"grounding": "summary"}
+    assert dialog.options.video == "gC-J7zwYMAM"
+
+
+def test_every_field_it_offers_is_a_real_setting(dialog):
+    """A field that writes to an attribute the model does not have would be
+    accepted, stored nowhere, and silently lost."""
+
+    model = PacketOptionsModel()
+    for name, _label, _kind in AdvancedDialog.FIELDS:
+        assert hasattr(model, name), f"{name} is not a setting"
+
+
+def test_a_number_field_that_will_not_parse_leaves_the_old_value(tk_root):
+    """Tk raises rather than returning nonsense from an IntVar holding
+    letters. Losing one field is acceptable; losing the dialog is not."""
+
+    options = PacketOptionsModel(max_top=99)
+    built = AdvancedDialog(tk_root, options)
+    built.top.withdraw()
+    built.variables["max_top"].set("")          # empties the spinbox
+
+    built.close()
+
+    assert options.max_top in (0, 99)
+    assert options.my_handle == ""

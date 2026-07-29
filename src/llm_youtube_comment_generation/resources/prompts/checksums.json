@@ -1,0 +1,46 @@
+{
+  "comment_final_check.md": {
+    "changed": "2026-07-28, at the operator's request: replaced late check amendments with placeholders rendered directly from the resolved prompt specification.",
+    "characters": 787,
+    "lines": 20,
+    "migrated_characters": 1027,
+    "migrated_sha256": "203267bb036bbae8f7dc638326f74ae471b4dec1b53e6bf477ec520890fa3cf5",
+    "sha256": "e5c70739141b2a47fc35553ac4a5077e337ec179bc96e60297254fed11845289",
+    "source_constant": "FINAL_OUTPUT_CHECK_TEMPLATE",
+    "source_module": "youtube_video_comment"
+  },
+  "comment_workflow.md": {
+    "changed": "2026-07-28, at the operator's request: structural prompt sections now come from one resolved option specification; added top-level comment-ID deduplication guidance.",
+    "characters": 6691,
+    "lines": 154,
+    "migrated_characters": 10369,
+    "migrated_sha256": "a686a38153fe0e02eddbc52f50314d568ecd5c879b4063c4c766f0c4c4b5fd2b",
+    "sha256": "97f361e2b8c12bc8eab1bf6174a091f8b7257ebf262a4e8feb44dcb060d2f9ee",
+    "source_constant": "COMMENT_WORKFLOW_TEMPLATE",
+    "source_module": "youtube_video_comment"
+  },
+  "reply_final_check.md": {
+    "changed": "2026-07-28, at the operator's request: added the {check_option_overrides} placeholder so a run's dials can amend the checks instead of contradicting them. No existing check was reworded.",
+    "characters": 1257,
+    "lines": 24,
+    "migrated_characters": 1233,
+    "migrated_sha256": "dd57fbc9e190e1b10bc92105ea04ec4a19bd8b165d44c3d0b569f9c3e6001696",
+    "sha256": "1e798fd831a56652cc6574960cbb29e7ae2352f1327f353a94b1793d120830f7",
+    "source_constant": "FINAL_OUTPUT_CHECK_TEMPLATE",
+    "source_module": "youtube_video_reply"
+  },
+  "reply_triage.md": {
+    "characters": 1799,
+    "lines": 46,
+    "sha256": "e5a8ec55d32f7ad7c3e79093ea48d7599a594391e94c81089089fef75a3fcdf9",
+    "source_constant": "TRIAGE_PROMPT",
+    "source_module": "youtube_video_reply"
+  },
+  "reply_workflow.md": {
+    "characters": 11724,
+    "lines": 253,
+    "sha256": "2f21a811507188d910e0ae7c0274c7fd865a91046c0cd74b8073e767f449a39f",
+    "source_constant": "REPLY_WORKFLOW_TEMPLATE",
+    "source_module": "youtube_video_reply"
+  }
+}

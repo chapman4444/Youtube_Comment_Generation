@@ -1,0 +1,57 @@
+{
+  "_comment": [
+    "Placeholders are declared, not discovered. The loader refuses a resource",
+    "containing an undeclared placeholder, and the validator refuses a packet",
+    "in which any placeholder survived. Both directions matter: an undeclared",
+    "placeholder means the renderer does not know to fill it, and a surviving",
+    "placeholder means a literal {brace} shipped to the model.",
+    "The legacy application had three constants that had to agree about the",
+    "same variation count. They disagreed twice in one day and the second",
+    "disagreement shipped: a packet asked for four sections and then ordered",
+    "the model to produce five. Declaring the contract here is what makes that",
+    "disagreement unrepresentable."
+  ],
+  "comment_workflow.md": {
+    "placeholders": [
+      "critique_contract",
+      "final_contract",
+      "grounding_contract",
+      "length_rule",
+      "output_directives",
+      "variation_specs"
+    ],
+    "required": true
+  },
+  "comment_final_check.md": {
+    "placeholders": [
+      "check_count",
+      "check_substance",
+      "check_waiver",
+      "critique_check",
+      "final_check",
+      "option_checks",
+      "structure_check"
+    ],
+    "required": true
+  },
+  "reply_workflow.md": {
+    "placeholders": [
+      "check_count",
+      "output_directives",
+      "variation_specs"
+    ],
+    "required": false
+  },
+  "reply_final_check.md": {
+    "placeholders": [
+      "check_count",
+      "check_option_overrides",
+      "check_waiver"
+    ],
+    "required": false
+  },
+  "reply_triage.md": {
+    "placeholders": [],
+    "required": false
+  }
+}

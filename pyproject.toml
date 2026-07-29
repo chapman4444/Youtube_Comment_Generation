@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-youtube-comment-generation"
+version = "0.1.0"
+description = "YouTube comment and reply packet builder"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+# requests arrives in Phase 3 with the YouTube adapter. The domain and ports
+# layers still import nothing outside the standard library, and the
+# import-direction contract test enforces that rather than trusting it.
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+test = ["pytest>=7.4"]
+# The caption library is optional on purpose: a missing transcript is an
+# ordinary outcome and must not stop the application running. `doctor`
+# reports its absence as a fact.
+transcripts = ["youtube-transcript-api>=1.0"]
+
+[project.scripts]
+ytcomment = "llm_youtube_comment_generation.interfaces.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"llm_youtube_comment_generation.resources" = [
+    "prompts/*.md",
+    "prompts/*.json",
+    "wordlists/*.txt",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/ on the path so the guards' negative proofs can import the same
+# harness_support module the fixtures use. src/ is deliberately NOT here: the
+# package must come from the editable install, or the install is never tested.
+pythonpath = ["tests"]
+# -ra so a skip is reported rather than absorbed into a green dot. The legacy
+# suite hid a broken Tk installation behind a skip for as long as it existed.
+addopts = "-ra --strict-markers"
+markers = [
+    "opens_for_real: exercises a launcher itself and opts out of the desktop guard",
+    "allows_network: genuinely needs a socket and opts out of the network guard",
+]

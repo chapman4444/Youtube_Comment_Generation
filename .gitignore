@@ -1,0 +1,65 @@
+# Nothing here is about tidiness. Every line is something that must not be
+# published, and there was no .gitignore at all until the operator pointed out
+# he intends to share this repository.
+
+# ---------------------------------------------------------------- other people
+# Fetched comment sections. Hundreds of real YouTube users' display names and
+# their words, gathered to build one packet. It is not ours to republish, and
+# it is the single largest thing in this tree.
+output/
+ab_compare/
+previous_runs/
+packets_for_review.zip
+
+# ------------------------------------------------------------------- the operator
+# His own drafts and what he did with them. This is measurement data, not
+# code, and it is irreplaceable -- ignoring it here keeps it off GitHub, it
+# does NOT delete it and nothing in this project ever should.
+posted_history.json
+engagement_history.sqlite3
+replies_to_review.md
+comment_drafts.md
+
+# Settings resolve from the user config directory, but a local override file
+# would carry a handle, an output path, possibly a proxy with credentials in
+# the URL.
+youtube_packet_settings.json
+window_settings.json
+settings.json
+.env
+
+# ----------------------------------------------------------------- credentials
+# The API key lives in the environment. These exist so that a key written to a
+# file by mistake does not become a commit.
+*.key
+YOUTUBE_API_KEY.txt
+*api_key*
+
+# --------------------------------------------------------------------- caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Whisper model downloads and the audio it transcribes. Large, re-derivable,
+# and the audio is somebody else's video.
+models/
+*.m4a
+*.webm
+*.mp3
+*.wav
+
+# Editors and Windows
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
