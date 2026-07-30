@@ -532,6 +532,13 @@ def test_preset_selection_is_immediate_and_has_no_ambiguous_apply_button(window)
     assert "Save preset..." in button_text
 
 
+def test_applying_a_preset_reports_how_many_approaches_it_selected(window):
+    window.preset_name.set("Concise and direct")
+    window.apply_selected_preset()
+
+    assert "3 approaches" in window.status.get()
+
+
 def test_every_approach_displays_its_backend_dimension(window):
     from llm_youtube_comment_generation.domain.writing_options import (
         VARIATION_LIBRARY,

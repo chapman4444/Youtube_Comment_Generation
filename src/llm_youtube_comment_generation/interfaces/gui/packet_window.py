@@ -1203,7 +1203,9 @@ class PacketWindow:
             box.set(dial_choice_label(self.options.dial_values()[name]))
         self._fill_approaches()
         self.preset_name.set(preset.name)
-        self.say(f"Applied preset: {preset.name}.")
+        count = len(self.options.registers_for(self.mode.get()))
+        noun = "approach" if count == 1 else "approaches"
+        self.say(f"Applied preset: {preset.name} ({count} {noun}).")
         self.refresh()
 
     def save_current_preset(self) -> None:
@@ -1989,6 +1991,8 @@ class PacketWindow:
             return
 
         if getattr(getattr(result, "status", None), "value", "") == "refused":
+            if getattr(session, "debug_build", False):
+                self._set_evidence_view("debug", session.debug_bundle())
             self.say(session.state.last_error
                      or "That paste could not be used.")
             self.refresh()

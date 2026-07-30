@@ -3,12 +3,33 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Mapping
 
 
 DEBUG_PACKET_FILENAME = "debug_packet.md"
 DEBUG_RESPONSE_FILENAME = "debug_model_response.md"
+DEBUG_REJECTED_RESPONSE_FILENAME = "debug_model_response_rejected.md"
 DEBUG_BUNDLE_FILENAME = "debug_bundle.md"
+
+
+def debug_report_problem(text: str) -> str:
+    """Return a precise failure when a diagnostic response omits its report."""
+
+    body = str(text or "").replace("\r\n", "\n")
+    report = list(re.finditer(r"(?im)^###\s+debug\s+report\s*$", body))
+    final = list(re.finditer(r"(?im)^###\s+hardened\s+final\s*$", body))
+    if len(report) != 1:
+        return (
+            "A Debug build requires exactly one '### Debug report' section "
+            "before '### Hardened final'."
+        )
+    if not final or report[0].start() > final[-1].start():
+        return (
+            "The Debug report must appear before '### Hardened final', which "
+            "must remain the final section."
+        )
+    return ""
 
 
 def render_debug_packet(
@@ -39,7 +60,8 @@ def render_debug_packet(
         "- the specific change that would most improve the next build.",
         "",
         "The Debug report is for the developer, not for posting. Do not put it "
-        "inside the Hardened final.",
+        "inside the Hardened final. It is mandatory: an answer without exactly "
+        "one `### Debug report` before `### Hardened final` will be rejected.",
         "",
         "## Safe debug context",
         "",
@@ -70,6 +92,7 @@ def render_debug_bundle(
     packet_text: str,
     response_text: str,
     draft: str,
+    rejection_reason: str = "",
 ) -> str:
     """Render one shareable record without secrets, local paths, or credentials."""
 
@@ -80,6 +103,7 @@ def render_debug_bundle(
                                     sort_keys=True)),
         ("Exact debug packet", packet_text.rstrip()),
         ("Complete model response", response_text.rstrip()),
+        ("Response status", rejection_reason or "Accepted."),
         ("Saved Hardened final", draft.rstrip()),
     )
     lines = ["# Debug build bundle", ""]

@@ -130,4 +130,5 @@ def test_debug_build_stages_a_diagnostic_packet_without_replacing_packet():
     debug_packet = artifacts.read("debug_packet.md")
     assert "## Debug-build instructions" in debug_packet
     assert "### Debug report" in debug_packet
+    assert "will be rejected" in debug_packet
     assert result.value["debug_packet"] == debug_packet

@@ -151,3 +151,22 @@ def test_debug_build_saves_the_complete_response_and_shareable_bundle():
     assert "## Safe build settings" in bundle
     assert "## Complete model response" in bundle
     assert raw_answer in bundle
+
+
+def test_debug_build_preserves_a_rejected_response_and_explains_why():
+    one = make_session()
+    one.debug_build = True
+    one.start()
+    missing_report = (
+        f"{VIDEO_LINE}\n\n### Hardened final\n"
+        "A finished comment ready to post."
+    )
+
+    result = one.submit(missing_report)
+
+    assert result.status.value == "refused"
+    assert "### Debug report" in one.state.last_error
+    assert one.artifacts.read("debug_model_response_rejected.md") == missing_report
+    bundle = one.artifacts.read("debug_bundle.md")
+    assert "Response status" in bundle
+    assert "requires exactly one" in bundle

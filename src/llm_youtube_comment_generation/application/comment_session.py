@@ -42,7 +42,9 @@ from ..domain.workflow import (
 from ..ports.events import EventKind, ProgressEvent
 from .debug_build import (
     DEBUG_BUNDLE_FILENAME,
+    DEBUG_REJECTED_RESPONSE_FILENAME,
     DEBUG_RESPONSE_FILENAME,
+    debug_report_problem,
     render_debug_bundle,
 )
 
@@ -82,6 +84,7 @@ class CommentSession:
     state: WorkflowState = field(default_factory=WorkflowState)
     accepted: list[AcceptedComment] = field(default_factory=list)
     debug_response: str = ""
+    debug_rejection: str = ""
 
     def start(self) -> WorkflowState:
         """Move to "the packet is ready", which is where this begins.
@@ -125,9 +128,14 @@ class CommentSession:
 
         result = OperationResult()
         self.state.apply(Intent.SUBMIT_PERSON_ANSWER)
+        if self.debug_build:
+            self.debug_response = text
+            self.debug_rejection = ""
 
         if looks_like_packet_text(text, self.packet_text):
-            reject_answer(self.state, "that is the packet, not an answer to it")
+            reason = "that is the packet, not an answer to it"
+            reject_answer(self.state, reason)
+            self._save_debug_rejection(reason)
             result.status = OperationStatus.REFUSED
             result.value = self.state
             self._emit(EventKind.WARNING, "comment",
@@ -141,6 +149,7 @@ class CommentSession:
         )
         if identification_problem:
             reject_answer(self.state, identification_problem)
+            self._save_debug_rejection(identification_problem)
             result.status = OperationStatus.REFUSED
             result.value = self.state
             self._emit(
@@ -150,21 +159,28 @@ class CommentSession:
             )
             return result
 
+        if self.debug_build and (problem := debug_report_problem(text)):
+            reject_answer(self.state, problem)
+            self._save_debug_rejection(problem)
+            result.status = OperationStatus.REFUSED
+            result.value = self.state
+            self._emit(EventKind.WARNING, "comment", "debug report missing")
+            return result
+
         draft = extract_hardened_final(text)
         if not draft:
-            reject_answer(
-                self.state,
+            reason = (
                 "no '### Hardened final' section was found, so there is "
-                "nothing safe to take as the comment",
+                "nothing safe to take as the comment"
             )
+            reject_answer(self.state, reason)
+            self._save_debug_rejection(reason)
             result.status = OperationStatus.REFUSED
             result.value = self.state
             self._emit(EventKind.WARNING, "comment", "no Hardened final found")
             return result
 
         accept_answer(self.state, draft)
-        if self.debug_build:
-            self.debug_response = text
         self.accepted.append(AcceptedComment(
             draft=draft,
             video_id=str(self.video.get("video_id", "")),
@@ -247,6 +263,7 @@ class CommentSession:
             packet_text=self.packet_text,
             response_text=self.debug_response,
             draft=self.accepted[-1].draft if self.accepted else "",
+            rejection_reason=self.debug_rejection,
         )
 
     # -- internals -------------------------------------------------------
@@ -258,6 +275,16 @@ class CommentSession:
         if self.debug_build and self.debug_response:
             self.artifacts.stage(DEBUG_RESPONSE_FILENAME, self.debug_response)
             self.artifacts.stage(DEBUG_BUNDLE_FILENAME, self.debug_bundle())
+        self.artifacts.commit()
+
+    def _save_debug_rejection(self, reason: str) -> None:
+        """Keep a failed diagnostic answer and its exact refusal reason."""
+
+        if not self.debug_build or self.artifacts is None:
+            return
+        self.debug_rejection = reason
+        self.artifacts.stage(DEBUG_REJECTED_RESPONSE_FILENAME, self.debug_response)
+        self.artifacts.stage(DEBUG_BUNDLE_FILENAME, self.debug_bundle())
         self.artifacts.commit()
 
     def _emit(self, kind: EventKind, step: str, message: str) -> None:

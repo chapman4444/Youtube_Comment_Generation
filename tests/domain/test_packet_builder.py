@@ -124,6 +124,19 @@ def test_a_custom_selection_asks_for_exactly_that_selection(templates):
     assert "Dry joke" not in packet.instructions
 
 
+def test_the_response_count_is_rendered_from_the_selected_approaches(templates):
+    concise = assemble(templates, options=PacketOptions(
+        variations=("short_hook", "flat_claim", "one_concrete_thing"),
+        dials={"critique": "ranking", "final": "best_single"},
+    ))
+    full = assemble(templates)
+
+    assert "All three follow the current user direction" in concise.instructions
+    assert "ranks all three variations with one sentence each" in concise.text
+    assert "All five follow the current user direction" in full.instructions
+    assert "Critique only the five generated variations" in full.instructions
+
+
 def test_the_contract_and_the_final_check_never_disagree(templates):
     """The defect that shipped in the legacy application.
 
