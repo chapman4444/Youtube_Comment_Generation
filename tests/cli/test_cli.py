@@ -456,6 +456,21 @@ def test_transcript_languages_accept_a_comma_separated_string():
     assert configuration["transcript_languages"] == ("en", "es", "fr")
 
 
+def test_whisper_resource_limits_are_configurable_and_validated():
+    configuration = resolve(environment={
+        "YTCOMMENT_WHISPER_MAXIMUM_SECONDS": "1800",
+        "YTCOMMENT_WHISPER_MAXIMUM_AUDIO_BYTES": str(75 * 1024 * 1024),
+    })
+
+    assert configuration["whisper_maximum_seconds"] == 1800
+    assert configuration["whisper_maximum_audio_bytes"] == 75 * 1024 * 1024
+
+    with pytest.raises(ConfigurationError, match="maximum_seconds"):
+        resolve(settings={"whisper_maximum_seconds": 0})
+    with pytest.raises(ConfigurationError, match="maximum_audio_bytes"):
+        resolve(settings={"whisper_maximum_audio_bytes": 0})
+
+
 # --------------------------------------------------------------------------
 # Credentials
 # --------------------------------------------------------------------------

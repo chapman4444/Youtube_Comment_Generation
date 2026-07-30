@@ -91,9 +91,11 @@ class SqliteHistoryStore:
     def append(self, entries: Sequence[dict[str, Any]]) -> int:
         """Insert drafts that are not already recorded; return how many were new.
 
-        Deduplication is on the normalised draft text within a video, because
-        the operator may build the same packet twice and must not get two rows
-        for one reply.
+        Uniqueness is stable posting-event identity: workflow, target,
+        thread, run, draft, timestamp, and source. Identical text may therefore
+        be recorded separately when it was posted to different targets or as
+        distinct posting events. ``match_key`` is normalized text retained
+        only for later scoreboard matching; it is not persistence identity.
         """
 
         added = 0

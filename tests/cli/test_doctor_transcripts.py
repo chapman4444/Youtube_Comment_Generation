@@ -83,6 +83,7 @@ def test_whisper_on_says_what_it_will_cost(tmp_path):
 
     assert "on (" in printed
     assert "minutes of CPU" in printed
+    assert "limit 60 minutes / 200 MiB" in printed
 
 
 def test_the_chosen_model_is_named_either_way(tmp_path):

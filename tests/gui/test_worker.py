@@ -221,6 +221,20 @@ def test_a_finished_job_can_be_started_again():
     assert job.drain()[-1].value == "second"
 
 
+def test_each_start_owns_a_new_event_generation():
+    job = BackgroundJob()
+    job.start(lambda running: running.say("first"))
+    finished(job)
+    first = job.drain()
+
+    job.start(lambda running: running.say("second"))
+    finished(job)
+    second = job.drain()
+
+    assert {event.generation for event in first} == {1}
+    assert {event.generation for event in second} == {2}
+
+
 def test_cancelling_is_cleared_by_the_next_start():
     job = BackgroundJob()
     job.cancel()

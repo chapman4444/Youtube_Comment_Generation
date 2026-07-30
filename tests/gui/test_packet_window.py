@@ -747,7 +747,7 @@ def test_start_over_requests_safe_worker_cancellation(window):
     window.start_over()
 
     assert job.cancelled
-    assert window._discard_job_result
+    assert window._active_job_generation == -1
 
 
 def test_stop_button_is_visible_only_during_a_running_build(window):
@@ -780,6 +780,93 @@ def test_cancelled_build_clears_progress_and_reports_stopped(window):
 
     assert window.progress_value.get() == 0.0
     assert window.status.get() == "Stopped."
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        WorkerEvent("progress", "stale progress", fraction=0.9, generation=1),
+        WorkerEvent("done", "stale done", value="wrong", generation=1),
+        WorkerEvent("failed", "stale failure", generation=1),
+        WorkerEvent("cancelled", "stale cancellation", generation=1),
+    ],
+)
+def test_stale_job_events_cannot_change_the_current_build(window, event):
+    window._active_job_generation = 2
+    window.progress_value.set(0.2)
+    window.status.set("current build")
+    window.result = "current result"
+
+    window._on_event(event)
+
+    assert window.progress_value.get() == 0.2
+    assert window.status.get() == "current build"
+    assert window.result == "current result"
+
+
+def test_stale_confirmation_is_declined_without_opening_a_dialog(window):
+    shown = []
+    window._confirm_whisper = lambda reason: shown.append(reason) or True
+    window._active_job_generation = 2
+    request = ConfirmationRequest("old job")
+
+    window._on_event(WorkerEvent(
+        "confirmation",
+        value=request,
+        generation=1,
+    ))
+
+    assert request.answered.is_set()
+    assert not request.accepted
+    assert shown == []
+
+
+def test_close_cancels_and_resolves_confirmation_before_destroying_tk():
+    request = ConfirmationRequest("waiting")
+
+    class Job:
+        running = True
+        cancelled = False
+
+        def drain(self):
+            return [WorkerEvent("confirmation", value=request, generation=1)]
+
+        def cancel(self):
+            self.cancelled = True
+
+    class Root:
+        destroyed = False
+        callback = None
+
+        def geometry(self):
+            return "1000x700+0+0"
+
+        def after(self, _milliseconds, callback):
+            self.callback = callback
+
+        def destroy(self):
+            self.destroyed = True
+
+    root = Root()
+    job = Job()
+    built = object.__new__(PacketWindow)
+    built.root = root
+    built.job = job
+    built.options = SimpleNamespace(window_geometry="")
+    built.status = SimpleNamespace(set=lambda _message: None)
+    built._active_job_generation = 1
+
+    built.close()
+
+    assert job.cancelled
+    assert request.answered.is_set()
+    assert not request.accepted
+    assert not root.destroyed
+
+    job.running = False
+    root.callback()
+
+    assert root.destroyed
 
 
 # -- it fits on a screen ---------------------------------------------------

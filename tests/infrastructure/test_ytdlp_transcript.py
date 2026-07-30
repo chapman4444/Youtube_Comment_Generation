@@ -25,6 +25,24 @@ from llm_youtube_comment_generation.infrastructure.ytdlp_transcript import (
 VIDEO = "x2ExZ4xSblI"
 
 
+def test_ytdlp_failure_never_exposes_proxy_credentials():
+    proxy = (
+        "http://" + "proxy-user:proxy-password@" + "proxy.example:8080"
+    )
+
+    def fail(_video_id, _proxy=""):
+        raise RuntimeError(f"request failed through {proxy}")
+
+    detail = YtDlpTranscriptAdapter(
+        proxy_url=proxy,
+        extractor=fail,
+    ).fetch(VIDEO).detail
+
+    assert "proxy.example:8080" in detail
+    assert "proxy-user" not in detail
+    assert "proxy-password" not in detail
+
+
 def track(url="https://captions/en.json3", ext="json3"):
     return [{"ext": "vtt", "url": "https://captions/en.vtt"},
             {"ext": ext, "url": url}]

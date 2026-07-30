@@ -16,6 +16,7 @@ Two rules are absolute here:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Sequence
@@ -24,7 +25,12 @@ from ..domain.candidates import ReplyCandidate
 from ..domain.extraction import extract_hardened_final, looks_like_packet_text
 from ..domain.reply_packet import ReplyEvidence, build_reply_packet
 from ..domain.section_profile import measure_comment_register
-from ..domain.statuses import OperationResult, OperationStatus
+from ..domain.statuses import (
+    OperationResult,
+    OperationStatus,
+    TranscriptResult,
+    transcript_provenance,
+)
 from ..domain.threads import OwnerThread
 from ..domain.workflow import (
     Intent,
@@ -61,6 +67,7 @@ class GuidedSession:
     owner_channel_id: str = ""
     video: dict[str, Any] = field(default_factory=dict)
     transcript_text: str = ""
+    transcript: TranscriptResult | None = None
     templates: dict[str, str] = field(default_factory=dict)
     variations: tuple[str, ...] = ()
     dials: dict[str, str] = field(default_factory=dict)
@@ -262,7 +269,33 @@ class GuidedSession:
         if self.artifacts is None:
             return
         self.artifacts.stage(REVIEW_FILENAME, render_review(self))
+        if self.transcript is not None:
+            self.artifacts.stage("run.json", self._run_record())
         self.artifacts.commit()
+
+    def _run_record(self) -> str:
+        return json.dumps({
+            "kind": "guided",
+            "artifact_contract_version": 3,
+            "video_id": str(self.video.get("video_id", "")),
+            "video_title": str(self.video.get("title", "")),
+            "prompt_version": self.prompt_version,
+            "transcript": transcript_provenance(self.transcript),
+            "accepted": len(self.accepted),
+            "skipped": len(self.skipped),
+            "targets_offered": len(self.targets),
+            "final_phase": self.state.phase.value,
+            "variations": list(self.variations),
+            "drafts": [
+                {
+                    "author": draft.author,
+                    "comment_id": draft.comment_id,
+                    "status": draft.status,
+                    "words": len(draft.draft.split()),
+                }
+                for draft in self.accepted
+            ],
+        }, indent=2, ensure_ascii=False)
 
     def _emit(self, kind: EventKind, step: str, message: str) -> None:
         if self.events is not None:

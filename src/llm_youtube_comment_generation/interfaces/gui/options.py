@@ -58,9 +58,10 @@ REMEMBERED = (
     "packet_characters", "max_top", "max_recent", "max_threads",
     "max_replies", "top_repliers", "include_replies", "per_thread",
     "include_answered", "use_triage", "length", "custom_length",
-    "auto_run", "auto_watch", "editor_path", "reply_scan_comments",
+    "auto_run", "auto_watch", "reply_scan_comments",
     "guided_limit", "window_geometry", "transcribe_locally",
     "whisper_policy", "whisper_model",
+    "whisper_maximum_minutes", "whisper_maximum_audio_mib",
 )
 
 WHISPER_POLICIES = ("ignore", "ask", "automatic")
@@ -160,7 +161,6 @@ class PacketOptionsModel:
     # -- the video and where the output goes ----------------------------
     video: str = ""
     output_directory: str = ""
-    editor_path: str = ""
 
     # -- retrieval -------------------------------------------------------
     max_top: int = 100
@@ -169,7 +169,6 @@ class PacketOptionsModel:
     max_replies: int = 8
     reply_scan_comments: int = 3000
     include_replies: bool = True
-    overwrite: bool = False
     languages: str = "en"
     proxy_url: str = ""
     # `transcribe_locally` remains in saved settings and on the command line
@@ -181,6 +180,8 @@ class PacketOptionsModel:
     # Build button always returns to the full fallback chain.
     transcript_route: str = "automatic"
     whisper_model: str = "small.en"
+    whisper_maximum_minutes: int = 60
+    whisper_maximum_audio_mib: int = 200
 
     # -- the packet -------------------------------------------------------
     packet_characters: int = DEFAULT_PACKET_CHARACTERS
@@ -310,6 +311,8 @@ class PacketOptionsModel:
             found.append("Reply scan comments must be at least 1.")
         if self.max_replies < 1:
             found.append("Replies per thread must be at least 1.")
+        if self.max_threads < 1:
+            found.append("Reply threads must be at least 1.")
         if self.guided_limit < 1:
             found.append("Reply limit must be at least 1.")
         for name, value in (self.dials or {}).items():
@@ -344,6 +347,10 @@ class PacketOptionsModel:
             found.append(
                 f"Transcript source cannot be {self.transcript_route!r}."
             )
+        if self.whisper_maximum_minutes < 1:
+            found.append("Whisper maximum minutes must be at least 1.")
+        if self.whisper_maximum_audio_mib < 1:
+            found.append("Whisper maximum audio MiB must be at least 1.")
         if self.length == "exact":
             text = (self.custom_length or "").strip()
             if not text:

@@ -26,6 +26,10 @@ def default_ports(
     whisper_policy: str | None = None,
     transcript_route: str = "automatic",
     whisper_model: str | None = None,
+    transcript_languages: tuple[str, ...] | None = None,
+    proxy_url: str | None = None,
+    whisper_maximum_seconds: int | None = None,
+    whisper_maximum_audio_bytes: int | None = None,
     confirm_transcription: Callable[[TranscriptResult], bool] | None = None,
 ) -> PortBundle:
     """Construct the real read-only adapters. Tests replace this wholesale."""
@@ -59,23 +63,48 @@ def default_ports(
         if whisper_model is None
         else str(whisper_model)
     )
+    selected_languages = (
+        tuple(configuration.get("transcript_languages", ("en",)))
+        if transcript_languages is None
+        else tuple(transcript_languages)
+    )
+    selected_proxy = (
+        str(configuration.get("proxy_url", "") or "")
+        if proxy_url is None
+        else str(proxy_url or "")
+    )
+    selected_whisper_seconds = (
+        int(configuration.get("whisper_maximum_seconds", 3600))
+        if whisper_maximum_seconds is None
+        else int(whisper_maximum_seconds)
+    )
+    selected_whisper_bytes = (
+        int(configuration.get(
+            "whisper_maximum_audio_bytes",
+            200 * 1024 * 1024,
+        ))
+        if whisper_maximum_audio_bytes is None
+        else int(whisper_maximum_audio_bytes)
+    )
     local_transcriber = (
         WhisperTranscriptAdapter(
-            configuration.get("transcript_languages", ("en",)),
-            proxy_url=configuration.get("proxy_url", ""),
+            selected_languages,
+            proxy_url=selected_proxy,
             model_name=selected_whisper_model,
             events=events,
             cancelled=cancelled,
+            maximum_seconds=selected_whisper_seconds,
+            maximum_audio_bytes=selected_whisper_bytes,
         )
         if use_local_transcriber else None
     )
     caption_api = TranscriptAdapter(
-        configuration.get("transcript_languages", ("en",)),
-        proxy_url=configuration.get("proxy_url", ""),
+        selected_languages,
+        proxy_url=selected_proxy,
     )
     ytdlp_captions = YtDlpTranscriptAdapter(
-        configuration.get("transcript_languages", ("en",)),
-        proxy_url=configuration.get("proxy_url", ""),
+        selected_languages,
+        proxy_url=selected_proxy,
     )
     if selected_route == "api":
         transcript_source = caption_api
@@ -104,7 +133,7 @@ def default_ports(
     return PortBundle(
         youtube=YouTubeAdapter(
             api_key,
-            build_session(configuration.get("proxy_url", "")),
+            build_session(selected_proxy),
             cancelled=cancelled,
         ),
         transcripts=transcript_source,

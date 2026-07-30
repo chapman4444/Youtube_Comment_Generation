@@ -113,6 +113,49 @@ def test_the_cap_is_silent_when_it_does_not_bite():
     assert not any("busiest threads" in n for n in result.value.retrieval.notes)
 
 
+def test_each_gui_retrieval_limit_controls_its_own_dimension():
+    seen_comments = []
+    seen_replies = []
+
+    class RecordingYouTube(FakeYouTubePort):
+        def comment_threads(self, video_id, *, order="relevance", maximum=100):
+            seen_comments.append((order, maximum))
+            return super().comment_threads(
+                video_id,
+                order=order,
+                maximum=maximum,
+            )
+
+        def replies(self, parent_comment_id, *, maximum=100):
+            seen_replies.append((parent_comment_id, maximum))
+            return super().replies(parent_comment_id, maximum=maximum)
+
+    comments = [comment(i, replies=1) for i in range(8)]
+    youtube = RecordingYouTube(
+        videos={VIDEO: {"video_id": VIDEO, "title": "t", "comment_count": 8}},
+        comments=comments,
+        replies={f"c{i}": [comment(100 + i)] for i in range(8)},
+    )
+
+    inspect_video.handle(
+        InspectVideoCommand(
+            VIDEO,
+            max_relevance_comments=3,
+            max_recent_comments=5,
+            max_reply_threads=2,
+            max_replies_per_thread=7,
+            include_replies=True,
+        ),
+        youtube=youtube,
+        transcripts=FakeTranscriptPort(),
+        events=FakeEventSink(),
+    )
+
+    assert seen_comments == [("relevance", 3), ("time", 5)]
+    assert len(seen_replies) == 2
+    assert all(maximum == 7 for _, maximum in seen_replies)
+
+
 def test_the_worst_scan_decides_the_reported_status():
     """A run is only as honest as its weakest scan."""
 

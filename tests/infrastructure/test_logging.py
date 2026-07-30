@@ -56,6 +56,26 @@ def test_a_secret_discovered_later_can_be_registered(captured):
     assert "AnotherLongSecretValue" not in stream.getvalue()
 
 
+def test_proxy_credentials_are_redacted_from_logs(captured):
+    stream, redactor = captured
+    proxy = (
+        "http://" + "proxy-user:proxy-password@" + "proxy.example:8080"
+    )
+    redactor.add_proxy(proxy)
+
+    logging.getLogger("test").error(
+        "provider failed through %s; user=%s password=%s",
+        proxy,
+        "proxy-user",
+        "proxy-password",
+    )
+
+    output = stream.getvalue()
+    assert "proxy.example:8080" in output
+    assert "proxy-user" not in output
+    assert "proxy-password" not in output
+
+
 def test_short_strings_are_never_redacted():
     """Replacing a two-character secret would corrupt every message that
     happened to contain those characters."""

@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from io import StringIO
+
+import pytest
 
 from llm_youtube_comment_generation.application.configuration import resolve
 from llm_youtube_comment_generation.application.runs import validate_run
 from llm_youtube_comment_generation.domain import packets
+from llm_youtube_comment_generation.domain.errors import ConfigurationError
 from llm_youtube_comment_generation.interfaces.cli.main import run_rebuild
+from llm_youtube_comment_generation.infrastructure.filesystem_artifacts import (
+    COMPLETION_MARKER,
+    FilesystemArtifactStore,
+)
 
 
 class Clipboard:
@@ -34,7 +42,6 @@ def comment(comment_id, text, *, likes, replies, published):
 
 def source_run(tmp_path):
     source = tmp_path / "source"
-    source.mkdir()
     comments = [
         comment("liked", "most liked", likes=100, replies=0,
                 published="2026-01-01T00:00:00Z"),
@@ -71,7 +78,7 @@ def source_run(tmp_path):
         "variations": [],
         "variation_headings": [],
         "dials": {},
-        "packet_characters": 0,
+        "packet_characters": len("source packet"),
         "budget": 280_000,
         "allocation": {
             "comment_body": 1_600,
@@ -97,16 +104,30 @@ def source_run(tmp_path):
         "api_operations_used": 0,
         "warnings": [],
     }
-    (source / "evidence.json").write_text(
-        json.dumps(evidence), encoding="utf-8"
+    store = FilesystemArtifactStore(source)
+    store.stage("packet.md", "source packet")
+    store.stage("evidence.json", json.dumps(evidence))
+    store.stage("run.json", json.dumps(record))
+    store.stage(
+        "transcript_timestamped.txt",
+        "[00:00:00] transcript words\n",
     )
-    (source / "run.json").write_text(
-        json.dumps(record), encoding="utf-8"
-    )
-    (source / "transcript_timestamped.txt").write_text(
-        "[00:00:00] transcript words\n", encoding="utf-8"
-    )
+    store.stage("report.md", "source report")
+    store.commit()
+    assert validate_run(source).ok
     return source
+
+
+def refresh_completion_marker(source):
+    files = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in source.iterdir()
+        if path.is_file() and path.name != COMPLETION_MARKER
+    }
+    (source / COMPLETION_MARKER).write_text(
+        json.dumps({"version": 1, "files": files}),
+        encoding="utf-8",
+    )
 
 
 def arguments(source, *, registers=None):
@@ -134,6 +155,65 @@ def rebuild(tmp_path, source, *, registers=None):
     )
     directories = sorted(path for path in output.iterdir() if path.is_dir())
     return code, directories[-1]
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "missing-marker",
+        "malformed-marker",
+        "altered-evidence",
+        "altered-transcript",
+        "missing-recorded-file",
+        "unrecorded-file",
+        "mixed-run",
+        "unsupported-kind",
+    ],
+)
+def test_rebuild_rejects_untrusted_source_before_publishing(
+    tmp_path,
+    damage,
+):
+    source = source_run(tmp_path)
+    if damage == "missing-marker":
+        (source / COMPLETION_MARKER).unlink()
+    elif damage == "malformed-marker":
+        (source / COMPLETION_MARKER).write_text("{", encoding="utf-8")
+    elif damage == "altered-evidence":
+        (source / "evidence.json").write_text("{}", encoding="utf-8")
+    elif damage == "altered-transcript":
+        (source / "transcript_timestamped.txt").write_text(
+            "[00:00:00] altered words\n",
+            encoding="utf-8",
+        )
+    elif damage == "missing-recorded-file":
+        (source / "report.md").unlink()
+    elif damage == "unrecorded-file":
+        (source / "other.json").write_text("{}", encoding="utf-8")
+    elif damage == "mixed-run":
+        record = json.loads((source / "run.json").read_text(encoding="utf-8"))
+        record["video_id"] = "another-video"
+        (source / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    elif damage == "unsupported-kind":
+        record = json.loads((source / "run.json").read_text(encoding="utf-8"))
+        record["kind"] = "reply"
+        (source / "run.json").write_text(json.dumps(record), encoding="utf-8")
+        refresh_completion_marker(source)
+
+    output = tmp_path / "rebuilt"
+    configuration = resolve(settings={
+        "output_directory": str(output),
+        "packet_characters": 280_000,
+    })
+    with pytest.raises(ConfigurationError, match="source run failed validation|source kind"):
+        run_rebuild(
+            arguments(source),
+            configuration,
+            StringIO(),
+            Clipboard(),
+        )
+
+    assert not output.exists() or not any(output.iterdir())
 
 
 def test_unchanged_rebuild_preserves_ranked_inputs_and_validates(
@@ -232,14 +312,12 @@ def test_legacy_evidence_is_refused_instead_of_reordered(tmp_path):
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     evidence.pop("relevance_comments")
     evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    refresh_completion_marker(source)
 
     configuration = resolve(settings={
         "output_directory": str(tmp_path / "rebuilt"),
         "packet_characters": 280_000,
     })
-
-    from llm_youtube_comment_generation.domain.errors import ConfigurationError
-    import pytest
 
     with pytest.raises(ConfigurationError, match="exact offline rebuild"):
         run_rebuild(

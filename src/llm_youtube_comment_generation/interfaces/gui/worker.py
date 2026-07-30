@@ -37,6 +37,7 @@ class WorkerEvent:
     message: str = ""
     value: Any = None
     fraction: float | None = None
+    generation: int = 0
 
 
 class Cancelled(Exception):
@@ -66,6 +67,8 @@ class BackgroundJob:
         self.events: "queue.Queue[WorkerEvent]" = queue.Queue()
         self._thread: threading.Thread | None = None
         self._cancel = threading.Event()
+        self._generation = 0
+        self._local = threading.local()
 
     # -- from the window -------------------------------------------------
 
@@ -79,8 +82,10 @@ class BackgroundJob:
         if self.running:
             return False
         self._cancel.clear()
+        self._generation += 1
+        generation = self._generation
         self._thread = threading.Thread(
-            target=self._run, args=(work,), daemon=True,
+            target=self._run, args=(work, generation), daemon=True,
             name="ytcomment-build",
         )
         self._thread.start()
@@ -89,6 +94,10 @@ class BackgroundJob:
     @property
     def running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def generation(self) -> int:
+        return self._generation
 
     def cancel(self) -> None:
         """Ask it to stop at the next safe point."""
@@ -134,13 +143,18 @@ class BackgroundJob:
             message,
             value=payload,
             fraction=fraction,
+            generation=self._event_generation(),
         ))
 
     def confirm(self, payload: Any) -> bool:
         """Ask the Tk thread a question and wait without touching Tk here."""
 
         request = ConfirmationRequest(payload)
-        self.events.put(WorkerEvent("confirmation", value=request))
+        self.events.put(WorkerEvent(
+            "confirmation",
+            value=request,
+            generation=self._event_generation(),
+        ))
         while not request.answered.wait(0.1):
             self.check_cancelled()
         self.check_cancelled()
@@ -148,11 +162,21 @@ class BackgroundJob:
 
     # -- internals ---------------------------------------------------------
 
-    def _run(self, work: Callable[["BackgroundJob"], Any]) -> None:
+    def _event_generation(self) -> int:
+        return int(getattr(self._local, "generation", self._generation))
+
+    def _run(
+        self,
+        work: Callable[["BackgroundJob"], Any],
+        generation: int,
+    ) -> None:
+        self._local.generation = generation
         try:
             value = work(self)
         except Cancelled:
-            self.events.put(WorkerEvent("cancelled", "Stopped."))
+            self.events.put(WorkerEvent(
+                "cancelled", "Stopped.", generation=generation
+            ))
         except Exception as failure:        # noqa: BLE001 - reported, not raised
             # Reported rather than raised: an exception on this thread would
             # vanish into a dead thread and the window would wait for a
@@ -160,6 +184,12 @@ class BackgroundJob:
             LOGGER.exception("the background job failed")
             self.events.put(WorkerEvent(
                 "failed", f"{type(failure).__name__}: {failure}",
+                generation=generation,
             ))
         else:
-            self.events.put(WorkerEvent("done", "Finished.", value=value))
+            self.events.put(WorkerEvent(
+                "done",
+                "Finished.",
+                value=value,
+                generation=generation,
+            ))

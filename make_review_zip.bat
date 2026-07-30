@@ -9,6 +9,7 @@ set "REVIEW_DIR=%PROJECT_ROOT%review_packages"
 set "STAGE=%REVIEW_DIR%\_review_stage_%RANDOM%_%RANDOM%"
 set "ARCHIVE=%REVIEW_DIR%\Youtube_Comment_Generation_review.zip"
 set "TEMP_ARCHIVE=%REVIEW_DIR%\Youtube_Comment_Generation_review.new.zip"
+set "ARCHIVE_DIGEST=%ARCHIVE%.sha256"
 
 if not exist "%WINRAR_EXE%" (
     echo WinRAR was not found:
@@ -73,7 +74,17 @@ for %%F in (
     if exist "%PROJECT_ROOT%%%~F" copy /y "%PROJECT_ROOT%%%~F" "%STAGE%\" >nul
 )
 
+if exist "%REVIEW_DIR%\RELEASE_VERIFICATION.md" (
+    copy /y "%REVIEW_DIR%\RELEASE_VERIFICATION.md" "%STAGE%\" >nul
+)
+if exist "%REVIEW_DIR%\RELEASE_VERIFICATION.json" (
+    copy /y "%REVIEW_DIR%\RELEASE_VERIFICATION.json" "%STAGE%\" >nul
+)
+
 robocopy "%PROJECT_ROOT%docs\architecture" "%STAGE%\docs\architecture" /E /NFL /NDL /NJH /NJS /NP >nul
+if errorlevel 8 goto :copy_failed
+
+robocopy "%PROJECT_ROOT%constraints" "%STAGE%\constraints" /E /NFL /NDL /NJH /NJS /NP >nul
 if errorlevel 8 goto :copy_failed
 
 robocopy "%PROJECT_ROOT%src" "%STAGE%\src" /E /XD __pycache__ *.egg-info /XF *.pyc *.pyo /NFL /NDL /NJH /NJS /NP >nul
@@ -123,6 +134,13 @@ if errorlevel 1 (
     echo   %ARCHIVE%
     if exist "%TEMP_ARCHIVE%" del /q "%TEMP_ARCHIVE%"
     exit /b 5
+)
+
+if exist "%ARCHIVE_DIGEST%" del /q "%ARCHIVE_DIGEST%"
+powershell.exe -NoProfile -Command "$hash=(Get-FileHash -Algorithm SHA256 -LiteralPath '%ARCHIVE%').Hash.ToLowerInvariant(); Set-Content -LiteralPath '%ARCHIVE_DIGEST%' -Value ($hash + '  Youtube_Comment_Generation_review.zip') -Encoding ascii"
+if errorlevel 1 (
+    echo The ZIP passed verification, but its SHA-256 sidecar could not be written.
+    exit /b 7
 )
 
 rmdir /s /q "%STAGE%"

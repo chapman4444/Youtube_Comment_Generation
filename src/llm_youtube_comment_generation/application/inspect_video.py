@@ -26,12 +26,11 @@ from ..ports.events import EventKind, ProgressEvent
 from ..domain.statuses import TranscriptResult
 from .commands import InspectVideoCommand
 
+REPLY_THREAD_LIMIT = 20
+
 # How many threads get their replies fetched. A quota decision: fetching
 # every thread on a busy video would spend the day's allowance on one run.
 # Reported whenever it bites — see the truncation outcome in handle().
-REPLY_THREAD_LIMIT = 20
-
-
 @dataclass
 class VideoInspection:
     """What `video inspect` found."""
@@ -110,13 +109,25 @@ def handle(
 
     outcomes: list[RetrievalOutcome] = []
     pages = []
+    comment_limits = {
+        "relevance": (
+            command.max_relevance_comments
+            if command.max_relevance_comments is not None
+            else command.max_comments
+        ),
+        "time": (
+            command.max_recent_comments
+            if command.max_recent_comments is not None
+            else command.max_comments
+        ),
+    }
     for order in ("relevance", "time"):
         events.emit(ProgressEvent(
             EventKind.STEP, step="comments",
             message=f"Fetching comments by {order}",
         ))
         page = youtube.comment_threads(
-            command.video_id, order=order, maximum=command.max_comments
+            command.video_id, order=order, maximum=comment_limits[order]
         )
         pages.append(page)
         outcomes.append(page.outcome)
@@ -132,7 +143,7 @@ def handle(
     if command.include_replies:
         with_replies = [c for c in comments
                         if (c.get("total_reply_count") or 0) > 0]
-        parents = select_reply_parents(comments, REPLY_THREAD_LIMIT)
+        parents = select_reply_parents(comments, command.max_reply_threads)
 
         # The cap is a quota decision, and applying it silently would let the
         # run report COMPLETE while never having asked for some replies at

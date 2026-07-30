@@ -12,6 +12,8 @@ import json
 import logging
 from typing import Any
 
+from .external_errors import proxy_secret_values, sanitize_external_text
+
 MINIMUM_SECRET_LENGTH = 8
 
 
@@ -25,6 +27,7 @@ class RedactingFilter(logging.Filter):
 
     def __init__(self, secrets: list[str] | None = None) -> None:
         super().__init__()
+        self._proxy_urls: list[str] = []
         self._secrets = [
             str(secret) for secret in (secrets or [])
             if secret and len(str(secret)) >= MINIMUM_SECRET_LENGTH
@@ -34,9 +37,17 @@ class RedactingFilter(logging.Filter):
         if secret and len(secret) >= MINIMUM_SECRET_LENGTH:
             self._secrets.append(secret)
 
+    def add_proxy(self, proxy_url: str) -> None:
+        if proxy_url:
+            self._proxy_urls.append(proxy_url)
+            for secret in proxy_secret_values(proxy_url):
+                self.add(secret)
+
     def _clean(self, value: Any) -> Any:
         if not isinstance(value, str):
             return value
+        for proxy_url in self._proxy_urls:
+            value = sanitize_external_text(value, proxy_url)
         for secret in self._secrets:
             value = value.replace(secret, "[redacted]")
         return value

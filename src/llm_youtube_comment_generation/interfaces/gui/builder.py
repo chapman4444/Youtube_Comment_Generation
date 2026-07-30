@@ -27,6 +27,7 @@ from ...application import build_comment_packet
 from ...application.build_comment_packet import BuildCommentPacketCommand
 from ...domain.errors import OperationCancelled
 from ...domain.section_profile import parse_length
+from ...domain.statuses import transcript_provenance
 from ...ports.events import EventKind, ProgressEvent
 from .options import PacketOptionsModel
 from .worker import BackgroundJob, Cancelled
@@ -134,7 +135,12 @@ def build_comment(
         variations=options.registers_for("comment"),
         dials=options.dial_values(),
         max_comments=max(options.max_top, options.max_recent) or 500,
+        max_relevance_comments=options.max_top,
+        max_recent_comments=options.max_recent,
+        max_reply_threads=options.max_threads,
         max_replies_per_thread=options.max_replies,
+        include_replies=options.include_replies,
+        transcript_languages=options.transcript_languages,
         packet_characters=options.packet_characters,
         explicit_length=_length(options),
         allow_no_transcript=True,
@@ -287,17 +293,7 @@ def prepare_replies(
             "api_operations_used": int(
                 getattr(found, "api_operations_used", 0) or 0
             ),
-            "transcript": {
-                "availability": getattr(
-                    getattr(transcript, "availability", "available"),
-                    "value",
-                    str(getattr(transcript, "availability", "available")),
-                ),
-                "source": str(getattr(transcript, "source", "") or ""),
-                "language": str(getattr(transcript, "language", "") or ""),
-                "entries": len(getattr(transcript, "entries", ()) or ()),
-                "detail": str(getattr(transcript, "detail", "") or ""),
-            },
+            "transcript": transcript_provenance(transcript),
             "registers": list(options.registers_for("reply")),
             "dials": options.dial_values(),
             "output": str(getattr(artifacts, "root", "") or ""),

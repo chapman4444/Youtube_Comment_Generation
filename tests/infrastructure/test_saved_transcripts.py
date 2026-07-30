@@ -7,6 +7,10 @@ in the previous run's directory, unchanged and usable.
 
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from llm_youtube_comment_generation.domain.statuses import (
     TranscriptAvailability,
     TranscriptResult,
@@ -53,11 +57,22 @@ def working():
     )
 
 
-def run_directory(tmp_path, video=VIDEO, stamp="20260728-080321", text=SAVED):
+def run_directory(
+    tmp_path,
+    video=VIDEO,
+    stamp="20260728-080321",
+    text=SAVED,
+    transcript_record=None,
+):
     directory = tmp_path / f"{video}_{stamp}"
     directory.mkdir(parents=True)
     (directory / "transcript_timestamped.txt").write_text(text,
                                                           encoding="utf-8")
+    if transcript_record is not None:
+        (directory / "run.json").write_text(
+            json.dumps({"transcript": transcript_record}),
+            encoding="utf-8",
+        )
     return directory
 
 
@@ -89,20 +104,67 @@ def test_a_working_fetch_always_wins(tmp_path):
     assert live.calls == 1
 
 
-def test_a_private_video_never_reuses_a_saved_transcript(tmp_path):
+@pytest.mark.parametrize(
+    "availability",
+    [
+        TranscriptAvailability.NOT_PUBLISHED,
+        TranscriptAvailability.EMPTY,
+        TranscriptAvailability.LANGUAGE_UNAVAILABLE,
+        TranscriptAvailability.NOT_PUBLIC,
+    ],
+)
+def test_conclusive_live_states_never_reuse_a_saved_transcript(
+    tmp_path,
+    availability,
+):
     run_directory(tmp_path)
-    private = TranscriptResult(
-        availability=TranscriptAvailability.NOT_PUBLIC,
+    live = TranscriptResult(
+        availability=availability,
         source="youtube-transcript-api",
-        detail="the video is private",
+        detail=f"current live state: {availability.value}",
     )
-    port = SavedTranscriptFallback(FakeLive(private), tmp_path)
+    port = SavedTranscriptFallback(FakeLive(live), tmp_path)
 
     result = port.fetch(VIDEO)
 
-    assert result is private
-    assert result.availability is TranscriptAvailability.NOT_PUBLIC
+    assert result is live
+    assert result.availability is availability
     assert result.entries == ()
+
+
+@pytest.mark.parametrize(
+    "availability",
+    [
+        TranscriptAvailability.NOT_PUBLISHED,
+        TranscriptAvailability.EMPTY,
+        TranscriptAvailability.LANGUAGE_UNAVAILABLE,
+    ],
+)
+def test_approved_local_transcription_can_follow_caption_absence(
+    tmp_path,
+    availability,
+):
+    run_directory(tmp_path)
+    live = TranscriptResult(
+        availability=availability,
+        source="youtube-transcript-api",
+        detail=f"current live state: {availability.value}",
+    )
+    local = FakeLive(working())
+    asked = []
+    port = SavedTranscriptFallback(
+        FakeLive(live),
+        tmp_path,
+        local_fallback=local,
+        approve_local_fallback=lambda reason: asked.append(reason) or True,
+    )
+
+    result = port.fetch(VIDEO)
+
+    assert result.source == "youtube-transcript-api"
+    assert result.entries[0]["text"] == "live"
+    assert local.calls == 1
+    assert asked == [live]
 
 
 def test_the_newest_saved_run_is_the_one_reused(tmp_path):
@@ -244,6 +306,58 @@ def test_the_reuse_is_stated_with_the_run_it_came_from(tmp_path):
     assert "20260728-080321" in result.detail
     assert "was not fetched again" in result.detail
     assert "IpBlocked" in result.detail
+
+
+def test_saved_whisper_preserves_generated_provenance(tmp_path):
+    directory = run_directory(
+        tmp_path,
+        transcript_record={
+            "source": "whisper",
+            "original_source": "whisper",
+            "is_generated": True,
+            "language": "English",
+            "language_code": "en",
+        },
+    )
+
+    result = SavedTranscriptFallback(FakeLive(blocked()), tmp_path).fetch(VIDEO)
+
+    assert result.source == "saved-transcript"
+    assert result.original_source == "whisper"
+    assert result.is_generated is True
+    assert result.language == "English"
+    assert result.language_code == "en"
+    assert result.originating_run == directory.name
+
+
+def test_saved_human_caption_preserves_not_generated_provenance(tmp_path):
+    run_directory(
+        tmp_path,
+        transcript_record={
+            "source": "youtube-transcript-api",
+            "is_generated": False,
+            "language": "English",
+            "language_code": "en-US",
+        },
+    )
+
+    result = SavedTranscriptFallback(FakeLive(blocked()), tmp_path).fetch(VIDEO)
+
+    assert result.original_source == "youtube-transcript-api"
+    assert result.is_generated is False
+    assert result.language_code == "en-US"
+
+
+def test_legacy_saved_run_does_not_invent_provenance(tmp_path):
+    directory = run_directory(tmp_path)
+
+    result = SavedTranscriptFallback(FakeLive(blocked()), tmp_path).fetch(VIDEO)
+
+    assert result.source == "saved-transcript"
+    assert result.original_source == ""
+    assert result.is_generated is None
+    assert result.originating_run == directory.name
+    assert "Original source: unknown" in result.detail
 
 
 # -- parsing the saved form ------------------------------------------------

@@ -11,16 +11,23 @@ downloader and the transcriber are both injected.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
 from llm_youtube_comment_generation.domain.errors import OperationCancelled
 from llm_youtube_comment_generation.domain.statuses import TranscriptAvailability
+from llm_youtube_comment_generation.infrastructure import whisper_transcript
 from llm_youtube_comment_generation.infrastructure.whisper_transcript import (
+    DEFAULT_MAXIMUM_AUDIO_BYTES,
+    DEFAULT_MAXIMUM_SECONDS,
     DEFAULT_MODEL,
     MINIMUM_CONFIDENCE,
+    WhisperLimitExceeded,
     WhisperTranscriptAdapter,
     _entries,
+    _enforce_media_limits,
     transcribe,
 )
 
@@ -160,6 +167,24 @@ def test_a_wall_of_text_is_cut_down():
     result = WhisperTranscriptAdapter(downloader=explode).fetch(VIDEO)
 
     assert len(result.detail) < 220
+
+
+def test_whisper_download_failure_never_exposes_proxy_credentials():
+    proxy = (
+        "http://" + "proxy-user:proxy-password@" + "proxy.example:8080"
+    )
+
+    def explode(_video_id, _into, _proxy=""):
+        raise RuntimeError(f"download failed through {proxy}")
+
+    detail = WhisperTranscriptAdapter(
+        proxy_url=proxy,
+        downloader=explode,
+    ).fetch(VIDEO).detail
+
+    assert "proxy.example:8080" in detail
+    assert "proxy-user" not in detail
+    assert "proxy-password" not in detail
 
 
 # -- the expensive thing runs once and says it is running -------------------
@@ -329,3 +354,217 @@ def test_the_default_model_is_small_enough_to_be_usable():
 
     assert DEFAULT_MODEL.endswith(".en")
     assert DEFAULT_MODEL.startswith(("tiny", "base", "small"))
+
+
+# -- expensive work has hard safety ceilings -------------------------------
+
+
+def test_overlong_media_is_refused_before_download():
+    with pytest.raises(WhisperLimitExceeded, match="120.0 minutes"):
+        _enforce_media_limits(
+            {"duration": 2 * 60 * 60},
+            maximum_seconds=DEFAULT_MAXIMUM_SECONDS,
+            maximum_bytes=DEFAULT_MAXIMUM_AUDIO_BYTES,
+        )
+
+
+def test_advertised_oversized_audio_is_refused_before_download():
+    with pytest.raises(WhisperLimitExceeded, match="200 MiB"):
+        _enforce_media_limits(
+            {
+                "duration": 600,
+                "requested_downloads": [{
+                    "filesize_approx": DEFAULT_MAXIMUM_AUDIO_BYTES + 1,
+                }],
+            },
+            maximum_seconds=DEFAULT_MAXIMUM_SECONDS,
+            maximum_bytes=DEFAULT_MAXIMUM_AUDIO_BYTES,
+        )
+
+
+def test_the_adapter_has_bounded_defaults():
+    port = WhisperTranscriptAdapter()
+
+    assert port._maximum_seconds == DEFAULT_MAXIMUM_SECONDS
+    assert port._maximum_audio_bytes == DEFAULT_MAXIMUM_AUDIO_BYTES
+
+
+def test_duration_limit_is_checked_before_audio_transfer(monkeypatch, tmp_path):
+    processed = []
+
+    class YoutubeDL:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, *, download):
+            assert download is False
+            return {"id": VIDEO, "duration": DEFAULT_MAXIMUM_SECONDS + 1}
+
+        def process_ie_result(self, _info, *, download):
+            processed.append(download)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "yt_dlp",
+        SimpleNamespace(YoutubeDL=YoutubeDL),
+    )
+
+    with pytest.raises(WhisperLimitExceeded, match="limited to 60 minutes"):
+        whisper_transcript.download_audio(VIDEO, tmp_path)
+
+    assert processed == []
+
+
+def test_below_limit_media_proceeds_to_bounded_audio_transfer(
+    monkeypatch,
+    tmp_path,
+):
+    class YoutubeDL:
+        def __init__(self, _options):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, *, download):
+            assert download is False
+            return {
+                "id": VIDEO,
+                "duration": DEFAULT_MAXIMUM_SECONDS,
+                "filesize_approx": DEFAULT_MAXIMUM_AUDIO_BYTES,
+            }
+
+        def process_ie_result(self, info, *, download):
+            assert download is True
+            (tmp_path / f"{VIDEO}.m4a").write_bytes(b"bounded")
+            return info
+
+    monkeypatch.setitem(
+        sys.modules,
+        "yt_dlp",
+        SimpleNamespace(YoutubeDL=YoutubeDL),
+    )
+
+    audio = whisper_transcript.download_audio(VIDEO, tmp_path)
+
+    assert audio.read_bytes() == b"bounded"
+
+
+def test_download_hook_stops_transfer_at_byte_limit(monkeypatch, tmp_path):
+    class YoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _url, *, download):
+            assert download is False
+            return {"id": VIDEO, "duration": 60}
+
+        def process_ie_result(self, info, *, download):
+            assert download is True
+            self.options["progress_hooks"][0]({
+                "downloaded_bytes": DEFAULT_MAXIMUM_AUDIO_BYTES + 1,
+            })
+            return info
+
+    monkeypatch.setitem(
+        sys.modules,
+        "yt_dlp",
+        SimpleNamespace(YoutubeDL=YoutubeDL),
+    )
+
+    with pytest.raises(WhisperLimitExceeded, match="200 MiB"):
+        whisper_transcript.download_audio(VIDEO, tmp_path)
+
+
+def test_adapter_passes_duration_ceiling_to_builtin_transcriber(
+    monkeypatch,
+):
+    received = {}
+
+    def bounded_transcribe(
+        _audio,
+        *,
+        model_name,
+        language,
+        maximum_seconds,
+        cancelled,
+        progress,
+    ):
+        received.update(
+            maximum_seconds=maximum_seconds,
+            cancelled=cancelled,
+            progress=progress,
+        )
+        return (
+            [{"text": "bounded", "start": 0.0, "duration": 1.0, "end": 1.0}],
+            language,
+        )
+
+    monkeypatch.setattr(whisper_transcript, "transcribe", bounded_transcribe)
+    port = WhisperTranscriptAdapter(
+        downloader=lambda _video, into, _proxy="": Path(into) / "audio.m4a",
+    )
+
+    result = port.fetch(VIDEO)
+
+    assert result.availability is TranscriptAvailability.AVAILABLE
+    assert received["maximum_seconds"] == DEFAULT_MAXIMUM_SECONDS
+    assert received["cancelled"] is port._cancelled
+    assert received["progress"] == port._report_progress
+
+
+def test_adapter_passes_both_limits_to_builtin_downloader(
+    monkeypatch,
+):
+    received = {}
+
+    def bounded_download(
+        video_id,
+        into,
+        proxy_url="",
+        *,
+        maximum_seconds,
+        maximum_bytes,
+        cancelled,
+    ):
+        received.update(
+            video_id=video_id,
+            maximum_seconds=maximum_seconds,
+            maximum_bytes=maximum_bytes,
+            cancelled=cancelled,
+        )
+        path = Path(into) / "audio.m4a"
+        path.write_bytes(b"x")
+        return path
+
+    monkeypatch.setattr(whisper_transcript, "download_audio", bounded_download)
+    monkeypatch.setattr(whisper_transcript, "library_available", lambda: True)
+    port = WhisperTranscriptAdapter(
+        transcriber=lambda _audio, **_kwargs: (
+            [{"text": "bounded", "start": 0.0, "duration": 1.0, "end": 1.0}],
+            "en",
+        ),
+    )
+
+    result = port.fetch(VIDEO)
+
+    assert result.availability is TranscriptAvailability.AVAILABLE
+    assert received["video_id"] == VIDEO
+    assert received["maximum_seconds"] == DEFAULT_MAXIMUM_SECONDS
+    assert received["maximum_bytes"] == DEFAULT_MAXIMUM_AUDIO_BYTES
+    assert received["cancelled"] is port._cancelled

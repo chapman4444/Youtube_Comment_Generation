@@ -178,7 +178,7 @@ class PacketWindow:
         self._approach_tooltips: list[Tooltip] = []
         self._display_mode = self.mode.get()
         self._suppressed_clipboard_video = ""
-        self._discard_job_result = False
+        self._active_job_generation = 0
         self._live_transcript_started = False
         self._pending_build_signature = ""
         self._completed_build_signature = ""
@@ -230,7 +230,19 @@ class PacketWindow:
         self.root.geometry(f"{width}x{height}")
 
     def close(self) -> None:
-        """Remember the operator's layout before closing."""
+        """Cancel active work before destroying the Tk event loop."""
+
+        for event in self.job.drain():
+            if event.kind == "confirmation":
+                request = event.value
+                if hasattr(request, "resolve"):
+                    request.resolve(False)
+        if self.job.running:
+            self.job.cancel()
+            self._active_job_generation = -1
+            self.status.set("Stopping before closing...")
+            self.root.after(50, self.close)
+            return
 
         try:
             self.options.window_geometry = self.root.geometry()
@@ -1664,13 +1676,13 @@ class PacketWindow:
             self.say("This packet already matches the current video and settings.")
             return
         snapshot = copy.deepcopy(options)
-        self._discard_job_result = False
         started = self.job.start(
             lambda job: self._build_packet(snapshot, mode, job)
         )
         if not started:
             self.say("A build is already running.")
         else:
+            self._active_job_generation = self.job.generation
             self._pending_build_signature = signature
             self._live_transcript_started = False
             self._clear_evidence_views()
@@ -2028,7 +2040,7 @@ class PacketWindow:
     def start_over(self) -> None:
         if self.job.running:
             self.job.cancel()
-            self._discard_job_result = True
+            self._active_job_generation = -1
         self.comment_session = None
         self.session = None
         self.sequence = ReplySequence()
@@ -2061,11 +2073,11 @@ class PacketWindow:
     # -- worker events -----------------------------------------------------
 
     def _on_event(self, event) -> None:
-        if self._discard_job_result and event.kind in (
-            "done", "failed", "cancelled"
-        ):
-            self._discard_job_result = False
-            self.refresh()
+        if event.generation != self._active_job_generation:
+            if event.kind == "confirmation":
+                request = event.value
+                if hasattr(request, "resolve"):
+                    request.resolve(False)
             return
         if event.kind == "progress":
             # A blank message still moves the bar but must not write a line.

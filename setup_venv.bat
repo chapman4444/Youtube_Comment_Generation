@@ -7,6 +7,16 @@ setlocal
 cd /d "%~dp0"
 
 set "VENV_PY=%~dp0.venv\Scripts\python.exe"
+set "CONSTRAINTS=%~dp0constraints\review.txt"
+set "CORE_FINGERPRINT=%~dp0.venv\.ytcomment-core-fingerprint"
+set "FINGERPRINT_TOOL=%~dp0tools\dependency_fingerprint.py"
+
+if not exist "%CONSTRAINTS%" (
+    echo.
+    echo The reviewed dependency constraints are missing: %CONSTRAINTS%
+    exit /b 9
+)
+set "PIP_CONSTRAINT=%CONSTRAINTS%"
 
 if exist "%VENV_PY%" goto :check_version
 
@@ -40,10 +50,13 @@ REM Normal launchers require only the core application. Transcript providers
 REM are optional capabilities: doctor must be able to start and report their
 REM absence instead of bootstrap failing before doctor can run.
 "%VENV_PY%" -c "import importlib.metadata as m, requests; m.version('llm-youtube-comment-generation')" >nul 2>&1
+if errorlevel 1 goto :install_core
+"%VENV_PY%" "%FINGERPRINT_TOOL%" check --root "%CD%" --state "%CORE_FINGERPRINT%" >nul 2>&1
 if not errorlevel 1 goto :core_ready
 
+:install_core
 echo Installing the core application ...
-"%VENV_PY%" -m pip install --disable-pip-version-check -e "."
+"%VENV_PY%" -m pip install --disable-pip-version-check -c "%CONSTRAINTS%" -e "."
 if errorlevel 1 (
     echo.
     echo The core project dependencies could not be installed.
@@ -55,6 +68,13 @@ if errorlevel 1 (
     echo.
     echo The environment was created, but the core application is incomplete.
     exit /b 14
+)
+
+"%VENV_PY%" "%FINGERPRINT_TOOL%" write --root "%CD%" --state "%CORE_FINGERPRINT%" >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo The core application was installed, but dependency freshness could not be recorded.
+    exit /b 18
 )
 
 :core_ready
@@ -83,7 +103,7 @@ exit /b 15
 
 :install_optional
 echo Installing optional support: %OPTIONAL_EXTRAS% ...
-"%VENV_PY%" -m pip install --disable-pip-version-check -e ".[%OPTIONAL_EXTRAS%]"
+"%VENV_PY%" -m pip install --disable-pip-version-check -c "%CONSTRAINTS%" -e ".[%OPTIONAL_EXTRAS%]"
 if errorlevel 1 (
     echo.
     echo Optional support could not be installed. The core application remains usable.

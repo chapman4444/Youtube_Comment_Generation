@@ -53,6 +53,18 @@ def apply_window_options(
         options.whisper_model = str(
             configuration.get("whisper_model", "small.en")
         )
+    if configured("whisper_maximum_seconds"):
+        seconds = int(configuration.get("whisper_maximum_seconds", 3600))
+        options.whisper_maximum_minutes = max(1, (seconds + 59) // 60)
+    if configured("whisper_maximum_audio_bytes"):
+        byte_limit = int(configuration.get(
+            "whisper_maximum_audio_bytes",
+            200 * 1024 * 1024,
+        ))
+        options.whisper_maximum_audio_mib = max(
+            1,
+            (byte_limit + (1024 * 1024) - 1) // (1024 * 1024),
+        )
 
     if configured("reply_scan_comments"):
         options.reply_scan_comments = int(

@@ -42,6 +42,19 @@ Comment evidence depth and reply discovery depth are separate values:
 Every exposed window flag is projected into the model. Unsupported flags are
 not silently accepted.
 
+Advanced retrieval settings are projected through the same-build boundary:
+
+- transcript languages and proxy URL construct the YouTube, caption,
+  yt-dlp, saved-fallback, and Whisper path for that build;
+- relevance and recent comment limits remain separate requests;
+- Retrieve replies controls whether comment-packet reply evidence is fetched;
+- Reply threads to retrieve bounds the number of parent threads queried;
+- Replies per thread bounds each selected parent.
+
+The former Open files with and generic overwrite controls were removed because
+no tested execution action consumed them. Unique run-directory creation,
+foreign-file refusal, and publication rollback remain authoritative.
+
 ## Writing presets
 
 A `WritingPreset` contains only reusable prose choices:

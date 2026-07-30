@@ -31,16 +31,18 @@ not be described as independent reproduction.
 
 ### Layer 3: Separate release gates
 
-The repository also defines release checks such as the multi-version CI
-matrix, `tools/verify_two_runs.py`, and
-`tools/verify_clean_install.py`. Their source proves that the checks are
-defined; it does not prove that they passed for this snapshot.
+The repository defines release checks such as the multi-version CI matrix,
+`tools/verify_two_runs.py`, and `tools/verify_clean_install.py`. Their source
+alone proves only that the checks are defined.
 
-In particular, clean-wheel installation is a separate release gate and is
-explicitly **not claimed by this review snapshot**. Do not infer a
-clean-install pass, Python-version matrix pass, two-run determinism pass, or
-complete release readiness unless separate execution evidence for that exact
-source identity is supplied.
+If validated `RELEASE_VERIFICATION.json` and its matching human-readable
+`RELEASE_VERIFICATION.md` are included, they record the Python 3.10-3.12
+matrix, two-run determinism, clean-wheel installation, distribution hashes,
+and final exact source identity for this manifest. Treat those as recorded
+execution evidence, not as an independent reviewer rerun. If the validated
+companion evidence is absent, report those release gates as unverified. Do not
+infer complete release readiness from either state without assessing the
+limits of the supplied evidence.
 
 ## Required review output
 

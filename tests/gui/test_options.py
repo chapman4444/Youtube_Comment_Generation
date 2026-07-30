@@ -264,7 +264,7 @@ def test_the_field_names_are_the_old_applications():
 
     for name in (
         "my_handle", "max_top", "max_recent", "use_triage",
-        "custom_length", "auto_watch", "editor_path",
+        "custom_length", "auto_watch", "guided_limit",
         "transcribe_locally", "whisper_policy", "whisper_model",
     ):
         assert name in payload

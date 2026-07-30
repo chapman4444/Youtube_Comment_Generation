@@ -244,3 +244,30 @@ def test_the_requested_languages_reach_every_source():
 
     for source in chain:
         assert source._languages == ("de", "en")
+
+
+def test_window_overrides_reach_every_adapter_in_the_same_build():
+    configuration = resolve(flags={
+        "output_directory": "output",
+        "proxy_url": "http://configured.invalid:8000",
+        "transcript_languages": ("en",),
+    })
+    wired = CLI.default_ports(
+        configuration,
+        "a-key",
+        events=None,
+        transcribe_locally=True,
+        transcript_languages=("de", "fr"),
+        proxy_url="http://window.invalid:9000",
+        whisper_maximum_seconds=1800,
+        whisper_maximum_audio_bytes=75 * 1024 * 1024,
+    )
+
+    for source in sources(wired["transcripts"]):
+        assert source._languages == ("de", "fr")
+        assert source._proxy_url == "http://window.invalid:9000"
+    assert wired["youtube"]._session.proxies["https"] == \
+        "http://window.invalid:9000"
+    whisper = sources(wired["transcripts"])[-1]
+    assert whisper._maximum_seconds == 1800
+    assert whisper._maximum_audio_bytes == 75 * 1024 * 1024

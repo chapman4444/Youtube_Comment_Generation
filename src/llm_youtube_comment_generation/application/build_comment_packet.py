@@ -22,6 +22,7 @@ from ..domain.statuses import (
     OperationResult,
     OperationStatus,
     WarningCode,
+    transcript_provenance,
 )
 from ..domain.video import format_timestamp
 from ..domain.writing_options import (
@@ -43,7 +44,12 @@ class BuildCommentPacketCommand:
     variations: tuple[str, ...] = ()
     dials: dict[str, str] = field(default_factory=dict)
     max_comments: int = 500
+    max_relevance_comments: int | None = None
+    max_recent_comments: int | None = None
+    max_reply_threads: int = 20
     max_replies_per_thread: int = 100
+    include_replies: bool = True
+    transcript_languages: tuple[str, ...] = ("en",)
     packet_characters: int = 280_000
     explicit_length: tuple[int, int] | None = None
     allow_no_transcript: bool = False
@@ -79,8 +85,12 @@ def handle(
         InspectVideoCommand(
             video=command.video,
             max_comments=command.max_comments,
+            max_relevance_comments=command.max_relevance_comments,
+            max_recent_comments=command.max_recent_comments,
+            max_reply_threads=command.max_reply_threads,
             max_replies_per_thread=command.max_replies_per_thread,
-            include_replies=True,
+            include_replies=command.include_replies,
+            transcript_languages=command.transcript_languages,
             dry_run=command.dry_run,
         ),
         youtube=youtube, transcripts=transcripts, events=events,
@@ -151,7 +161,7 @@ def handle(
 
     run_record = {
         "kind": "comment",
-        "artifact_contract_version": 2,
+        "artifact_contract_version": 3,
         "evidence_schema_version": 2,
         "video_id": inspection.video.get("video_id", ""),
         "video_title": inspection.video.get("title", ""),
@@ -174,16 +184,7 @@ def handle(
             "reported_total": inspection.retrieval.reported_total,
             "notes": list(inspection.retrieval.notes),
         },
-        "transcript": {
-            "availability": transcript.availability.value,
-            "language": transcript.language,
-            "entries": len(transcript.entries),
-            # Where it came from, not only whether there was one. A transcript
-            # reused from an earlier run is a legitimate way to build a packet
-            # and an illegitimate thing to leave unrecorded.
-            "source": transcript.source,
-            "detail": transcript.detail,
-        },
+        "transcript": transcript_provenance(transcript),
         "counts": {
             "comments": len(inspection.comments),
             "replies": len(inspection.replies),

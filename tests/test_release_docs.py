@@ -67,9 +67,13 @@ def test_review_prompt_separates_the_three_evidence_layers():
     assert "Layer 3: Separate release gates" in prompt
     assert "its presence is not proof that a test ran or passed" in normalized
     assert "not a fresh execution performed by the reviewer" in prompt
-    assert "not claimed by this review snapshot" in prompt
+    assert "If validated `RELEASE_VERIFICATION.json`" in prompt
+    assert "If the validated companion evidence is absent" in normalized
+    assert "not claimed by this review snapshot" not in prompt
     assert "REVIEW_PROMPT.md" in readme
-    assert "clean-wheel gate passed" in readme
+    assert "validated companion release evidence is included" in readme
+    assert "those release gates remain unverified" in readme
+    assert "explicitly does not claim" not in readme
 
 
 def test_architecture_documents_state_the_implemented_contracts():

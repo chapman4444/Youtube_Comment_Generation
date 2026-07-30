@@ -17,6 +17,7 @@ from typing import Any, Sequence
 
 from ..domain.statuses import TranscriptAvailability, TranscriptResult
 from .youtube_api import build_session
+from .external_errors import sanitize_external_error
 
 LOGGER = logging.getLogger(__name__)
 
@@ -229,7 +230,7 @@ class TranscriptAdapter:
             return TranscriptResult(
                 availability=self._classify(exc),
                 source=SOURCE,
-                detail=f"{type(exc).__name__}: {exc}".strip(),
+                detail=sanitize_external_error(exc, self._proxy_url),
             )
 
         if not listing:
@@ -253,7 +254,7 @@ class TranscriptAdapter:
             return TranscriptResult(
                 availability=TranscriptAvailability.FETCH_FAILED,
                 source=SOURCE,
-                detail=f"{type(exc).__name__}: {exc}".strip(),
+                detail=sanitize_external_error(exc, self._proxy_url),
             )
 
         if not entries:

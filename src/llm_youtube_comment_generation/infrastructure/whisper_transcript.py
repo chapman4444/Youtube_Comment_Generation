@@ -33,6 +33,7 @@ from typing import Any, Callable, Iterable, Sequence
 
 from ..domain.errors import OperationCancelled
 from ..domain.statuses import TranscriptAvailability, TranscriptResult
+from .external_errors import sanitize_external_error
 
 LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +48,20 @@ DEFAULT_MODEL = "small.en"
 #: is this unsure of are dropped rather than quoted into a packet as though
 #: somebody said them.
 MINIMUM_CONFIDENCE = -1.0
+
+#: Local transcription is a fallback, not an unlimited media-processing job.
+#: Reject longer videos before downloading their audio. The same ceiling is
+#: also passed to faster-whisper in case upstream duration metadata is absent
+#: or inaccurate.
+DEFAULT_MAXIMUM_SECONDS = 60 * 60
+
+#: A second, independent ceiling for malformed metadata, unusually high
+#: bitrate audio, and servers that do not report a content length.
+DEFAULT_MAXIMUM_AUDIO_BYTES = 200 * 1024 * 1024
+
+
+class WhisperLimitExceeded(RuntimeError):
+    """The local-transcription safety budget was exceeded."""
 
 
 def library_available() -> bool:
@@ -64,17 +79,26 @@ def download_audio(
     into: Path,
     proxy_url: str = "",
     *,
+    maximum_seconds: int = DEFAULT_MAXIMUM_SECONDS,
+    maximum_bytes: int = DEFAULT_MAXIMUM_AUDIO_BYTES,
     cancelled: Callable[[], bool] | None = None,
 ) -> Path:
-    """Fetch the audio track alone. Returns the file written."""
+    """Fetch bounded audio only. Returns the file written."""
 
     import yt_dlp
 
     cancelled = cancelled or (lambda: False)
+    maximum_seconds = max(1, int(maximum_seconds))
+    maximum_bytes = max(1, int(maximum_bytes))
 
-    def stop_if_requested(_status: dict[str, Any]) -> None:
+    def stop_if_requested(status: dict[str, Any]) -> None:
         if cancelled():
             raise OperationCancelled("Stopped while downloading the audio.")
+        downloaded = int(status.get("downloaded_bytes", 0) or 0)
+        if downloaded > maximum_bytes:
+            raise WhisperLimitExceeded(
+                _byte_limit_message(maximum_bytes)
+            )
 
     template = str(into / "%(id)s.%(ext)s")
     options: dict[str, Any] = {
@@ -93,15 +117,76 @@ def download_audio(
 
     with yt_dlp.YoutubeDL(options) as ydl:
         stop_if_requested({})
+        # Inspect first and only start the transfer after the duration and any
+        # advertised byte size have passed the local-transcription budget.
         info = ydl.extract_info(
-            f"https://www.youtube.com/watch?v={video_id}", download=True
+            f"https://www.youtube.com/watch?v={video_id}", download=False
         )
+        _enforce_media_limits(
+            info,
+            maximum_seconds=maximum_seconds,
+            maximum_bytes=maximum_bytes,
+        )
+        stop_if_requested({})
+        try:
+            info = ydl.process_ie_result(info, download=True)
+        except WhisperLimitExceeded:
+            raise
+        except Exception as exc:
+            # yt-dlp may wrap exceptions raised by progress hooks.
+            if "audio download exceeded the safety limit" in str(exc):
+                raise WhisperLimitExceeded(
+                    _byte_limit_message(maximum_bytes)
+                ) from exc
+            raise
         stop_if_requested({})
 
     written = list(into.glob(f"{info.get('id', video_id)}.*"))
     if not written:
         raise OSError("yt-dlp reported success but wrote no audio file")
+    if written[0].stat().st_size > maximum_bytes:
+        raise WhisperLimitExceeded(_byte_limit_message(maximum_bytes))
     return written[0]
+
+
+def _enforce_media_limits(
+    info: dict[str, Any],
+    *,
+    maximum_seconds: int,
+    maximum_bytes: int,
+) -> None:
+    """Refuse known-oversized media before its audio transfer starts."""
+
+    duration = float(info.get("duration", 0.0) or 0.0)
+    if duration > maximum_seconds:
+        minutes = maximum_seconds / 60
+        raise WhisperLimitExceeded(
+            f"video duration is {duration / 60:.1f} minutes; local Whisper "
+            f"is limited to {minutes:.0f} minutes"
+        )
+
+    candidates = [info]
+    candidates.extend(info.get("requested_downloads") or ())
+    advertised_bytes = max(
+        (
+            int(candidate.get("filesize", 0)
+                or candidate.get("filesize_approx", 0)
+                or 0)
+            for candidate in candidates
+            if isinstance(candidate, dict)
+        ),
+        default=0,
+    )
+    if advertised_bytes > maximum_bytes:
+        raise WhisperLimitExceeded(_byte_limit_message(maximum_bytes))
+
+
+def _byte_limit_message(maximum_bytes: int) -> str:
+    megabytes = maximum_bytes / (1024 * 1024)
+    return (
+        f"audio download exceeded the safety limit of "
+        f"{megabytes:.0f} MiB"
+    )
 
 
 class _Silent:
@@ -222,6 +307,8 @@ class WhisperTranscriptAdapter:
         transcriber: Callable[..., tuple[list[dict[str, Any]], str]] | None = None,
         events=None,
         cancelled: Callable[[], bool] | None = None,
+        maximum_seconds: int = DEFAULT_MAXIMUM_SECONDS,
+        maximum_audio_bytes: int = DEFAULT_MAXIMUM_AUDIO_BYTES,
     ) -> None:
         self._languages = tuple(languages)
         self._proxy_url = proxy_url or ""
@@ -230,6 +317,8 @@ class WhisperTranscriptAdapter:
         self._transcribe = transcriber or transcribe
         self._events = events
         self._cancelled = cancelled or (lambda: False)
+        self._maximum_seconds = max(1, int(maximum_seconds))
+        self._maximum_audio_bytes = max(1, int(maximum_audio_bytes))
         self._done: dict[str, TranscriptResult] = {}
 
     def _stop_if_requested(self, message: str) -> None:
@@ -271,6 +360,8 @@ class WhisperTranscriptAdapter:
                         video_id,
                         Path(scratch),
                         self._proxy_url,
+                        maximum_seconds=self._maximum_seconds,
+                        maximum_bytes=self._maximum_audio_bytes,
                         cancelled=self._cancelled,
                     )
                 else:
@@ -287,12 +378,14 @@ class WhisperTranscriptAdapter:
                     raise OperationCancelled(
                         "Stopped while downloading the audio."
                     ) from exc
+                failure_detail = sanitize_external_error(
+                    exc, self._proxy_url, limit=120
+                )
                 return TranscriptResult(
                     availability=TranscriptAvailability.FETCH_FAILED,
                     source=SOURCE,
                     detail=(f"the audio could not be downloaded "
-                            f"({type(exc).__name__}: "
-                            f"{str(exc).splitlines()[0][:120]})"),
+                            f"({failure_detail})"),
                 )
 
             self._stop_if_requested(
@@ -304,6 +397,7 @@ class WhisperTranscriptAdapter:
                     "language": wanted[0].split("-")[0] if wanted else "",
                 }
                 if self._transcribe is transcribe:
+                    arguments["maximum_seconds"] = self._maximum_seconds
                     arguments["cancelled"] = self._cancelled
                     arguments["progress"] = self._report_progress
                 entries, detected = self._transcribe(audio, **arguments)
@@ -314,12 +408,14 @@ class WhisperTranscriptAdapter:
                     raise OperationCancelled(
                         "Stopped during local transcription."
                     ) from exc
+                failure_detail = sanitize_external_error(
+                    exc, self._proxy_url, limit=120
+                )
                 return TranscriptResult(
                     availability=TranscriptAvailability.FETCH_FAILED,
                     source=SOURCE,
                     detail=(f"the audio downloaded but could not be "
-                            f"transcribed ({type(exc).__name__}: "
-                            f"{str(exc).splitlines()[0][:120]})"),
+                            f"transcribed ({failure_detail})"),
                 )
 
         if not entries:

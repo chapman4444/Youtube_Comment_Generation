@@ -13,14 +13,15 @@ PADDING = 8
 class AdvancedDialog:                       # pragma: no cover - opens a dialog
     FIELDS = (
         ("output_directory", "Output folder", str),
-        ("editor_path", "Open files with", str),
         ("languages", "Transcript languages", str),
         ("proxy_url", "Proxy URL", str),
         ("whisper_model", "Whisper model", str),
+        ("whisper_maximum_minutes", "Whisper maximum minutes", int),
+        ("whisper_maximum_audio_mib", "Whisper maximum audio MiB", int),
         ("my_handle", "Your @username", str),
         ("max_top", "Relevance comments", int),
         ("max_recent", "Recent comments", int),
-        ("max_threads", "Reply threads", int),
+        ("max_threads", "Reply threads to retrieve", int),
         ("max_replies", "Replies per thread", int),
         ("packet_characters", "Packet characters", int),
     )
@@ -68,14 +69,8 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
         ttk.Checkbutton(
             frame, text="Retrieve replies", variable=self.include_replies
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self.overwrite = tk.BooleanVar(value=options.overwrite)
-        ttk.Checkbutton(
-            frame,
-            text="Overwrite a previous output folder",
-            variable=self.overwrite,
-        ).grid(row=row + 1, column=0, columnspan=2, sticky="w")
         ttk.Label(frame, text="When no transcript is available:").grid(
-            row=row + 2, column=0, columnspan=2, sticky="w", pady=(8, 2)
+            row=row + 1, column=0, columnspan=2, sticky="w", pady=(8, 2)
         )
         policy = str(getattr(options, "whisper_policy", "") or "").lower()
         if policy not in WHISPER_POLICIES:
@@ -86,7 +81,7 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
             ("ask", "Ask before using local Whisper"),
             ("automatic", "Automatically use local Whisper"),
         )
-        for offset, (value, label) in enumerate(choices, 3):
+        for offset, (value, label) in enumerate(choices, 2):
             ttk.Radiobutton(
                 frame,
                 text=label,
@@ -101,7 +96,7 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
             )
 
         ttk.Button(frame, text="Done", command=self.close).grid(
-            row=row + 6, column=1, sticky="e", pady=(10, 0)
+            row=row + 5, column=1, sticky="e", pady=(10, 0)
         )
 
     def close(self) -> None:
@@ -111,7 +106,6 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
             except tk.TclError:
                 continue
         self.options.include_replies = self.include_replies.get()
-        self.options.overwrite = self.overwrite.get()
         self.options.whisper_policy = self.whisper_policy.get()
         self.options.transcribe_locally = (
             self.options.whisper_policy == "automatic"

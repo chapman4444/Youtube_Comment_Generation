@@ -25,6 +25,7 @@ import logging
 from typing import Any, Callable, Sequence
 
 from ..domain.statuses import TranscriptAvailability, TranscriptResult
+from .external_errors import sanitize_external_error
 from .youtube_api import build_session
 
 LOGGER = logging.getLogger(__name__)
@@ -212,7 +213,7 @@ class YtDlpTranscriptAdapter:
             return TranscriptResult(
                 availability=self._classify(exc),
                 source=SOURCE,
-                detail=f"{type(exc).__name__}: {exc}".strip().splitlines()[0][:200],
+                detail=sanitize_external_error(exc, self._proxy_url),
             )
 
         chosen = choose_track(info, wanted)

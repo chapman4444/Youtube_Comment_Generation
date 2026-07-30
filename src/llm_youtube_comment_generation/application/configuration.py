@@ -75,6 +75,8 @@ DEFAULTS: dict[str, Any] = {
     # being asked would be a surprise in the middle of a packet build.
     "transcribe_locally": False,
     "whisper_model": "small.en",
+    "whisper_maximum_seconds": 3600,
+    "whisper_maximum_audio_bytes": 200 * 1024 * 1024,
 }
 
 # Which environment variable feeds which setting. Named explicitly rather
@@ -92,6 +94,8 @@ ENVIRONMENT_KEYS: dict[str, str] = {
     "my_channel_id": "YTCOMMENT_MY_CHANNEL_ID",
     "transcribe_locally": "YTCOMMENT_TRANSCRIBE_LOCALLY",
     "whisper_model": "YTCOMMENT_WHISPER_MODEL",
+    "whisper_maximum_seconds": "YTCOMMENT_WHISPER_MAXIMUM_SECONDS",
+    "whisper_maximum_audio_bytes": "YTCOMMENT_WHISPER_MAXIMUM_AUDIO_BYTES",
     "reply_scan_comments": "YTCOMMENT_REPLY_SCAN_COMMENTS",
 }
 
@@ -106,6 +110,7 @@ API_KEY_VARIABLES = ("YOUTUBE_API_KEY", "YTCOMMENT_API_KEY")
 INTEGER_SETTINGS = frozenset({
     "packet_characters", "max_comments", "max_replies_per_thread",
     "reply_scan_comments",
+    "whisper_maximum_seconds", "whisper_maximum_audio_bytes",
 })
 
 
@@ -214,6 +219,14 @@ def validate(resolved: Mapping[str, Resolved]) -> None:
     if resolved["max_replies_per_thread"].value < 1:
         raise ConfigurationError(
             "max_replies_per_thread must be at least 1."
+        )
+    if resolved["whisper_maximum_seconds"].value < 1:
+        raise ConfigurationError(
+            "whisper_maximum_seconds must be at least 1."
+        )
+    if resolved["whisper_maximum_audio_bytes"].value < 1:
+        raise ConfigurationError(
+            "whisper_maximum_audio_bytes must be at least 1."
         )
     if resolved["output_format"].value not in ("human", "json"):
         raise ConfigurationError(

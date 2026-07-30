@@ -28,6 +28,28 @@ from llm_youtube_comment_generation.infrastructure.transcript_api import (
 VIDEO = "x2ExZ4xSblI"
 
 
+def test_caption_provider_failure_never_exposes_proxy_credentials(monkeypatch):
+    proxy = (
+        "http://" + "proxy-user:proxy-password@" + "proxy.example:8080"
+    )
+
+    class FailingClient:
+        def list(self, _video_id):
+            raise RuntimeError(f"connection refused for {proxy}")
+
+    monkeypatch.setattr(
+        transcript_api,
+        "transcript_client",
+        lambda _proxy: FailingClient(),
+    )
+
+    detail = TranscriptAdapter(proxy_url=proxy).fetch(VIDEO).detail
+
+    assert "proxy.example:8080" in detail
+    assert "proxy-user" not in detail
+    assert "proxy-password" not in detail
+
+
 class CountingAdapter(TranscriptAdapter):
     """Counts live attempts without making any."""
 

@@ -6,6 +6,9 @@ half is stale.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import multiprocessing
 from pathlib import Path
 
 import pytest
@@ -205,11 +208,54 @@ def test_a_run_root_never_collides(tmp_path):
     something wrong with the first."""
 
     first = unique_run_root(tmp_path, "gC-J7zwYMAM", "20260727-120000")
-    first.mkdir(parents=True)
     second = unique_run_root(tmp_path, "gC-J7zwYMAM", "20260727-120000")
 
     assert first != second
-    assert not second.exists()
+    assert first.is_dir()
+    assert second.is_dir()
+
+
+def _allocate_and_publish(base, barrier, results, content):
+    barrier.wait()
+    root = unique_run_root(
+        Path(base), "gC-J7zwYMAM", "20260727-120000"
+    )
+    store = FilesystemArtifactStore(root)
+    store.stage("packet.md", content)
+    store.commit()
+    results.put(str(root))
+
+
+def test_two_processes_publish_to_distinct_reserved_roots(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    barrier = context.Barrier(2)
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_allocate_and_publish,
+            args=(str(tmp_path), barrier, results, content),
+        )
+        for content in ("first process", "second process")
+    ]
+    for process in processes:
+        process.start()
+    for process in processes:
+        process.join(20)
+        assert process.exitcode == 0
+
+    roots = [Path(results.get(timeout=2)) for _ in processes]
+    assert len(set(roots)) == 2
+    contents = {
+        (root / "packet.md").read_text(encoding="utf-8")
+        for root in roots
+    }
+    assert contents == {"first process", "second process"}
+    for root in roots:
+        marker = json.loads(
+            (root / COMPLETION_MARKER).read_text(encoding="utf-8")
+        )
+        digest = hashlib.sha256((root / "packet.md").read_bytes()).hexdigest()
+        assert marker == {"version": 1, "files": {"packet.md": digest}}
 
 
 def test_artifact_names_must_be_plain(tmp_path):

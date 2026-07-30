@@ -90,6 +90,11 @@ def reused():
         availability=TranscriptAvailability.AVAILABLE,
         entries=[{"text": "a line", "start": 0.0, "duration": 2.0}],
         source="saved-transcript",
+        original_source="whisper",
+        originating_run="gC-J7zwYMAM_20260728-080321",
+        is_generated=True,
+        language="English",
+        language_code="en",
         detail=("the live fetch failed (IpBlocked), so this is the transcript "
                 "saved with run 20260728-080321. It is reused unchanged and "
                 "was not fetched again."),
@@ -102,6 +107,8 @@ def fresh():
         entries=[{"text": "a line", "start": 0.0, "duration": 2.0}],
         source="youtube-transcript-api",
         language="English (auto-generated)",
+        language_code="en",
+        is_generated=True,
     )
 
 
@@ -121,6 +128,11 @@ def test_the_run_record_says_where_the_transcript_came_from():
     stored = record(build(reused()))["transcript"]
 
     assert stored["source"] == "saved-transcript"
+    assert stored["immediate_source"] == "saved-transcript"
+    assert stored["original_source"] == "whisper"
+    assert stored["is_generated"] is True
+    assert stored["language_code"] == "en"
+    assert stored["originating_run"] == "gC-J7zwYMAM_20260728-080321"
     assert "not fetched again" in stored["detail"]
     assert stored["availability"] == "available"
 
@@ -135,6 +147,8 @@ def test_a_fresh_run_still_records_its_source():
     stored = record(build(fresh()))["transcript"]
 
     assert stored["source"] == "youtube-transcript-api"
+    assert stored["original_source"] == "youtube-transcript-api"
+    assert stored["is_generated"] is True
 
 
 def test_a_missing_transcript_is_still_its_own_warning():

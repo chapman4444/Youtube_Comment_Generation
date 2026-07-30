@@ -7,6 +7,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from ...domain.errors import ConfigurationError
 from ...infrastructure.sqlite_history import SqliteHistoryStore
 from ...infrastructure.user_state import default_state_directory
 from ..gui.options import PacketOptionsModel
@@ -77,8 +78,11 @@ def history_store(configuration) -> SqliteHistoryStore:
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(legacy, path)
-        except OSError:
-            # The original stays untouched; opening the target later reports
-            # the ordinary visible storage error.
-            pass
+        except OSError as failure:
+            raise ConfigurationError(
+                "Could not migrate engagement history from "
+                f"{legacy} to {path}. The legacy history was left unchanged "
+                "and no replacement history will be opened. Correct the "
+                f"destination or storage error and try again: {failure}"
+            ) from failure
     return SqliteHistoryStore(path)

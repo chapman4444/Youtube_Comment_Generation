@@ -12,11 +12,26 @@ import hashlib
 import pytest
 
 from llm_youtube_comment_generation.application.runs import (
+    _check_transcript_provenance,
     list_runs,
     render_list,
     render_validation,
     validate_run,
 )
+
+PROVENANCE = {
+    "availability": "available",
+    "source": "youtube-transcript-api",
+    "immediate_source": "youtube-transcript-api",
+    "original_source": "youtube-transcript-api",
+    "is_generated": False,
+    "language": "English",
+    "language_code": "en",
+    "entries": 1,
+    "detail": "",
+    "originating_run": "",
+    "attempts": [],
+}
 
 
 def make_run(root, name="gC-J7zwYMAM_20260727-120000", *, packet="x" * 500,
@@ -96,6 +111,23 @@ def test_version_two_run_validates_completion_hashes(tmp_path):
     summary = validate_run(directory)
 
     assert any("does not match" in problem for problem in summary.problems)
+
+
+def test_version_three_transcript_provenance_is_internally_validated():
+    assert _check_transcript_provenance(PROVENANCE) == []
+
+    broken = dict(
+        PROVENANCE,
+        source="saved-transcript",
+        immediate_source="youtube-transcript-api",
+        is_generated="unknown",
+        originating_run="",
+    )
+    problems = _check_transcript_provenance(broken)
+
+    assert any("source and immediate_source disagree" in p for p in problems)
+    assert any("is_generated" in p for p in problems)
+    assert any("originating_run" in p for p in problems)
 
 
 def test_a_missing_artifact_is_named(tmp_path):

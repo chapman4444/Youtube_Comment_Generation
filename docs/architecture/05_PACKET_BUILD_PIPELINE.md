@@ -31,12 +31,15 @@ inspection. `build_comment_packet.handle()` reuses that exact object for the
 packet, warnings, transcript artifact, report, and `run.json`; one build never
 asks the transcript port twice.
 
-New run directories are written in a private sibling directory and promoted
-only after every artifact and its completion manifest are ready. Replacement
-of an existing owned set removes its completion marker before changing files,
-writes the new completion manifest last, and restores the prior files after a
-caught failure. Validators reject version-two runs whose manifest is absent,
-incomplete, or does not match the published bytes.
+Normal run directories are first reserved by atomic directory creation, so
+independent processes cannot select the same video-and-timestamp root.
+Artifacts use atomic file replacement and the completion manifest is written
+last. A reserved or interrupted directory therefore remains visibly
+incomplete rather than validating as a published run. Replacement of an
+existing owned set removes its completion marker before changing files,
+writes the new completion manifest last, and restores the prior files after
+a caught failure. Validators reject version-two runs whose manifest is
+absent, incomplete, or does not match the published bytes.
 
 ## Transcript policy
 
@@ -55,11 +58,18 @@ The GUI has three local-Whisper policies:
 explicitly enable local transcription map to `automatic` for compatibility.
 Cancellation is checked while approval is pending, during audio acquisition,
 between completed Whisper segments, and before artifact publication.
+Local Whisper also enforces independent operational limits in every policy:
+the configured duration is rejected before audio transfer, the configured
+byte ceiling is enforced by the download progress hook, the completed
+temporary file is checked again, and the duration ceiling reaches
+faster-whisper as a final CPU bound when metadata is absent or inaccurate.
+Defaults are 60 minutes and 200 MiB. Automatic mode never bypasses them.
 
 Normal GUI builds use this source order:
 
 1. `youtube-transcript-api`;
-2. published captions through `yt-dlp`;
+2. published captions through `yt-dlp`, even when the first independent
+   endpoint reported no published or empty captions;
 3. a transcript saved by an earlier run;
 4. local Whisper according to the selected policy.
 
@@ -67,8 +77,12 @@ The Transcript tab also exposes four one-run manual routes. Each manual route
 constructs only the selected transcript provider and does not silently fall
 through to another provider. The next normal Build returns to the full chain.
 
-Every result records its source. A reused saved transcript and a newly fetched
-caption are therefore distinguishable in `run.json`.
+Every packet-producing run records transcript availability, immediate source,
+original source, generated status, language and language code, entry count,
+detail, originating run, and every caption-source attempt. Reuse therefore
+records `saved-transcript` as the immediate route without erasing whether the
+original evidence was a published caption, YouTube-generated caption, local
+Whisper result, or legacy evidence with unknown provenance.
 
 ## GUI run ownership
 

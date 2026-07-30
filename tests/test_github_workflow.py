@@ -16,3 +16,5 @@ def test_quality_workflow_covers_supported_python_and_privacy():
     assert "verify_clean_install.py" in workflow
     assert "verify_two_runs.py" in workflow
     assert "faster_whisper" in workflow
+    assert "constraints/review.txt" in workflow
+    assert "PIP_CONSTRAINT" in workflow

@@ -56,14 +56,26 @@ def test_an_edit_reaches_the_options(dialog):
     assert dialog.options.max_recent == 321
 
 
-def test_the_checkboxes_reach_the_options_too(dialog):
+def test_retrieve_replies_reaches_the_options(dialog):
     dialog.include_replies.set(False)
-    dialog.overwrite.set(True)
 
     dialog.close()
 
     assert dialog.options.include_replies is False
-    assert dialog.options.overwrite is True
+
+
+def test_disconnected_editor_and_overwrite_controls_are_not_offered(dialog):
+    frame = dialog.top.winfo_children()[0]
+    labels = {
+        str(child.cget("text"))
+        for child in frame.winfo_children()
+        if "text" in child.keys()
+    }
+
+    assert "Open files with:" not in labels
+    assert "Overwrite a previous output folder" not in labels
+    assert "Reply threads:" not in labels
+    assert "Reply threads to retrieve:" in labels
 
 
 def test_whisper_behavior_is_a_three_way_choice(dialog):

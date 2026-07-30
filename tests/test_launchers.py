@@ -107,6 +107,21 @@ def test_venv_bootstrap_keeps_optional_providers_out_of_the_core_path():
     assert 'local-transcription = ["faster-whisper"]' in project
 
 
+def test_existing_environment_is_repaired_when_core_metadata_changes():
+    text = (ROOT / "setup_venv.bat").read_text(encoding="utf-8")
+    core_path = text.split("\n:core_ready", 1)[0]
+
+    assert "tools\\dependency_fingerprint.py" in core_path
+    assert " check --root " in core_path
+    assert " write --root " in core_path
+    assert core_path.index(" check --root ") < core_path.index(
+        "\n:install_core"
+    )
+    assert core_path.index(" write --root ") > core_path.index(
+        'pip install --disable-pip-version-check'
+    )
+
+
 @pytest.mark.parametrize("name", sorted(LAUNCHERS))
 def test_the_launcher_ends_where_it_can_be_read(name):
     """Without a pause, a double-clicked window closes before the operator
@@ -216,6 +231,18 @@ def test_review_zip_records_snapshot_verification_evidence():
     assert "WinRAR.exe" in text
     assert "Youtube_Comment_Generation_review.new.zip" in text
     assert '"%WINRAR_EXE%" t -y "%TEMP_ARCHIVE%"' in text
+    assert '"%PROJECT_ROOT%constraints"' in text
+    assert "RELEASE_VERIFICATION.md" in text
+    assert "RELEASE_VERIFICATION.json" in text
+    assert (
+        'copy /y "%REVIEW_DIR%\\RELEASE_VERIFICATION.md" "%STAGE%\\"'
+        in text
+    )
+    assert (
+        'copy /y "%REVIEW_DIR%\\RELEASE_VERIFICATION.json" "%STAGE%\\"'
+        in text
+    )
+    assert 'set "ARCHIVE_DIGEST=%ARCHIVE%.sha256"' in text
     assert 'move /y "%TEMP_ARCHIVE%" "%ARCHIVE%"' in text
     evidence = text.index('tools\\create_review_evidence.py')
     replacement = text.index('move /y "%TEMP_ARCHIVE%" "%ARCHIVE%"')
@@ -242,6 +269,28 @@ def test_review_setup_declares_and_checks_every_gate_dependency():
         "import build, faster_whisper, pytest, requests, ruff, "
         "youtube_transcript_api, yt_dlp"
     ) in setup
+
+
+def test_operational_and_release_installs_use_reviewed_constraints():
+    constraints = ROOT / "constraints" / "review.txt"
+    setup = (ROOT / "setup_venv.bat").read_text(encoding="utf-8")
+    clean = (ROOT / "tools" / "verify_clean_install.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert constraints.is_file()
+    text = constraints.read_text(encoding="utf-8")
+    for requirement in (
+        "requests==",
+        "pytest==",
+        "youtube-transcript-api==",
+        "yt-dlp==",
+        "faster-whisper==",
+    ):
+        assert requirement in text
+    assert 'set "PIP_CONSTRAINT=%CONSTRAINTS%"' in setup
+    assert '-c "%CONSTRAINTS%"' in setup
+    assert '"constraints" / "review.txt"' in clean
 
 
 @pytest.mark.opens_for_real

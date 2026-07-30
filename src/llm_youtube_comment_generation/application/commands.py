@@ -24,6 +24,9 @@ class InspectVideoCommand:
 
     video: str
     max_comments: int = 500
+    max_relevance_comments: int | None = None
+    max_recent_comments: int | None = None
+    max_reply_threads: int = 20
     max_replies_per_thread: int = 100
     include_replies: bool = False
     transcript_languages: tuple[str, ...] = ("en",)
@@ -35,6 +38,18 @@ class InspectVideoCommand:
         object.__setattr__(self, "video_id", extract_video_id(self.video))
         if self.max_comments < 1:
             raise ConfigurationError("max_comments must be at least 1.")
+        if self.max_relevance_comments is not None and \
+                self.max_relevance_comments < 1:
+            raise ConfigurationError(
+                "max_relevance_comments must be at least 1."
+            )
+        if self.max_recent_comments is not None and \
+                self.max_recent_comments < 1:
+            raise ConfigurationError(
+                "max_recent_comments must be at least 1."
+            )
+        if self.max_reply_threads < 1:
+            raise ConfigurationError("max_reply_threads must be at least 1.")
         if self.max_replies_per_thread < 1:
             raise ConfigurationError(
                 "max_replies_per_thread must be at least 1."

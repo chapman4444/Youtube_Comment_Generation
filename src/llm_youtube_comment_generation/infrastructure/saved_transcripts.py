@@ -10,8 +10,9 @@ between one hour and the next, and the operator already has them.
 
 Two rules make this safe rather than merely convenient:
 
-Only on failure. A live transcript always wins, so the fallback cannot hide a
-transcript that has since been corrected or translated.
+Only on retryable retrieval failure. A saved transcript may recover from a
+blocked or unreachable caption service, but it must not replace a current
+NOT_PUBLISHED, EMPTY, LANGUAGE_UNAVAILABLE, or NOT_PUBLIC result.
 
 Never silent. The result says where the transcript came from and when it was
 saved, that detail reaches the packet's own transcript status, and the run
@@ -21,6 +22,7 @@ built from one without saying so is not.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from pathlib import Path
@@ -112,33 +114,42 @@ class SavedTranscriptFallback:
         )
         if live.entries:
             return live
-        if live.availability is TranscriptAvailability.NOT_PUBLIC:
-            # A private video is terminal. Reusing an older public transcript
-            # would turn the current access state into AVAILABLE and make a
-            # new packet look supportable from evidence that is no longer
-            # publicly reachable.
-            return live
+        if live.availability is TranscriptAvailability.FETCH_FAILED:
+            saved = find_saved(self._output, video_id)
+            if saved is not None:
+                entries = parse_timestamped(saved.read_text(encoding="utf-8"))
+                if entries:
+                    when = saved.parent.name.split("_", 1)[-1]
+                    provenance = _saved_provenance(saved.parent)
+                    LOGGER.info(
+                        "using the transcript saved in %s: %s",
+                        saved.parent,
+                        live.detail,
+                    )
+                    return TranscriptResult(
+                        availability=TranscriptAvailability.AVAILABLE,
+                        entries=entries,
+                        source=SOURCE,
+                        original_source=provenance["original_source"],
+                        originating_run=saved.parent.name,
+                        is_generated=provenance["is_generated"],
+                        language=provenance["language"],
+                        language_code=provenance["language_code"],
+                        attempts=live.attempts,
+                        detail=(
+                            f"reused unchanged from run {when}; live "
+                            f"retrieval failed ({_reason(live)}). It was not "
+                            f"fetched again. Original source: "
+                            f"{provenance['original_source'] or 'unknown'}; "
+                            f"generated: "
+                            f"{_generated_label(provenance['is_generated'])}."
+                        ),
+                    )
 
-        saved = find_saved(self._output, video_id)
-        if saved is not None:
-            entries = parse_timestamped(saved.read_text(encoding="utf-8"))
-            if entries:
-                when = saved.parent.name.split("_", 1)[-1]
-                LOGGER.info(
-                    "using the transcript saved in %s: %s",
-                    saved.parent,
-                    live.detail,
-                )
-                return TranscriptResult(
-                    availability=TranscriptAvailability.AVAILABLE,
-                    entries=entries,
-                    source=SOURCE,
-                    detail=(
-                        f"the live fetch failed ({_reason(live)}), so this is "
-                        f"the transcript saved with run {when}. It is reused "
-                        "unchanged and was not fetched again."
-                    ),
-                )
+        if live.availability is TranscriptAvailability.NOT_PUBLIC:
+            # A private video is terminal. Local transcription would require
+            # retrieving audio that is not publicly accessible.
+            return live
 
         if self._local_fallback is None:
             return live
@@ -165,3 +176,52 @@ def _reason(live: TranscriptResult) -> str:
     if not first:
         return live.availability.value
     return first if len(first) <= 80 else first[:77].rstrip() + "..."
+
+
+def _saved_provenance(directory: Path) -> dict[str, object]:
+    """Read only provenance that the originating run actually recorded."""
+
+    unknown: dict[str, object] = {
+        "original_source": "",
+        "is_generated": None,
+        "language": "",
+        "language_code": "",
+    }
+    record_file = directory / "run.json"
+    try:
+        record = json.loads(record_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return unknown
+    if not isinstance(record, dict):
+        return unknown
+    transcript = record.get("transcript")
+    if not isinstance(transcript, dict):
+        return unknown
+
+    original_source = transcript.get("original_source")
+    if not isinstance(original_source, str) or not original_source:
+        candidate = transcript.get("immediate_source", transcript.get("source"))
+        original_source = candidate if isinstance(candidate, str) else ""
+        if original_source == SOURCE:
+            original_source = ""
+    generated = transcript.get("is_generated")
+    if not isinstance(generated, bool):
+        generated = None
+    language = transcript.get("language")
+    language_code = transcript.get("language_code")
+    return {
+        "original_source": original_source,
+        "is_generated": generated,
+        "language": language if isinstance(language, str) else "",
+        "language_code": (
+            language_code if isinstance(language_code, str) else ""
+        ),
+    }
+
+
+def _generated_label(value: object) -> str:
+    if value is True:
+        return "generated"
+    if value is False:
+        return "not generated"
+    return "unknown"

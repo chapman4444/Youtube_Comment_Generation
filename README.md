@@ -61,6 +61,9 @@ providers explicitly with `setup_venv.bat transcripts`, local Whisper with
 `setup_venv.bat local-transcription`, or both with `setup_venv.bat all`. The
 review archive builder uses `setup_venv.bat review`, which installs and
 preflights its complete declared verification toolset before staging begins.
+Every operational and verification installation is resolved through
+`constraints/review.txt`; the flexible compatibility ranges in
+`pyproject.toml` remain package metadata rather than the release environment.
 The launchers never fall back to an unrelated system-wide `python` command.
 Choose the no-caption behavior under **Advanced → Local Whisper**:
 
@@ -73,6 +76,12 @@ The persistent **Stop** button cancels caption retrieval or local
 transcription at the next safe point. The status bar shows transcript state,
 and the **Transcript** tab displays completed Whisper segments as they are
 created, with an estimated remaining time when enough progress is available.
+Local Whisper remains bounded in every mode: videos longer than 60 minutes
+are refused before audio transfer, downloads stop at 200 MiB, and the
+60-minute ceiling is also passed to the transcriber when upstream duration
+metadata is missing or inaccurate. Both effective limits are shown in
+Advanced and `doctor`, may be set through configuration or environment, and
+cannot be bypassed by Automatic mode.
 Normal Build tries the transcript API, `yt-dlp` captions, a saved transcript,
 and then the configured Whisper behavior. Four buttons in the Transcript tab
 can rerun a build using exactly one of those sources for diagnosis or manual
@@ -149,6 +158,10 @@ ytcomment privacy check
 The same privacy audit and test suite run automatically on GitHub for Python
 3.10, 3.11, and 3.12.
 
+Dependency updates are intentional rather than “newest available” installs.
+See `docs/architecture/09_DEPENDENCY_CONSTRAINTS.md` for the clean-environment
+update and verification procedure.
+
 Window settings, custom presets, and engagement history live under the
 operating system's private user-data directory. On Windows the default is:
 
@@ -172,14 +185,37 @@ local Whisper provider:
 python tools\verify_clean_install.py
 ```
 
+To bind the separate Windows Python matrix, determinism, and clean-wheel
+results to a review archive, first create the review ZIP, then record the
+release gates against its manifest and rebuild the ZIP:
+
+```text
+python tools\record_release_verification.py ^
+  --python310 .venv\Scripts\python.exe ^
+  --python311 C:\path\to\python311-environment\Scripts\python.exe ^
+  --python312 C:\path\to\python312-environment\Scripts\python.exe
+make_review_zip.bat
+```
+
+The second archive build includes `RELEASE_VERIFICATION.md` and its structured
+`RELEASE_VERIFICATION.json` only when the recorder proves an exact two-way
+match between the checkout release inputs and the manifest. The gates execute
+from a disposable tree reconstructed solely from those manifested files.
+Stale, incomplete, contradictory, or nonzero release evidence prevents archive
+replacement. A separately retained `.sha256` file binds the completed ZIP
+bytes to the delivered package.
+
 ## Review package
 
 `make_review_zip.bat` creates a privacy-checked source-review archive.
 `REVIEW_PROMPT.md` tells the reviewer to keep three evidence layers separate:
 the source and test files present in the snapshot, the verification recorded
-while staging that exact snapshot, and release gates that require separate
-execution evidence. The review archive explicitly does not claim that the
-clean-wheel gate passed.
+while staging that exact snapshot, and separately recorded release gates. When
+validated companion release evidence is included, it records the Python
+3.10-3.12 matrix, two-run determinism, clean-wheel installation, distribution
+hashes, and final exact source identity for that manifest. Without that
+companion evidence, those release gates remain unverified. Recorded evidence
+is not an independent reviewer rerun.
 
 ## Safety boundary
 

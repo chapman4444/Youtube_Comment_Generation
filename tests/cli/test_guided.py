@@ -119,7 +119,38 @@ def test_every_accepted_draft_is_recorded_in_the_run(tmp_path, ports):
     assert record["skipped"] == 0
     assert record["targets_offered"] == 2
     assert len(record["drafts"]) == 2
+    assert record["artifact_contract_version"] == 3
+    assert record["transcript"] == {
+        "availability": "available",
+        "source": "fake",
+        "immediate_source": "fake",
+        "original_source": "fake",
+        "is_generated": False,
+        "language": "English",
+        "language_code": "en",
+        "entries": 1,
+        "detail": "",
+        "originating_run": "",
+        "attempts": [],
+    }
     assert review is not None and review.stat().st_size > 0
+
+
+def test_reply_build_records_complete_transcript_provenance(tmp_path, ports):
+    code, _, _ = run(
+        ["reply", "build", VIDEO, "--comment-id", "r1"],
+        tmp_path,
+        ports,
+    )
+    _, record, _ = artifacts(tmp_path)
+
+    assert code == 0
+    assert record["kind"] == "reply"
+    assert record["artifact_contract_version"] == 3
+    assert record["transcript"]["immediate_source"] == "fake"
+    assert record["transcript"]["original_source"] == "fake"
+    assert record["transcript"]["is_generated"] is False
+    assert record["transcript"]["entries"] == 1
 
 
 def test_running_out_of_answers_keeps_what_was_accepted(tmp_path, ports):

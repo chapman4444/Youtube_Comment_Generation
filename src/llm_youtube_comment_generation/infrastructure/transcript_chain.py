@@ -21,20 +21,24 @@ legitimate; reusing quietly is the failure this project keeps having to fix.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Sequence
 
 from ..domain.statuses import TranscriptAvailability, TranscriptResult
 
 LOGGER = logging.getLogger(__name__)
 
-#: Availabilities that are an answer about the video rather than a failure to
-#: reach it. A second source will say the same thing.
-CONCLUSIVE_CAPTION_RESULT = frozenset({
+TERMINAL_CAPTION_RESULT = frozenset({
     TranscriptAvailability.AVAILABLE,
-    TranscriptAvailability.NOT_PUBLISHED,
     TranscriptAvailability.NOT_PUBLIC,
-    TranscriptAvailability.EMPTY,
 })
+
+UNAVAILABLE_STRENGTH = {
+    TranscriptAvailability.FETCH_FAILED: 1,
+    TranscriptAvailability.EMPTY: 2,
+    TranscriptAvailability.LANGUAGE_UNAVAILABLE: 3,
+    TranscriptAvailability.NOT_PUBLISHED: 4,
+}
 
 
 class ChainedTranscripts:
@@ -54,39 +58,60 @@ class ChainedTranscripts:
         video_id: str,
         languages: Sequence[str] = (),
     ) -> TranscriptResult:
-        attempts: list[TranscriptResult] = []
-
-        terminal: TranscriptResult | None = None
+        results: list[TranscriptResult] = []
         for source in self._caption_sources:
             result = source.fetch(video_id, languages)
-            if result.availability in CONCLUSIVE_CAPTION_RESULT:
-                if attempts and result.availability is TranscriptAvailability.AVAILABLE:
+            results.append(result)
+            if result.availability in TERMINAL_CAPTION_RESULT:
+                if len(results) > 1 and \
+                        result.availability is TranscriptAvailability.AVAILABLE:
                     # Which sources were tried first, and why they did not
                     # answer. Without this a packet says "yt-dlp" and gives no
                     # hint that the usual source is refusing this machine.
                     LOGGER.info(
                         "%s answered after %d source(s) could not",
-                        result.source, len(attempts),
+                        result.source, len(results) - 1,
                     )
-                terminal = result
-                break
-            attempts.append(result)
-
-        if terminal is not None and terminal.availability in (
-            TranscriptAvailability.AVAILABLE,
-            TranscriptAvailability.NOT_PUBLIC,
-        ):
-            return terminal
+                return replace(result, attempts=_attempt_records(results))
 
         # Local transcription is a distinct, explicitly enabled fallback. It
         # may handle no-caption, empty-caption, or unreachable-caption
         # outcomes, but it must never run for a private video.
         if self._local_fallback is not None:
-            return self._local_fallback.fetch(video_id, languages)
+            local = self._local_fallback.fetch(video_id, languages)
+            return replace(local, attempts=_attempt_records(results))
 
-        # Everything failed to be reached. Report the preferred source's
-        # failure rather than optional-fallback noise.
-        return terminal or (attempts[0] if attempts else TranscriptResult(
+        if results:
+            strongest = max(
+                enumerate(results),
+                key=lambda item: (
+                    UNAVAILABLE_STRENGTH.get(item[1].availability, 0),
+                    -item[0],
+                ),
+            )[1]
+            return replace(
+                strongest,
+                attempts=_attempt_records(results),
+                detail=_with_attempts(strongest.detail, results),
+            )
+        return TranscriptResult(
             availability=TranscriptAvailability.FETCH_FAILED,
             detail="no transcript source was configured",
-        ))
+        )
+
+
+def _attempt_records(results: list[TranscriptResult]) -> tuple[dict[str, str], ...]:
+    return tuple({
+        "source": str(result.source or ""),
+        "availability": result.availability.value,
+        "detail": str(result.detail or ""),
+    } for result in results)
+
+
+def _with_attempts(detail: str, results: list[TranscriptResult]) -> str:
+    summary = "; ".join(
+        f"{result.source or 'unknown'}={result.availability.value}"
+        for result in results
+    )
+    prefix = str(detail or "").strip().rstrip(".")
+    return f"{prefix + '. ' if prefix else ''}Caption attempts: {summary}."

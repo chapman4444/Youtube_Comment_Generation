@@ -13,10 +13,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
+try:
+    from tools.release_evidence_format import (
+        STRUCTURED_EVIDENCE_NAME,
+        load_and_validate_release_evidence,
+    )
+except ModuleNotFoundError:
+    from release_evidence_format import (
+        STRUCTURED_EVIDENCE_NAME,
+        load_and_validate_release_evidence,
+    )
+
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_NAME = "REVIEW_VERIFICATION.md"
 MANIFEST_NAME = "REVIEW_FILE_MANIFEST.sha256"
-EXCLUDED_NAMES = {EVIDENCE_NAME, MANIFEST_NAME}
+RELEASE_EVIDENCE_NAME = "RELEASE_VERIFICATION.md"
+EXCLUDED_NAMES = {
+    EVIDENCE_NAME,
+    MANIFEST_NAME,
+    RELEASE_EVIDENCE_NAME,
+    STRUCTURED_EVIDENCE_NAME,
+}
 VERSIONED_DISTRIBUTIONS = (
     "llm-youtube-comment-generation",
     "pytest",
@@ -31,6 +48,14 @@ MATERIAL_ENVIRONMENT_KEYS = (
     "PYTEST_ADDOPTS",
     "PYTHONWARNINGS",
 )
+GENERATED_DIRECTORY_NAMES = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "build",
+    "dist",
+}
 
 
 @dataclass(frozen=True)
@@ -52,6 +77,12 @@ def snapshot_files(root: Path) -> tuple[Path, ...]:
                 if path.is_file()
                 and path.name not in EXCLUDED_NAMES
                 and ".git" not in path.relative_to(root).parts
+                and not any(
+                    part in GENERATED_DIRECTORY_NAMES
+                    or part.endswith(".egg-info")
+                    for part in path.relative_to(root).parts[:-1]
+                )
+                and path.suffix.lower() not in {".pyc", ".pyo"}
             ),
             key=lambda path: path.relative_to(root).as_posix().casefold(),
         )
@@ -117,6 +148,10 @@ def compare_final_tree(
         for path in root.rglob("*")
         if path.is_dir()
         and ".git" not in path.relative_to(root).parts
+        and not any(
+            part in GENERATED_DIRECTORY_NAMES or part.endswith(".egg-info")
+            for part in path.relative_to(root).parts
+        )
     }
     unexpected_directories = sorted(
         actual_directories - required_directories
@@ -150,6 +185,23 @@ def verification_provenance(
         ("Python executable", Path(sys.executable).name),
         ("Working directory", "<review-root>"),
     ]
+    constraints = root / "constraints" / "review.txt"
+    if constraints.is_file():
+        rows.append((
+            "Dependency constraints SHA-256",
+            hashlib.sha256(constraints.read_bytes()).hexdigest(),
+        ))
+        for raw in constraints.read_text(encoding="utf-8").splitlines():
+            requirement = raw.strip()
+            if not requirement or requirement.startswith("#") or \
+                    "==" not in requirement:
+                continue
+            distribution = requirement.split("==", 1)[0].strip()
+            try:
+                installed = importlib.metadata.version(distribution)
+            except importlib.metadata.PackageNotFoundError:
+                installed = "not installed on this Python"
+            rows.append((f"resolved {distribution}", installed))
     for name in MATERIAL_ENVIRONMENT_KEYS:
         if name in environment:
             rows.append((name, _redact(environment[name], root)))
@@ -207,6 +259,7 @@ def write_evidence(
     gates: tuple[GateResult, ...],
     total_bytes: int | None = None,
     provenance: tuple[tuple[str, str], ...] = (),
+    release_evidence: bool = False,
 ) -> None:
     source_bytes = (
         sum(path.stat().st_size for path in files)
@@ -237,10 +290,18 @@ def write_evidence(
         "2. **Recorded staged verification:** the commands and results below "
         "were recorded while building the manifested staged snapshot. They "
         "are not an independent reviewer rerun.",
-        "3. **Separate release gates:** multi-version CI, two-run "
-        "determinism, and clean-wheel installation require their own "
-        "execution evidence for this exact source identity. This snapshot "
-        "explicitly does not claim those results.",
+        (
+            "3. **Separate release gates:** the companion "
+            "`RELEASE_VERIFICATION.md` records the multi-version Windows "
+            "matrix, two-run determinism, and clean-wheel installation "
+            "against this exact manifest."
+            if release_evidence
+            else
+            "3. **Separate release gates:** multi-version CI, two-run "
+            "determinism, and clean-wheel installation require their own "
+            "execution evidence for this exact source identity. This "
+            "snapshot explicitly does not claim those results."
+        ),
         "",
         "## Execution provenance",
         "",
@@ -252,8 +313,17 @@ def write_evidence(
         "",
         "The commands below ran against this staged source snapshot before it "
         "was archived. A nonzero result prevents the review ZIP from being "
-        "created. In particular, clean-wheel installation is a separate "
-        "release gate and is not claimed by this artifact.",
+        "created.",
+        (
+            " The validated companion release evidence records the Python "
+            "3.10-3.12 matrix, two-run determinism, clean-wheel installation, "
+            "distribution hashes, and final exact source identity. These are "
+            "recorded results, not an independent reviewer rerun."
+            if release_evidence
+            else
+            " The Python 3.10-3.12 matrix, two-run determinism, and "
+            "clean-wheel installation remain unverified for this manifest."
+        ),
         "",
     ])
     for gate in gates:
@@ -274,6 +344,18 @@ def write_evidence(
     (root / EVIDENCE_NAME).write_text(
         "\n".join(lines), encoding="utf-8", newline="\n"
     )
+
+
+def validate_release_evidence(root: Path, manifest_digest: str) -> bool:
+    """Require complete structured evidence for the current manifest."""
+
+    try:
+        record = load_and_validate_release_evidence(root, manifest_digest)
+    except ValueError as exc:
+        raise ValueError(
+            f"release evidence is stale, incomplete, or contradictory: {exc}"
+        ) from exc
+    return record is not None
 
 
 def remove_generated_test_artifacts(root: Path) -> None:
@@ -301,6 +383,7 @@ def main() -> int:
     initial_hashes = snapshot_hashes(ROOT, files)
     initial_bytes = sum(path.stat().st_size for path in files)
     manifest_digest = write_manifest(ROOT, files)
+    release_evidence = validate_release_evidence(ROOT, manifest_digest)
     environment = os.environ.copy()
     environment["PYTHONPATH"] = str(ROOT / "src")
     provenance = verification_provenance(ROOT, environment)
@@ -346,6 +429,7 @@ def main() -> int:
         gates=gates,
         total_bytes=initial_bytes,
         provenance=provenance,
+        release_evidence=release_evidence,
     )
     for gate in gates:
         status = "PASS" if gate.returncode == 0 else "FAIL"

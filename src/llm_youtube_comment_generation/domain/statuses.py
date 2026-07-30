@@ -200,11 +200,55 @@ class TranscriptResult:
     language_code: str = ""
     is_generated: bool | None = None
     source: str = ""
+    original_source: str = ""
+    originating_run: str = ""
+    attempts: tuple[dict[str, str], ...] = ()
     detail: str = ""
 
     @property
     def available(self) -> bool:
         return self.availability.is_available
+
+
+def transcript_provenance(result: TranscriptResult) -> dict[str, object]:
+    """One persisted account of the transcript used by a packet.
+
+    ``source`` remains as a compatibility alias for the immediate acquisition
+    route. A saved transcript therefore records ``saved-transcript`` without
+    losing whether the originating evidence was a published caption, an
+    automatically generated caption, or local Whisper.
+    """
+
+    immediate = str(getattr(result, "source", "") or "")
+    original = str(getattr(result, "original_source", "") or "")
+    if not original and immediate != "saved-transcript":
+        original = immediate
+    return {
+        "availability": getattr(
+            getattr(result, "availability", TranscriptAvailability.AVAILABLE),
+            "value",
+            str(getattr(
+                result,
+                "availability",
+                TranscriptAvailability.AVAILABLE.value,
+            )),
+        ),
+        "source": immediate,
+        "immediate_source": immediate,
+        "original_source": original,
+        "is_generated": getattr(result, "is_generated", None),
+        "language": str(getattr(result, "language", "") or ""),
+        "language_code": str(getattr(result, "language_code", "") or ""),
+        "entries": len(getattr(result, "entries", ()) or ()),
+        "detail": str(getattr(result, "detail", "") or ""),
+        "originating_run": str(
+            getattr(result, "originating_run", "") or ""
+        ),
+        "attempts": [
+            dict(attempt)
+            for attempt in (getattr(result, "attempts", ()) or ())
+        ],
+    }
 
 
 class WarningCode(str, Enum):

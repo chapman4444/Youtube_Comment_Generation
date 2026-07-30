@@ -140,6 +140,35 @@ def test_the_chosen_registers_and_dials_reach_the_command():
     assert seen["command"].dials["grounding"] == "summary"
 
 
+def test_retrieval_settings_reach_the_application_command():
+    seen = {}
+
+    def handle(command, **kwargs):
+        seen["command"] = command
+        raise Cancelled()
+
+    with pytest.raises(Cancelled):
+        _run(
+            BackgroundJob(),
+            options(
+                include_replies=False,
+                languages="de, en",
+                max_top=101,
+                max_recent=202,
+                max_threads=13,
+                max_replies=17,
+            ),
+            handle,
+        )
+
+    assert seen["command"].include_replies is False
+    assert seen["command"].transcript_languages == ("de", "en")
+    assert seen["command"].max_relevance_comments == 101
+    assert seen["command"].max_recent_comments == 202
+    assert seen["command"].max_reply_threads == 13
+    assert seen["command"].max_replies_per_thread == 17
+
+
 def test_no_register_chosen_still_sends_the_defaults():
     from llm_youtube_comment_generation.domain.writing_options import (
         DEFAULT_VARIATIONS,

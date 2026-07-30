@@ -48,6 +48,14 @@ def no_captions(source="a"):
     )
 
 
+def empty(source="a"):
+    return TranscriptResult(
+        availability=TranscriptAvailability.EMPTY,
+        source=source,
+        detail="caption track was empty",
+    )
+
+
 def test_the_first_source_that_works_is_the_one_used():
     first, second = Source(available("first")), Source(available("second"))
 
@@ -69,16 +77,39 @@ def test_an_unreachable_source_moves_on_to_the_next():
     assert blocked.calls == 1 and working.calls == 1
 
 
-def test_no_captions_ends_the_search():
-    """That is an answer about the video, not a failure to reach a source.
-    Asking a second source spends a request to be told the same thing."""
-
-    absent, second = Source(no_captions()), Source(available())
+def test_first_source_absent_does_not_hide_second_source_caption():
+    absent = Source(no_captions("scrape"))
+    second = Source(available("yt-dlp"))
 
     result = ChainedTranscripts(absent, second).fetch(VIDEO)
 
+    assert result.availability is TranscriptAvailability.AVAILABLE
+    assert result.source == "yt-dlp"
+    assert absent.calls == second.calls == 1
+    assert [attempt["source"] for attempt in result.attempts] == [
+        "scrape", "yt-dlp",
+    ]
+
+
+def test_empty_first_source_does_not_hide_second_source_caption():
+    result = ChainedTranscripts(
+        Source(empty("scrape")),
+        Source(available("yt-dlp")),
+    ).fetch(VIDEO)
+
+    assert result.source == "yt-dlp"
+
+
+def test_both_absent_are_exhausted_before_absence_is_returned():
+    first = Source(no_captions("scrape"))
+    second = Source(no_captions("yt-dlp"))
+
+    result = ChainedTranscripts(first, second).fetch(VIDEO)
+
     assert result.availability is TranscriptAvailability.NOT_PUBLISHED
-    assert second.calls == 0
+    assert first.calls == second.calls == 1
+    assert "scrape=not_published" in result.detail
+    assert "yt-dlp=not_published" in result.detail
 
 
 def test_no_captions_runs_an_explicit_local_fallback():
@@ -93,6 +124,7 @@ def test_no_captions_runs_an_explicit_local_fallback():
     assert result.source == "local-whisper"
     assert absent.calls == 1
     assert local.calls == 1
+    assert result.attempts[0]["availability"] == "not_published"
 
 
 def test_private_video_never_runs_the_local_fallback():

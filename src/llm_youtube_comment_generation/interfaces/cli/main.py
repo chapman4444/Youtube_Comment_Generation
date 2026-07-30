@@ -32,7 +32,11 @@ from ...application.build_comment_packet import BuildCommentPacketCommand
 from ...application.commands import InspectVideoCommand
 from ...application.guided_session import REVIEW_FILENAME, GuidedSession
 from ...application.scan_threads import ScanMyThreadsCommand
-from ...domain.statuses import OperationStatus
+from ...domain.statuses import (
+    OperationStatus,
+    TranscriptResult,
+    transcript_provenance,
+)
 from ...application.configuration import (
     API_KEY_VARIABLES,
     Configuration,
@@ -491,6 +495,24 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
     from ...domain.writing_options import DIALS, dial_choice
 
     source = Path(arguments.run).expanduser()
+    source_summary = runs.validate_run(source)
+    if not source_summary.ok:
+        problems = "; ".join(source_summary.problems[:8])
+        if len(source_summary.problems) > 8:
+            problems += (
+                f"; and {len(source_summary.problems) - 8} more problem(s)"
+            )
+        raise ConfigurationError(
+            f"Cannot rebuild {source}: the source run failed validation "
+            f"({problems}). Use a completed, unmodified comment or rebuild "
+            "run written by this tool."
+        )
+    if source_summary.kind not in ("comment", "rebuild"):
+        raise ConfigurationError(
+            f"Cannot rebuild {source}: source kind "
+            f"{source_summary.kind!r} is not a comment packet run."
+        )
+
     evidence_file = source / "evidence.json"
     record_file = source / "run.json"
     transcript_file = source / "transcript_timestamped.txt"
@@ -574,9 +596,53 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
                     json.dumps(saved, indent=2, ensure_ascii=False))
     artifacts.stage("transcript_timestamped.txt", transcript_text)
     rebuilt_record = dict(record)
+    source_transcript = record.get("transcript")
+    if not isinstance(source_transcript, dict):
+        source_transcript = {}
+    original_source = source_transcript.get(
+        "original_source",
+        source_transcript.get("immediate_source",
+                              source_transcript.get("source", "")),
+    )
+    if original_source in ("saved-transcript", "saved-rebuild-evidence"):
+        original_source = ""
+    generated = source_transcript.get("is_generated")
+    if not isinstance(generated, bool):
+        generated = None
+    rebuilt_transcript = {
+        "availability": (
+            "available" if transcript_text.strip() else "not_published"
+        ),
+        "source": "saved-rebuild-evidence",
+        "immediate_source": "saved-rebuild-evidence",
+        "original_source": (
+            original_source if isinstance(original_source, str) else ""
+        ),
+        "is_generated": generated,
+        "language": (
+            source_transcript.get("language")
+            if isinstance(source_transcript.get("language"), str) else ""
+        ),
+        "language_code": (
+            source_transcript.get("language_code")
+            if isinstance(source_transcript.get("language_code"), str) else ""
+        ),
+        "entries": len([
+            line for line in transcript_text.splitlines() if line.strip()
+        ]),
+        "detail": (
+            f"reused unchanged from offline rebuild source {source.name}"
+        ),
+        "originating_run": source.name,
+        "attempts": (
+            list(source_transcript.get("attempts", []))
+            if isinstance(source_transcript.get("attempts"), list)
+            else []
+        ),
+    }
     rebuilt_record.update({
         "kind": "rebuild",
-        "artifact_contract_version": 2,
+        "artifact_contract_version": 3,
         "evidence_schema_version": 2,
         "prompt_version": prompt_resources.prompt_version(),
         "rebuilt_from": str(source),
@@ -594,15 +660,7 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
             "transcript_reduced": packet.allocation.transcript_reduced,
         },
         "retrieval": retrieval,
-        "transcript": dict(record.get("transcript") or {
-            "availability": (
-                "available" if transcript_text.strip() else "not_published"
-            ),
-            "language": "",
-            "entries": len(transcript_text.splitlines()),
-            "source": "saved-rebuild-evidence",
-            "detail": "",
-        }),
+        "transcript": rebuilt_transcript,
     })
     artifacts.stage(
         "report.md",
@@ -754,15 +812,24 @@ def _whisper_state(configuration) -> str:
     installed = whisper_available()
     wanted = bool(configuration.get("transcribe_locally"))
     model = configuration.get("whisper_model", "small.en")
+    minutes = int(configuration.get("whisper_maximum_seconds", 3600)) / 60
+    mebibytes = int(configuration.get(
+        "whisper_maximum_audio_bytes",
+        200 * 1024 * 1024,
+    )) / (1024 * 1024)
+    limits = f"limit {minutes:g} minutes / {mebibytes:g} MiB"
 
     if not installed:
         return ("not installed - videos with no captions at all cannot be "
                 "transcribed. Run: python -m pip install -e "
-                "\".[local-transcription]\"")
+                f"\".[local-transcription]\" ({limits})")
     if not wanted:
         return (f"installed, off. Turn it on with --transcribe or "
-                f"YTCOMMENT_TRANSCRIBE_LOCALLY=1 ({model})")
-    return f"installed, on ({model}). Costs minutes of CPU per video."
+                f"YTCOMMENT_TRANSCRIBE_LOCALLY=1 ({model}; {limits})")
+    return (
+        f"installed, on ({model}; {limits}). "
+        "Costs minutes of CPU per video."
+    )
 
 
 def _saved_transcript_state(configuration) -> str:
@@ -1076,6 +1143,7 @@ def run_reply(
         artifacts.stage("reply_packet.md", packet.text)
         _stage_run_record(
             artifacts, kind="reply", video=evidence.video,
+            transcript=transcript,
             extra={
                 "target": candidate.author,
                 "target_comment_id": packet.target_comment_id,
@@ -1181,6 +1249,14 @@ def run_packet_window(
             whisper_policy=selected_options.whisper_policy,
             transcript_route=selected_options.transcript_route,
             whisper_model=selected_options.whisper_model,
+            transcript_languages=selected_options.transcript_languages,
+            proxy_url=selected_options.proxy_url,
+            whisper_maximum_seconds=(
+                selected_options.whisper_maximum_minutes * 60
+            ),
+            whisper_maximum_audio_bytes=(
+                selected_options.whisper_maximum_audio_mib * 1024 * 1024
+            ),
             confirm_transcription=(
                 (lambda reason: bool(job and job.confirm(reason)))
                 if selected_options.whisper_policy == "ask"
@@ -1327,6 +1403,7 @@ def _guided_session_for(
             f"[{format_timestamp(entry.get('start'))}] {entry.get('text', '')}"
             for entry in transcript.entries
         ),
+        transcript=transcript,
         templates=templates,
         variations=tuple(registers),
         dials=dict(dials),
@@ -1467,6 +1544,7 @@ def run_gui(
             f"[{format_timestamp(e.get('start'))}] {e.get('text','')}"
             for e in transcript.entries
         ),
+        transcript=transcript,
         templates={
             name: prompt_resources.load(name).text
             for name in ("reply_workflow.md", "reply_final_check.md")
@@ -1474,6 +1552,7 @@ def run_gui(
         variations=registers,
         dials=dials,
         packet_characters=configuration.get("packet_characters"),
+        prompt_version=prompt_resources.prompt_version(),
         artifacts=_artifact_store(ports, configuration, command.video_id),
         clipboard=ports.get("clipboard") or SystemClipboard(),
         events=ports["events"],
@@ -1672,6 +1751,7 @@ def run_guided(
             f"[{format_timestamp(e.get('start'))}] {e.get('text','')}"
             for e in transcript.entries
         ),
+        transcript=transcript,
         templates={
             name: prompt_resources.load(name).text
             for name in ("reply_workflow.md", "reply_final_check.md")
@@ -1680,6 +1760,7 @@ def run_guided(
                     if arguments.registers else ()),
         dials=parse_dials(arguments.dial or []),
         packet_characters=configuration.get("packet_characters"),
+        prompt_version=prompt_resources.prompt_version(),
         artifacts=_artifact_store(ports, configuration, command.video_id),
         clipboard=ports.get("clipboard"),
         events=ports["events"],
@@ -1733,22 +1814,6 @@ def run_guided(
         session.finish()
 
     store = session.artifacts
-    _stage_run_record(
-        store, kind="guided", video=session.video,
-        extra={
-            "accepted": len(session.accepted),
-            "skipped": len(session.skipped),
-            "targets_offered": len(session.targets),
-            "final_phase": session.state.phase.value,
-            "variations": list(session.variations),
-            "drafts": [
-                {"author": d.author, "comment_id": d.comment_id,
-                 "status": d.status, "words": len(d.draft.split())}
-                for d in session.accepted
-            ],
-        },
-    )
-    store.commit()
     print(
         f"\n{len(session.accepted)} replies ready to review, "
         f"{len(session.skipped)} skipped\n"
@@ -1759,7 +1824,14 @@ def run_guided(
     return EXIT_SUCCESS
 
 
-def _stage_run_record(artifacts, *, kind: str, video: dict, extra: dict) -> None:
+def _stage_run_record(
+    artifacts,
+    *,
+    kind: str,
+    video: dict,
+    extra: dict,
+    transcript: TranscriptResult | None = None,
+) -> None:
     """Every run records what produced it.
 
     Without this a reply, triage or guided run is a directory of markdown
@@ -1768,14 +1840,20 @@ def _stage_run_record(artifacts, *, kind: str, video: dict, extra: dict) -> None
     artifacts alone.
     """
 
-    artifacts.stage("run.json", json.dumps({
+    record = {
         "kind": kind,
-        "artifact_contract_version": 2,
+        "artifact_contract_version": 3 if transcript is not None else 2,
         "video_id": str(video.get("video_id", "")),
         "video_title": str(video.get("title", "")),
         "prompt_version": prompt_resources.prompt_version(),
         **extra,
-    }, indent=2, ensure_ascii=False))
+    }
+    if transcript is not None:
+        record["transcript"] = transcript_provenance(transcript)
+    artifacts.stage(
+        "run.json",
+        json.dumps(record, indent=2, ensure_ascii=False),
+    )
 
 
 def _artifact_store(ports, configuration, video_id: str, directory: str = ""):
@@ -1816,6 +1894,9 @@ def run_comment_build(
         max_comments=configuration.get("max_comments", 500),
         max_replies_per_thread=configuration.get(
             "max_replies_per_thread", 100
+        ),
+        transcript_languages=tuple(
+            configuration.get("transcript_languages", ("en",))
         ),
         packet_characters=configuration.get("packet_characters"),
         explicit_length=(parse_length(arguments.length)
@@ -1918,11 +1999,14 @@ def main(
         api_key = resolve_api_key(environment)
         # Configured with the key already known, so nothing can be logged
         # before redaction is in place.
-        configure_logging(
+        log_redactor = configure_logging(
             configuration.get("log_level", "WARNING"),
             secrets=[api_key] if api_key else [],
             jsonl=getattr(arguments, "log_jsonl", False),
             stream=stderr,
+        )
+        log_redactor.add_proxy(
+            str(configuration.get("proxy_url", "") or "")
         )
 
         events = make_event_sink(

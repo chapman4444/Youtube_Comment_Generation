@@ -5,8 +5,8 @@ is worse than none, because the operator cannot tell which half is stale — so
 everything is staged beside the destination and moved into place at the end,
 and a failure restores what was there before.
 
-The run root is collision-safe: a second run of the same video on the same
-day does not silently overwrite the first.
+New run roots are reserved by atomic directory creation, so independent
+processes cannot acquire the same video-and-timestamp destination.
 """
 
 from __future__ import annotations
@@ -52,20 +52,23 @@ def atomic_write(path: Path, text: str) -> None:
 
 
 def unique_run_root(base: Path, video_id: str, stamp: str) -> Path:
-    """A directory for this run that cannot collide with another.
+    """Atomically reserve a directory for one new run.
 
     Two runs of the same video in the same second get distinct roots rather
     than one overwriting the other, because the second run is usually the one
-    made after noticing something wrong with the first.
+    made after noticing something wrong with the first. ``mkdir`` is the
+    inter-process ownership boundary; an existence check is not.
     """
 
-    candidate = base / f"{video_id}_{stamp}"
-    if not candidate.exists():
+    base.mkdir(parents=True, exist_ok=True)
+    for suffix in range(1, 1000):
+        ending = "" if suffix == 1 else f"_{suffix}"
+        candidate = base / f"{video_id}_{stamp}{ending}"
+        try:
+            candidate.mkdir()
+        except FileExistsError:
+            continue
         return candidate
-    for suffix in range(2, 1000):
-        alternative = base / f"{video_id}_{stamp}_{suffix}"
-        if not alternative.exists():
-            return alternative
     raise ConfigurationError(f"Could not find a free run directory under {base}")
 
 

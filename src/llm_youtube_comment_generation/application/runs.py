@@ -131,7 +131,7 @@ def validate_run(directory: Path | str) -> RunSummary:
                     recorded_characters=recorded,
                     budget=budget,
                 ))
-                if summary.run.get("artifact_contract_version") == 2:
+                if summary.run.get("artifact_contract_version") in (2, 3):
                     summary.problems.extend(
                         _check_completion_record(directory, names)
                     )
@@ -268,6 +268,11 @@ def _check_record(
             "attributed to the prompt that produced it"
         )
 
+    contract = run.get("artifact_contract_version")
+    kind = run.get("kind")
+    if contract == 3 and kind in {"comment", "rebuild", "reply", "guided"}:
+        problems.extend(_check_transcript_provenance(run.get("transcript")))
+
     if "packet.md" in names:
         actual = len((directory / "packet.md").read_text(encoding="utf-8"))
         if recorded_characters and abs(actual - recorded_characters) > 1:
@@ -339,6 +344,85 @@ def _check_record(
                     "contract; the contract disagreed with itself"
                 )
 
+    return problems
+
+
+def _check_transcript_provenance(value: object) -> list[str]:
+    """Validate the version-three transcript evidence contract."""
+
+    if not isinstance(value, dict):
+        return ["run.json field transcript must be a provenance object"]
+
+    problems: list[str] = []
+    required_strings = (
+        "availability",
+        "source",
+        "immediate_source",
+        "original_source",
+        "language",
+        "language_code",
+        "detail",
+        "originating_run",
+    )
+    for field in required_strings:
+        if not isinstance(value.get(field), str):
+            problems.append(
+                f"run.json transcript field {field} must be a string"
+            )
+
+    availability = value.get("availability")
+    allowed = {state.value for state in TranscriptAvailability}
+    if isinstance(availability, str) and availability not in allowed:
+        problems.append(
+            f"run.json transcript availability is unknown: {availability!r}"
+        )
+
+    source = value.get("source")
+    immediate = value.get("immediate_source")
+    if isinstance(source, str) and isinstance(immediate, str) and \
+            source != immediate:
+        problems.append(
+            "run.json transcript source and immediate_source disagree"
+        )
+
+    generated = value.get("is_generated")
+    if generated is not None and not isinstance(generated, bool):
+        problems.append(
+            "run.json transcript field is_generated must be true, false, "
+            "or null"
+        )
+
+    entries = value.get("entries")
+    if not isinstance(entries, int) or isinstance(entries, bool) or entries < 0:
+        problems.append(
+            "run.json transcript field entries must be a non-negative integer"
+        )
+    elif availability == TranscriptAvailability.AVAILABLE.value and entries < 1:
+        problems.append(
+            "run.json records an available transcript with no entries"
+        )
+    elif availability in allowed - {TranscriptAvailability.AVAILABLE.value} \
+            and entries:
+        problems.append(
+            "run.json records transcript entries for an unavailable transcript"
+        )
+
+    if source == "saved-transcript" and not value.get("originating_run"):
+        problems.append(
+            "run.json saved transcript records no originating_run"
+        )
+    attempts = value.get("attempts")
+    if not isinstance(attempts, list) or not all(
+        isinstance(attempt, dict)
+        and isinstance(attempt.get("source"), str)
+        and isinstance(attempt.get("availability"), str)
+        and isinstance(attempt.get("detail"), str)
+        for attempt in attempts
+    ):
+        problems.append(
+            "run.json transcript field attempts must be a list of source "
+            "outcome objects"
+        )
     return problems
 
 
