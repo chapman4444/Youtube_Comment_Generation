@@ -61,11 +61,13 @@ def main() -> int:
 
         run([
             str(python), "-m", "pip", "install",
-            f"{wheels[0]}[test,transcripts]",
+            f"{wheels[0]}[verify,transcripts,local-transcription]",
         ], cwd=temporary, env=clean_env)
 
         smoke = (
-            "import json, pathlib, llm_youtube_comment_generation as package; "
+            "import json, pathlib, faster_whisper, "
+            "youtube_transcript_api, yt_dlp, "
+            "llm_youtube_comment_generation as package; "
             "path=pathlib.Path(package.__file__).resolve(); "
             f"source=pathlib.Path({str(ROOT / 'src')!r}).resolve(); "
             "assert source not in path.parents, (path, source); "
@@ -87,6 +89,11 @@ def main() -> int:
             "sdist": sdists[0].name,
             "temporary_environment_removed_on_exit": True,
             "source_path_override": False,
+            "transcript_imports": [
+                "youtube_transcript_api",
+                "yt_dlp",
+                "faster_whisper",
+            ],
         }, indent=2))
     return 0
 

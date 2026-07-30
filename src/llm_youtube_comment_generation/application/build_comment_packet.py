@@ -33,6 +33,8 @@ from ..ports.events import EventKind, ProgressEvent
 from .commands import InspectVideoCommand
 from .inspect_video import handle as inspect_handle
 
+PACKET_FILENAME = "packet.md"
+
 
 @dataclass(frozen=True)
 class BuildCommentPacketCommand:
@@ -40,6 +42,7 @@ class BuildCommentPacketCommand:
     variations: tuple[str, ...] = ()
     dials: dict[str, str] = field(default_factory=dict)
     max_comments: int = 500
+    max_replies_per_thread: int = 100
     packet_characters: int = 280_000
     explicit_length: tuple[int, int] | None = None
     allow_no_transcript: bool = False
@@ -75,6 +78,7 @@ def handle(
         InspectVideoCommand(
             video=command.video,
             max_comments=command.max_comments,
+            max_replies_per_thread=command.max_replies_per_thread,
             include_replies=True,
             dry_run=command.dry_run,
         ),
@@ -87,10 +91,14 @@ def handle(
 
     if command.dry_run:
         result.value = {"dry_run": True}
-        result.metrics = {"requests": 0}
+        result.metrics = {"api_operations": 0}
         return result
 
-    transcript = transcripts.fetch(inspection.video.get("video_id", ""))
+    transcript = inspection.transcript
+    if transcript is None:
+        raise RuntimeError(
+            "video inspection completed without its transcript result"
+        )
     timestamped = transcript_timestamped(transcript.entries)
 
     events.emit(ProgressEvent(EventKind.STEP, step="packet",
@@ -176,13 +184,13 @@ def handle(
             "comments": len(inspection.comments),
             "replies": len(inspection.replies),
         },
-        "requests_used": inspection.requests_used,
+        "api_operations_used": inspection.api_operations_used,
         "warnings": [
             {"code": w.code.value, "message": w.message} for w in result.warnings
         ],
     }
 
-    artifacts.stage("packet.md", packet.text)
+    artifacts.stage(PACKET_FILENAME, packet.text)
     artifacts.stage("transcript_timestamped.txt", timestamped or "")
     artifacts.stage("evidence.json", json.dumps({
         "video": inspection.video,
@@ -193,6 +201,10 @@ def handle(
     artifacts.stage("run.json", json.dumps(run_record, indent=2,
                                            ensure_ascii=False))
 
+    events.emit(ProgressEvent(
+        EventKind.STEP, step="commit",
+        message="Publishing the completed run",
+    ))
     published = artifacts.commit()
     events.emit(ProgressEvent(
         EventKind.FINISHED, step="packet",
@@ -205,7 +217,7 @@ def handle(
         "characters": len(packet),
         "comments": len(inspection.comments),
         "replies": len(inspection.replies),
-        "requests": inspection.requests_used,
+        "api_operations": inspection.api_operations_used,
     }
     return result
 
@@ -221,7 +233,7 @@ def render_report(run: dict[str, Any], packet) -> str:
         f"- packet: {run['packet_characters']:,} of {run['budget']:,} characters",
         f"- comments: {run['counts']['comments']:,}",
         f"- replies: {run['counts']['replies']:,}",
-        f"- API requests: {run['requests_used']}",
+        f"- logical YouTube API operations: {run['api_operations_used']}",
         "",
         "## Registers asked for",
         "",

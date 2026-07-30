@@ -8,9 +8,45 @@ contract exists to prevent.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from ...domain.statuses import OperationResult
+
+IDENTITY_SETTINGS = frozenset({"my_channel_id", "my_handle"})
+PATH_SETTINGS = frozenset({
+    "editor", "output_directory", "state_directory",
+})
+WINDOWS_HOME = re.compile(
+    r"(?i)\b([A-Z]:[\\/]+Users[\\/]+)[A-Za-z0-9._-]+"
+)
+
+
+def _safe_config_value(name: str, value: Any) -> Any:
+    """Keep diagnostics useful without making them identifying."""
+
+    if name in IDENTITY_SETTINGS:
+        return "<redacted>" if value else ""
+    if name == "proxy_url":
+        text = str(value or "")
+        if not text:
+            return ""
+        try:
+            parsed = urlsplit(text)
+            host = parsed.hostname or ""
+            if ":" in host and not host.startswith("["):
+                host = f"[{host}]"
+            port = f":{parsed.port}" if parsed.port is not None else ""
+            return urlunsplit((parsed.scheme, host + port, "", "", ""))
+        except (TypeError, ValueError):
+            return "<redacted proxy URL>"
+    if name in PATH_SETTINGS:
+        text = str(value or "")
+        if not text:
+            return ""
+        return WINDOWS_HOME.sub(r"\1<user>", text)
+    return value
 
 
 def inspection_as_dict(result: OperationResult) -> dict[str, Any]:
@@ -147,7 +183,10 @@ def render_inspection(result: OperationResult) -> str:
             lines.append(f"  warning    {warning.code.value}: {warning.message}")
 
     lines.append("")
-    lines.append(f"  {inspection.requests_used} API requests used")
+    lines.append(
+        f"  {inspection.api_operations_used} logical YouTube API "
+        "operations used"
+    )
     return "\n".join(lines)
 
 
@@ -240,7 +279,9 @@ def render_scan(result: OperationResult, only_unanswered: bool = True) -> str:
         )
     for note in retrieval.notes:
         lines.append(f"             {note}")
-    lines.append(f"  {scan.requests_used} API requests used")
+    lines.append(
+        f"  {scan.api_operations_used} logical YouTube API operations used"
+    )
     return "\n".join(lines)
 
 
@@ -269,7 +310,7 @@ def render_config(configuration, api_key_resolved: bool, key_source: str) -> str
     lines = ["Effective configuration", ""]
     width = max((len(name) for name, _ in configuration.items()), default=10)
     for name, entry in configuration.items():
-        value = entry.value
+        value = _safe_config_value(name, entry.value)
         shown = ", ".join(value) if isinstance(value, tuple) else value
         lines.append(f"  {name:<{width}}  {shown}   [{entry.source}]")
     lines.append("")

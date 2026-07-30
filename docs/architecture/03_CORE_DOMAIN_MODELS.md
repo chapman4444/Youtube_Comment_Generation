@@ -173,6 +173,27 @@ DialDefinition
 
 CLI choices, GUI controls, prompt instructions, output headings, and validation must all derive from these definitions.
 
+```text
+WritingPreset
+    name
+    description
+    comment_variations
+    reply_variations
+    dials
+    length
+    custom_length
+    builtin
+```
+
+Presets contain prose choices only. Personal identity, videos, paths, proxies,
+retrieval limits, and credentials are outside the model and cannot be
+serialized into a custom preset.
+
+## Composition Ports
+
+`PortBundle` provides typed attributes for the YouTube, transcript, clipboard,
+and event ports while retaining mapping access for existing injected fakes.
+
 ## Typed Results
 
 ```text

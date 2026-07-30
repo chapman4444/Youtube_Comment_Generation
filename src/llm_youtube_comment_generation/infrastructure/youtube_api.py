@@ -73,13 +73,21 @@ class YouTubeAdapter:
         self._api_key = api_key
         self._session = session or build_session()
         self._cancelled = cancelled or (lambda: False)
-        self._requests = 0
+        self._api_operations = 0
 
     # -- port surface ----------------------------------------------------
 
     @property
+    def api_operations_used(self) -> int:
+        """Logical API calls; transport-level retries are not counted."""
+
+        return self._api_operations
+
+    @property
     def requests_used(self) -> int:
-        return self._requests
+        """Backward-compatible alias for pre-0.2 integrations."""
+
+        return self.api_operations_used
 
     def video(self, video_id: str) -> dict[str, Any]:
         payload = self.get("videos", {
@@ -101,9 +109,11 @@ class YouTubeAdapter:
         order: str = "relevance",
         maximum: int = 100,
     ) -> CommentPage:
+        if maximum < 1:
+            raise ConfigurationError("maximum comments must be at least 1.")
         collected: list[dict[str, Any]] = []
         notes: list[str] = []
-        started = self._requests
+        started = self._api_operations
 
         def page(token: str) -> dict[str, Any]:
             return self.get("commentThreads", {
@@ -129,15 +139,17 @@ class YouTubeAdapter:
                 status=status,
                 retrieved=min(len(collected), maximum),
                 reported_total=None,
-                requests_used=self._requests - started,
+                api_operations_used=self._api_operations - started,
                 notes=tuple(notes),
             ),
         )
 
     def replies(self, parent_comment_id: str, *, maximum: int = 100) -> CommentPage:
+        if maximum < 1:
+            raise ConfigurationError("maximum replies must be at least 1.")
         collected: list[dict[str, Any]] = []
         notes: list[str] = []
-        started = self._requests
+        started = self._api_operations
 
         def page(token: str) -> dict[str, Any]:
             return self.get("comments", {
@@ -164,7 +176,7 @@ class YouTubeAdapter:
                 status=status,
                 retrieved=min(len(collected), maximum),
                 reported_total=None,
-                requests_used=self._requests - started,
+                api_operations_used=self._api_operations - started,
                 notes=tuple(notes),
             ),
         )
@@ -256,7 +268,7 @@ class YouTubeAdapter:
         if self._cancelled():
             raise OperationCancelled("Cancelled before the request was sent.")
 
-        self._requests += 1
+        self._api_operations += 1
         response = self._session.get(
             f"{API_BASE_URL}/{resource}",
             params={**params, "key": self._api_key},

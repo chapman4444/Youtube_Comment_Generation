@@ -30,6 +30,7 @@ MUST_BE_IGNORED = (
     "comment_drafts.md",
     "replies_to_review.md",
     "window_settings.json",
+    "writing_presets.json",
 )
 
 #: Shapes of identifying data. Checked against everything that would be
@@ -104,3 +105,11 @@ def test_the_api_key_is_never_written_down():
 
     assert "YOUTUBE_API_KEY.txt" in ignored
     assert "*.key" in ignored
+
+
+def test_local_work_notes_are_ignored_in_every_clone():
+    ignored = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+    assert "/local_notes/" in ignored
+    for name in ("HANDOFF.md", "CHANGES_MADE.md", "cmd_dump.ahk"):
+        assert f"/{name}" in ignored

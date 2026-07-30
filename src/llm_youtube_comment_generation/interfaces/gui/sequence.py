@@ -61,7 +61,7 @@ STEP_TITLE = {
 STEP_DETAIL = {
     Step.BUILD: (
         "Scans this video for your own comments and the people who replied "
-        "to them without hearing back. Spends API requests."
+        "to them without hearing back. Spends YouTube API operations."
     ),
     Step.TRIAGE: (
         "The triage template is on your clipboard. Paste it into your model, "

@@ -109,7 +109,7 @@ def test_a_bad_video_id_exits_three_and_spends_no_quota():
     code, _, err, youtube, _ = run(["video", "inspect", "obviously not a video"])
 
     assert code == 3
-    assert youtube.requests_used == 0
+    assert youtube.api_operations_used == 0
     assert err.strip()
 
 
@@ -123,7 +123,7 @@ def test_a_dry_run_performs_no_request_at_all():
     code, out, _, youtube, _ = run(["video", "inspect", VIDEO, "--dry-run"])
 
     assert code == 0
-    assert youtube.requests_used == 0
+    assert youtube.api_operations_used == 0
     assert "No API request was sent" in out
 
 
@@ -135,7 +135,7 @@ def test_a_dry_run_needs_no_api_key():
                 build_ports=build, stdout=out, stderr=err, environment={})
 
     assert code == 0
-    assert youtube.requests_used == 0
+    assert youtube.api_operations_used == 0
 
 
 def test_a_real_run_without_a_key_exits_three_before_touching_the_network():
@@ -147,7 +147,7 @@ def test_a_real_run_without_a_key_exits_three_before_touching_the_network():
 
     assert code == 3
     assert "No API key" in err.getvalue()
-    assert youtube.requests_used == 0
+    assert youtube.api_operations_used == 0
 
 
 def test_quota_exhaustion_exits_two():
@@ -332,6 +332,37 @@ def test_config_print_says_whether_a_key_resolved_never_the_key():
     assert "AIzaSySecretValue" not in printed
 
 
+def test_config_print_redacts_proxy_identity_and_private_paths():
+    out, err = io.StringIO(), io.StringIO()
+    secret = "p4ssw0rd"
+    proxy = "http://" + f"operator:{secret}@" + "proxy.test:8080"
+    private_path = "C:" + "\\Users\\PrivateName\\runs"
+
+    code = main(
+        ["config", "print"],
+        stdout=out,
+        stderr=err,
+        environment={
+            "YTCOMMENT_PROXY_URL": proxy,
+            "YTCOMMENT_MY_HANDLE": "@private-handle",
+            "YTCOMMENT_MY_CHANNEL_ID": "UC" + "A" * 22,
+            "YTCOMMENT_OUTPUT_DIR": private_path,
+        },
+    )
+    printed = out.getvalue()
+
+    assert code == 0
+    assert "http://proxy.test:8080" in printed
+    assert secret not in printed
+    assert "operator" not in printed
+    assert "@private-handle" not in printed
+    assert "UC" + "A" * 22 not in printed
+    assert "PrivateName" not in printed
+    assert "C:" + "\\Users\\<user>\\runs" in printed
+    assert "proxy_url" in printed
+    assert "environment" in printed
+
+
 # --------------------------------------------------------------------------
 # Configuration precedence
 # --------------------------------------------------------------------------
@@ -393,6 +424,16 @@ def test_every_environment_variable_maps_to_a_real_setting():
 def test_a_budget_below_the_reachable_minimum_is_refused():
     with pytest.raises(ConfigurationError, match="below the smallest packet"):
         resolve(environment={}, flags={"packet_characters": 1000})
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("max_comments", "reply_scan_comments", "max_replies_per_thread"),
+)
+@pytest.mark.parametrize("value", (0, -1))
+def test_every_retrieval_limit_must_be_positive(name, value):
+    with pytest.raises(ConfigurationError, match="at least 1"):
+        resolve(environment={}, flags={name: value})
 
 
 def test_the_refusal_names_where_the_bad_value_came_from():

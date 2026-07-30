@@ -1,151 +1,115 @@
-# Proposed Project Structure
+# Current Project Structure
+
+This document describes the implemented source tree. It is not a proposed
+future layout.
 
 ```text
-LLM_Youtube_Comment_Generation/
-│
-├── pyproject.toml
-├── README.md
-│
-├── src/
-│   └── llm_youtube_comment_generation/
-│       │
-│       ├── domain/
-│       │   ├── ids.py
-│       │   ├── video.py
-│       │   ├── comments.py
-│       │   ├── threads.py
-│       │   ├── targeting.py
-│       │   ├── candidates.py
-│       │   ├── writing_options.py
-│       │   ├── packets.py
-│       │   ├── history.py
-│       │   └── workflow.py
-│       │
-│       ├── application/
-│       │   ├── commands.py
-│       │   ├── results.py
-│       │   │
-│       │   ├── comments/
-│       │   │   ├── inspect_video.py
-│       │   │   └── build_packet.py
-│       │   │
-│       │   ├── replies/
-│       │   │   ├── target_comment.py
-│       │   │   ├── target_reply.py
-│       │   │   ├── scan_my_threads.py
-│       │   │   ├── triage.py
-│       │   │   ├── build_packet.py
-│       │   │   └── guided_session.py
-│       │   │
-│       │   ├── history/
-│       │   │   ├── record.py
-│       │   │   └── scoreboard.py
-│       │   │
-│       │   └── runs/
-│       │       ├── inspect.py
-│       │       └── validate.py
-│       │
-│       ├── ports/
-│       │   ├── youtube.py
-│       │   ├── transcripts.py
-│       │   ├── clipboard.py
-│       │   ├── artifacts.py
-│       │   ├── history.py
-│       │   ├── settings.py
-│       │   ├── clock.py
-│       │   └── events.py
-│       │
-│       ├── infrastructure/
-│       │   ├── youtube_api.py
-│       │   ├── transcript_api.py
-│       │   ├── system_clipboard.py
-│       │   ├── filesystem_artifacts.py
-│       │   ├── json_history.py
-│       │   ├── user_settings.py
-│       │   └── logging_jsonl.py
-│       │
-│       ├── interfaces/
-│       │   ├── cli/
-│       │   │   ├── main.py
-│       │   │   ├── parsers.py
-│       │   │   └── formatters.py
-│       │   │
-│       │   └── gui/
-│       │       ├── main.py
-│       │       ├── main_window.py
-│       │       ├── controllers.py
-│       │       └── view_models.py
-│       │
-│       └── resources/
-│           ├── prompts/
-│           ├── registers.json
-│           └── dials.json
-│
-└── tests/
-    ├── unit/
-    ├── domain/
-    ├── application/
-    ├── contract/
-    ├── cli/
-    ├── golden/
-    ├── gui/
-    └── fixtures/
+Youtube_Comment_Generation/
+|-- pyproject.toml
+|-- README.md
+|-- comment.bat
+|-- reply.bat
+|-- gui.bat
+|-- doctor.bat
+|-- scoreboard.bat
+|-- docs/
+|   `-- architecture/
+|-- src/
+|   `-- llm_youtube_comment_generation/
+|       |-- application/
+|       |   |-- build_comment_packet.py
+|       |   |-- comment_session.py
+|       |   |-- configuration.py
+|       |   |-- guided_session.py
+|       |   |-- inspect_video.py
+|       |   |-- scan_threads.py
+|       |   `-- scoreboard.py
+|       |-- domain/
+|       |   |-- candidates.py
+|       |   |-- comments.py
+|       |   |-- history.py
+|       |   |-- packet_builder.py
+|       |   |-- reply_packet.py
+|       |   |-- targeting.py
+|       |   |-- threads.py
+|       |   |-- workflow.py
+|       |   |-- writing_options.py
+|       |   `-- writing_presets.py
+|       |-- ports/
+|       |   |-- artifacts.py
+|       |   |-- bundle.py
+|       |   |-- clipboard.py
+|       |   |-- events.py
+|       |   |-- history.py
+|       |   |-- presets.py
+|       |   |-- transcripts.py
+|       |   `-- youtube.py
+|       |-- infrastructure/
+|       |   |-- filesystem_artifacts.py
+|       |   |-- git_files.py
+|       |   |-- json_preset_store.py
+|       |   |-- prompt_resources.py
+|       |   |-- saved_transcripts.py
+|       |   |-- sqlite_history.py
+|       |   |-- transcript_api.py
+|       |   |-- transcript_chain.py
+|       |   |-- user_state.py
+|       |   |-- whisper_transcript.py
+|       |   |-- youtube_api.py
+|       |   `-- ytdlp_transcript.py
+|       |-- interfaces/
+|       |   |-- cli/
+|       |   |   |-- main.py
+|       |   |   |-- composition.py
+|       |   |   |-- privacy_command.py
+|       |   |   |-- state_storage.py
+|       |   |   |-- window_options.py
+|       |   |   `-- formatters.py
+|       |   `-- gui/
+|       |       |-- builder.py
+|       |       |-- advanced_dialog.py
+|       |       |-- layout.py
+|       |       |-- options.py
+|       |       |-- packet_window.py
+|       |       |-- run_receipt.py
+|       |       |-- widgets.py
+|       |       |-- worker.py
+|       |       |-- controllers.py
+|       |       `-- view_models.py
+|       `-- resources/
+|           |-- prompts/
+|           `-- wordlists/
+|-- tests/
+|   |-- application/
+|   |-- cli/
+|   |-- contract/
+|   |-- domain/
+|   |-- gui/
+|   |-- harness/
+|   |-- infrastructure/
+|   `-- tools/
+`-- tools/
 ```
 
-## Responsibility Rules
+The tree above names the main boundaries and representative modules. The
+filesystem remains authoritative for the complete inventory.
 
-### `domain/`
+## Responsibility rules
 
-Contains product rules and typed facts.
+- `domain/` contains product rules and imports no interfaces or infrastructure.
+- `application/` coordinates use cases through ports.
+- `ports/` defines what the application needs from outside systems.
+- `infrastructure/` implements those ports for YouTube, transcripts, SQLite,
+  the filesystem, and the desktop.
+- `interfaces/cli/` parses commands, resolves configuration, composes adapters,
+  and formats results.
+- `interfaces/gui/` collects options, runs work cooperatively off the Tk
+  thread, and drives application sessions.
+- `resources/` contains versioned prompt and word-list assets.
+- Private state is resolved through `user_state.py`; settings, presets, and
+  engagement history do not live in the repository or generated-run tree.
+- `PortBundle` gives the composition root typed adapter attributes while
+  retaining mapping compatibility for injected test fakes.
 
-Must not import infrastructure or interfaces.
-
-### `application/`
-
-Contains use-case orchestration.
-
-May depend on domain objects and ports.
-
-Must not depend on concrete infrastructure.
-
-### `ports/`
-
-Contains protocols or abstract interfaces.
-
-Ports describe what the application needs.
-
-### `infrastructure/`
-
-Contains concrete adapters for external systems.
-
-May depend on third-party packages.
-
-### `interfaces/cli/`
-
-Parses arguments, creates commands, calls application handlers, formats results.
-
-No domain logic.
-
-### `interfaces/gui/`
-
-Collects user input, creates commands, renders state and results.
-
-No domain logic.
-
-### `resources/`
-
-Stores versioned prompt text and declarative writing-option definitions.
-
-## Naming Rule
-
-Do not create generic dumping grounds such as:
-
-```text
-utils.py
-helpers.py
-common.py
-manager.py
-misc.py
-```
-
-Create a module only when it has a clear responsibility and test boundary.
+Avoid generic dumping grounds such as `utils.py`, `helpers.py`, or `misc.py`.
+Every module needs a specific responsibility and test boundary.

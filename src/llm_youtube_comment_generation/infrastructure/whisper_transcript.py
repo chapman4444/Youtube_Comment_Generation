@@ -107,6 +107,7 @@ def transcribe(
     *,
     model_name: str = DEFAULT_MODEL,
     language: str = "",
+    maximum_seconds: int | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """Run the model over one audio file. Returns (entries, language)."""
 
@@ -115,14 +116,16 @@ def transcribe(
     # int8 on CPU: several times faster than float32 and, on speech, not
     # audibly worse. A machine without a GPU is the case here.
     model = WhisperModel(model_name, device="cpu", compute_type="int8")
-    segments, info = model.transcribe(
-        str(audio),
-        language=language or None,
+    options: dict[str, Any] = {
+        "language": language or None,
         # Skips silence rather than hallucinating words into it, which is
         # whisper's best-known failure and the one that would put invented
         # sentences into a packet.
-        vad_filter=True,
-    )
+        "vad_filter": True,
+    }
+    if maximum_seconds is not None:
+        options["clip_timestamps"] = f"0,{max(1, int(maximum_seconds))}"
+    segments, info = model.transcribe(str(audio), **options)
     return list(_entries(segments)), str(getattr(info, "language", "") or "")
 
 

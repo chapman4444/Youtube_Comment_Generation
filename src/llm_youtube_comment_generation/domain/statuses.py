@@ -126,7 +126,7 @@ class RetrievalOutcome:
     status: RetrievalStatus = RetrievalStatus.COMPLETE
     retrieved: int = 0
     reported_total: int | None = None
-    requests_used: int = 0
+    api_operations_used: int = 0
     notes: tuple[str, ...] = ()
 
     @property

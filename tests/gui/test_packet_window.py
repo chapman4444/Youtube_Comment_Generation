@@ -26,6 +26,9 @@ from llm_youtube_comment_generation.interfaces.gui.options import (
 )
 from llm_youtube_comment_generation.interfaces.gui.sequence import Step
 from llm_youtube_comment_generation.interfaces.gui.worker import WorkerEvent
+from llm_youtube_comment_generation.infrastructure.json_preset_store import (
+    JsonPresetStore,
+)
 
 VIDEO_URL = "https://www.youtube.com/watch?v=gC-J7zwYMAM"
 ANSWER = "Reasoning.\n\n### Hardened final\nThe reply I would send.\n"
@@ -64,6 +67,22 @@ def test_the_window_opens_with_no_video_at_all(window):
 
     assert window.video.get() == ""
     assert "no video" in window.status.get().lower()
+
+
+def test_advanced_and_reset_are_in_the_always_visible_top_row(window):
+    window.root.geometry("1400x850")
+    window.root.update_idletasks()
+
+    assert window.advanced_button.winfo_parent() == str(window.mode_bar)
+    assert window.reset_options_button.winfo_parent() == str(window.mode_bar)
+    assert window.advanced_button.winfo_manager() == "pack"
+    assert window.reset_options_button.winfo_manager() == "pack"
+    assert window.advanced_button.winfo_y() >= 0
+    assert (
+        window.advanced_button.winfo_y()
+        + window.advanced_button.winfo_reqheight()
+        <= window.mode_bar.winfo_height()
+    )
 
 
 @pytest.mark.parametrize(
@@ -510,12 +529,81 @@ def test_checkbox_count_alone_selects_default_or_custom_mode(window):
 
     assert window.options.comment_approach_mode == "custom"
     assert window.options.comment_variations == ("short_hook",)
-    assert "1 custom approach selected" in window.approach_summary.get()
+    assert window.approach_summary.get() == (
+        f"1 of {len(window.approach_vars)} approaches selected."
+    )
 
     window.clear_custom_approaches()
 
     assert window.options.comment_approach_mode == "default"
     assert window.options.comment_variations == ()
+
+
+def test_approach_summary_says_when_every_approach_is_selected(window):
+    for variable in window.approach_vars.values():
+        variable.set(True)
+
+    window._approach_selected()
+
+    assert window.approach_summary.get() == (
+        f"All {len(window.approach_vars)} approaches selected."
+    )
+
+
+def test_register_search_preserves_hidden_selections(window):
+    window.approach_vars["short_hook"].set(True)
+    window._approach_selected()
+
+    window.approach_filter.set("historical")
+    window.root.update_idletasks()
+
+    assert "short_hook" not in window.approach_checks
+    assert window.approach_vars["short_hook"].get()
+    assert window.options.comment_variations == ("short_hook",)
+
+
+def test_built_in_preset_applies_registers_dials_and_length(window):
+    window.preset_name.set("Evidence first")
+
+    window.apply_selected_preset()
+
+    assert "timestamp_callout" in window.options.comment_variations
+    assert window.options.dials["humor"] == "none"
+    assert window.length.get() == "medium"
+    assert window.video.get() == ""
+
+
+def test_custom_preset_can_be_saved_and_reapplied(tk_root, tmp_path):
+    top = tk.Toplevel(tk_root)
+    top.withdraw()
+    store = JsonPresetStore(tmp_path / "writing_presets.json")
+    names = iter(["My saved settings"])
+    built = PacketWindow(
+        root=top,
+        options=PacketOptionsModel(video="gC-J7zwYMAM"),
+        clipboard=FakeClipboard(),
+        preset_store=store,
+        ask_preset_name=lambda: next(names),
+        poll=False,
+        notify=lambda title, message: None,
+    )
+    try:
+        built.approach_vars["short_hook"].set(True)
+        built._approach_selected()
+        built.length.set("long")
+        built._length_changed()
+        built.save_current_preset()
+
+        built.reset_options()
+        built.preset_name.set("My saved settings")
+        built.apply_selected_preset()
+
+        assert built.options.comment_variations == ("short_hook",)
+        assert built.length.get() == "long"
+        assert built.options.video == "gC-J7zwYMAM"
+        assert store.path.is_file()
+    finally:
+        top.destroy()
 
 
 def test_length_uses_short_inline_copy_and_long_tooltip_source(window):
@@ -699,6 +787,35 @@ def test_the_button_lights_up_when_an_answer_appears(window):
     window.poll_clipboard()
 
     assert str(window.primary.cget("state")) == "normal"
+
+
+def test_a_visible_pasted_answer_works_without_clipboard_detection(window):
+    submitted = []
+
+    class Session:
+        accepted: list = []
+        state = SimpleNamespace(last_error="")
+
+        def submit(self, text):
+            submitted.append(text)
+            self.accepted.append(text)
+            return SimpleNamespace(status=SimpleNamespace(value="ok"))
+
+        def finish(self):
+            return None
+
+    window.comment_session = Session()
+    window.video.set("gC-J7zwYMAM")
+    window.answer_input.insert("1.0", ANSWER)
+    window.refresh()
+
+    assert str(window.primary.cget("state")) == "normal"
+    assert window.primary.cget("text") == "Use pasted answer"
+
+    window.take_comment_answer()
+
+    assert submitted == [ANSWER.strip()]
+    assert window._answer_text() == ""
 
 
 def test_polling_an_unchanged_clipboard_does_not_redraw(window):

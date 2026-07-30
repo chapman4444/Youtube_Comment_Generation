@@ -138,7 +138,12 @@ def test_the_logic_layer_imports_no_tkinter(module):
 #: The only modules allowed to draw. Everything else in this package decides
 #: what a window shows without being able to show it, which is what keeps the
 #: rules testable on a machine where Tk interpreter creation is flaky.
-WINDOW_MODULES = {"main_window.py", "packet_window.py"}
+WINDOW_MODULES = {
+    "advanced_dialog.py",
+    "main_window.py",
+    "packet_window.py",
+    "widgets.py",
+}
 
 
 def test_only_the_window_modules_import_tkinter():

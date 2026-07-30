@@ -18,6 +18,10 @@ import webbrowser
 
 import pytest
 
+from llm_youtube_comment_generation.infrastructure.user_state import (
+    default_state_directory,
+)
+
 from harness_support import (
     REAL_CREATE_CONNECTION,
     REAL_SOCKET,
@@ -133,6 +137,18 @@ def test_the_fake_home_is_not_inside_the_tests_own_tmp_path(tmp_path):
     assert tmp_path not in pathlib.Path.home().parents
 
 
+def test_every_windows_state_variable_is_disposable(
+    isolated_application_state,
+):
+    root = isolated_application_state.resolve()
+
+    for name in (
+        "YTCOMMENT_STATE_DIR", "LOCALAPPDATA", "APPDATA", "XDG_STATE_HOME",
+    ):
+        assert pathlib.Path(os.environ[name]).resolve().is_relative_to(root)
+    assert default_state_directory().resolve().is_relative_to(root)
+
+
 # --------------------------------------------------------------------------
 # Protected production state
 #
@@ -199,4 +215,10 @@ def test_the_live_history_is_among_the_guarded_paths():
     guarded = protected_state_paths()
     assert [path.name for path in guarded].count("posted_history.json") == 2
     assert any("Comment_Generation_Claude02" in str(path) for path in guarded)
+    for name in (
+        "engagement_history.sqlite3",
+        "window_settings.json",
+        "writing_presets.json",
+    ):
+        assert any(path.name == name for path in guarded)
     assert snapshot_protected_state(), "the guard is watching no paths at all"

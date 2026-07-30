@@ -59,11 +59,42 @@ def test_recording_the_same_draft_twice_adds_one_row(tmp_path):
     assert len(store.load()) == 1
 
 
-def test_a_lightly_edited_draft_is_the_same_draft(tmp_path):
+def test_fuzzy_similarity_is_not_persistence_identity(tmp_path):
     store = store_at(tmp_path)
     store.append([draft("The Same Reply, Text!")])
 
-    assert store.append([draft("the same reply text")]) == 0
+    assert store.append([draft("the same reply text")]) == 1
+    assert len(store.load()) == 2
+
+
+def test_identical_text_to_two_targets_is_two_posting_events(tmp_path):
+    store = store_at(tmp_path)
+
+    assert store.append([
+        draft("same words", target="@alice", target_comment_id="a"),
+        draft("same words", target="@bob", target_comment_id="b"),
+    ]) == 2
+
+
+def test_an_exact_event_retry_is_idempotent(tmp_path):
+    store = store_at(tmp_path)
+    entry = draft(
+        "same words",
+        target="@alice",
+        target_comment_id="a",
+        run_id="run-1",
+        workflow="reply",
+    )
+
+    assert store.append([entry]) == 1
+    assert store.append([entry]) == 0
+
+
+def test_a_non_latin_draft_is_preserved(tmp_path):
+    store = store_at(tmp_path)
+
+    assert store.append([draft("これは投稿された返信です", event_id="jp-1")]) == 1
+    assert store.load()[0]["draft"] == "これは投稿された返信です"
 
 
 def test_the_same_text_under_two_videos_is_two_drafts(tmp_path):
@@ -214,6 +245,95 @@ def test_migrated_rows_are_marked_as_migrated(tmp_path, legacy_file):
     migrate_json(legacy_file, store)
 
     assert {row["source"] for row in store.load()} == {"migrated"}
+
+
+@pytest.mark.parametrize("malformed", [
+    "not an object",
+    {"video_id": "v1"},
+    {"video_id": "v1", "draft": ""},
+    {"video_id": "v1", "draft": "   "},
+    {"video_id": "v1", "draft": 123},
+])
+def test_malformed_migration_records_abort_without_partial_import(
+    tmp_path,
+    malformed,
+):
+    source = tmp_path / "posted_history.json"
+    source.write_text(
+        json.dumps([draft("valid first"), malformed, draft("valid last")]),
+        encoding="utf-8",
+    )
+    before = digest_of(source)
+    store = store_at(tmp_path)
+
+    with pytest.raises(
+        HistoryCorruptionError,
+        match=r"malformed record\(s\).*index\(es\) 1",
+    ):
+        migrate_json(source, store)
+
+    assert store.load() == []
+    assert digest_of(source) == before
+
+
+def test_v1_database_is_backed_up_and_migrated_without_losing_rows(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE drafts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            video_id TEXT NOT NULL,
+            video_title TEXT NOT NULL DEFAULT '',
+            target TEXT NOT NULL DEFAULT '',
+            draft TEXT NOT NULL,
+            match_key TEXT NOT NULL,
+            words INTEGER NOT NULL DEFAULT 0,
+            their_likes INTEGER NOT NULL DEFAULT 0,
+            drafted_at TEXT NOT NULL DEFAULT '',
+            prompt_version TEXT NOT NULL DEFAULT '',
+            registers TEXT NOT NULL DEFAULT '',
+            source TEXT NOT NULL DEFAULT 'native',
+            UNIQUE (video_id, match_key)
+        );
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO meta VALUES ('schema_version', '1');
+        INSERT INTO drafts
+            (video_id, target, draft, match_key, words, source)
+        VALUES ('v1', '@alice', 'legacy reply', 'legacy reply', 2, 'migrated');
+    """)
+    connection.commit()
+    connection.close()
+    before = digest_of(path)
+
+    rows = SqliteHistoryStore(path).load()
+
+    assert len(rows) == 1
+    assert rows[0]["draft"] == "legacy reply"
+    backups = list(tmp_path.glob("history.sqlite3.v1.bak*"))
+    assert len(backups) == 1
+    assert digest_of(backups[0]) == before
+    with sqlite3.connect(path) as migrated:
+        version = migrated.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()[0]
+    assert version == "2"
+
+
+def test_a_future_schema_is_refused_without_writing(tmp_path):
+    path = tmp_path / "history.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.executescript("""
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO meta VALUES ('schema_version', '999');
+    """)
+    connection.commit()
+    connection.close()
+    before = digest_of(path)
+
+    with pytest.raises(HistoryCorruptionError, match="newer"):
+        SqliteHistoryStore(path).load()
+
+    assert digest_of(path) == before
 
 
 def test_an_unreadable_source_is_refused_and_left_alone(tmp_path):

@@ -105,10 +105,11 @@ def test_a_draft_with_two_plausible_replies_is_ambiguous_not_unmatched():
     finding.
     """
 
-    history = [draft("the shared opening")]
+    opening = "the shared opening contains enough specific words to compare safely"
+    history = [draft(opening)]
     live = [
-        posted("the shared opening and one tail", 1),
-        posted("the shared opening and another tail", 2),
+        posted(opening + " and one tail", 1),
+        posted(opening + " and another tail", 2),
     ]
 
     scored = score_history(live, history, "v1")
@@ -118,16 +119,17 @@ def test_a_draft_with_two_plausible_replies_is_ambiguous_not_unmatched():
 
 
 def test_an_ambiguous_row_is_never_shown_as_an_ordinary_miss():
-    history = [draft("the shared opening"), draft("nowhere near anything posted")]
+    opening = "the shared opening contains enough specific words to compare safely"
+    history = [draft(opening), draft("nowhere near anything posted")]
     live = [
-        posted("the shared opening and one tail", 1),
-        posted("the shared opening and another tail", 2),
+        posted(opening + " and one tail", 1),
+        posted(opening + " and another tail", 2),
     ]
 
     statuses = {row["draft"]: row["match_status"]
                 for row in score_history(live, history, "v1")}
 
-    assert statuses["the shared opening"] == "ambiguous"
+    assert statuses[opening] == "ambiguous"
     assert statuses["nowhere near anything posted"] == "unmatched"
 
 
@@ -145,6 +147,29 @@ def test_two_replies_still_match_two_drafts():
 
 def test_an_empty_draft_is_not_a_row_at_all():
     assert score_history([posted("x")], [draft("")], "v1") == []
+
+
+def test_a_one_word_live_prefix_is_never_a_match():
+    scored = score_history(
+        [posted("this")],
+        [draft("this is a complete and substantially longer drafted reply")],
+        "v1",
+    )
+
+    assert scored[0]["match_status"] == "unmatched"
+
+
+def test_post_kind_prevents_a_comment_from_matching_a_reply():
+    text = "the exact same wording can still have different posting context"
+    live = [{"text": text, "like_count": 7, "is_reply": False}]
+
+    scored = score_history(
+        live,
+        [dict(draft(text), workflow="reply")],
+        "v1",
+    )
+
+    assert scored[0]["match_status"] == "unmatched"
 
 
 # --------------------------------------------------------------------------

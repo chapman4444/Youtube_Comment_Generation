@@ -106,7 +106,27 @@ def load(name: str) -> PromptResource:
     # Read as bytes and decode strictly: a prompt that silently became
     # mojibake would still render, and the damage would land in the model's
     # input rather than in a stack trace.
-    text = path.read_bytes().decode("utf-8")
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ConfigurationError(
+            f"The prompt resource {name} is not valid UTF-8: {exc}."
+        ) from exc
+
+    expected = recorded_checksum(name)
+    actual = hashlib.sha256(raw).hexdigest()
+    if not expected:
+        raise ConfigurationError(
+            f"The prompt resource {name} has no recorded checksum in "
+            f"{CHECKSUMS.name}."
+        )
+    if actual != expected:
+        raise ConfigurationError(
+            f"The prompt resource {name} failed its checksum: expected "
+            f"{expected}, actual {actual}. Refusing to use changed prompt "
+            "text until the checksum record is deliberately updated."
+        )
     declared = frozenset(entry.get("placeholders", ()))
     present = set(PLACEHOLDER.findall(text))
 
@@ -119,7 +139,7 @@ def load(name: str) -> PromptResource:
         )
 
     return PromptResource(
-        name=name, text=text, placeholders=declared, sha256=digest(text)
+        name=name, text=text, placeholders=declared, sha256=actual
     )
 
 

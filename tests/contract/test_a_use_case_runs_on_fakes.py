@@ -141,12 +141,12 @@ def find_outstanding(ports) -> OperationResult:
         "candidates": candidates,
         "outstanding": [c for c in candidates if c.outstanding],
         "length_rule": length_rule_for(register),
-        "requests_used": youtube.requests_used,
+        "api_operations_used": youtube.api_operations_used,
         "cutoff": parse_since("7", now=ports["clock"].now()),
     }
     result.metrics = {
         "comments": len(comments),
-        "requests": youtube.requests_used,
+        "api_operations": youtube.api_operations_used,
     }
     return result
 
@@ -210,8 +210,8 @@ def test_the_use_case_reports_the_quota_it_spent():
     result = find_outstanding(build_ports())
 
     # handle + video + two orderings + one reply thread
-    assert result.value["requests_used"] == 5
-    assert result.metrics["requests"] == 5
+    assert result.value["api_operations_used"] == 5
+    assert result.metrics["api_operations"] == 5
 
 
 def test_the_events_describe_the_run_in_facts():

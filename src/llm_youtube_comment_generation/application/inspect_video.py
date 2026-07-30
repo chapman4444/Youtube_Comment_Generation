@@ -23,6 +23,7 @@ from ..domain.statuses import (
     WarningCode,
 )
 from ..ports.events import EventKind, ProgressEvent
+from ..domain.statuses import TranscriptResult
 from .commands import InspectVideoCommand
 
 # How many threads get their replies fetched. A quota decision: fetching
@@ -45,7 +46,11 @@ class VideoInspection:
     )
     transcript_language: str = ""
     transcript_entries: int = 0
-    requests_used: int = 0
+    # Internal build context. Public formatters continue to expose the
+    # summary fields above, while packet construction reuses this exact
+    # acquisition instead of asking the transcript provider a second time.
+    transcript: TranscriptResult | None = None
+    api_operations_used: int = 0
     dry_run: bool = False
 
 
@@ -94,7 +99,7 @@ def handle(
             video={"video_id": command.video_id},
             dry_run=True,
         )
-        result.metrics = {"requests": 0}
+        result.metrics = {"api_operations": 0}
         return result
 
     events.emit(ProgressEvent(EventKind.STEP, step="video",
@@ -144,7 +149,10 @@ def handle(
             ))
 
         for index, parent in enumerate(parents, 1):
-            page = youtube.replies(parent["comment_id"], maximum=100)
+            page = youtube.replies(
+                parent["comment_id"],
+                maximum=command.max_replies_per_thread,
+            )
             replies.extend(page.comments)
             outcomes.append(page.outcome)
             events.emit(ProgressEvent(
@@ -152,6 +160,10 @@ def handle(
                 current=index, total=len(parents),
             ))
 
+    events.emit(ProgressEvent(
+        EventKind.STEP, step="transcript",
+        message="Fetching the transcript",
+    ))
     transcript = transcripts.fetch(
         command.video_id, command.transcript_languages
     )
@@ -165,7 +177,7 @@ def handle(
         status=worst(outcomes),
         retrieved=len(comments) + len(replies),
         reported_total=video.get("comment_count"),
-        requests_used=youtube.requests_used,
+        api_operations_used=youtube.api_operations_used,
         notes=tuple(note for outcome in outcomes for note in outcome.notes),
     )
     if not retrieval.may_conclude_absence:
@@ -182,7 +194,10 @@ def handle(
 
     events.emit(ProgressEvent(
         EventKind.FINISHED, step="inspect",
-        message=f"Done. {youtube.requests_used} API requests used",
+        message=(
+            f"Done. {youtube.api_operations_used} logical YouTube API "
+            "operations used"
+        ),
     ))
 
     result.value = VideoInspection(
@@ -194,11 +209,12 @@ def handle(
         transcript_availability=transcript.availability,
         transcript_language=transcript.language,
         transcript_entries=len(transcript.entries),
-        requests_used=youtube.requests_used,
+        transcript=transcript,
+        api_operations_used=youtube.api_operations_used,
     )
     result.metrics = {
         "comments": len(comments),
         "replies": len(replies),
-        "requests": youtube.requests_used,
+        "api_operations": youtube.api_operations_used,
     }
     return result

@@ -30,23 +30,29 @@ from typing import Any, Sequence
 from ..domain.errors import HistoryCorruptionError
 from ..domain.history import normalise_for_match
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS drafts (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key      TEXT NOT NULL UNIQUE,
     video_id       TEXT NOT NULL,
     video_title    TEXT NOT NULL DEFAULT '',
     target         TEXT NOT NULL DEFAULT '',
+    target_comment_id TEXT NOT NULL DEFAULT '',
+    thread_id      TEXT NOT NULL DEFAULT '',
+    workflow       TEXT NOT NULL DEFAULT '',
+    operator_channel_id TEXT NOT NULL DEFAULT '',
+    run_id         TEXT NOT NULL DEFAULT '',
     draft          TEXT NOT NULL,
     match_key      TEXT NOT NULL,
     words          INTEGER NOT NULL DEFAULT 0,
     their_likes    INTEGER NOT NULL DEFAULT 0,
     drafted_at     TEXT NOT NULL DEFAULT '',
+    posted_at      TEXT NOT NULL DEFAULT '',
     prompt_version TEXT NOT NULL DEFAULT '',
     registers      TEXT NOT NULL DEFAULT '',
-    source         TEXT NOT NULL DEFAULT 'native',
-    UNIQUE (video_id, match_key)
+    source         TEXT NOT NULL DEFAULT 'native'
 );
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -73,8 +79,11 @@ class SqliteHistoryStore:
             return []                       # missing is not corruption
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT video_id, video_title, target, draft, words, "
-                "their_likes, drafted_at, prompt_version, registers, source "
+                "SELECT event_key, video_id, video_title, target, "
+                "target_comment_id, thread_id, workflow, "
+                "operator_channel_id, run_id, draft, match_key, words, "
+                "their_likes, drafted_at, posted_at, prompt_version, "
+                "registers, source "
                 "FROM drafts ORDER BY id"
             ).fetchall()
         return [dict(row) for row in rows]
@@ -95,23 +104,32 @@ class SqliteHistoryStore:
                     continue
                 video_id = str(entry.get("video_id") or "")
                 key = normalise_for_match(draft)
-                if not key:
-                    continue
+                event_key = _event_key(entry, draft)
                 cursor = connection.execute(
                     "INSERT OR IGNORE INTO drafts "
-                    "(video_id, video_title, target, draft, match_key, words, "
-                    " their_likes, drafted_at, prompt_version, registers, source) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    "(event_key, video_id, video_title, target, "
+                    " target_comment_id, thread_id, workflow, "
+                    " operator_channel_id, run_id, draft, match_key, words, "
+                    " their_likes, drafted_at, posted_at, prompt_version, "
+                    " registers, source) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
+                        event_key,
                         video_id,
                         str(entry.get("video_title") or ""),
                         str(entry.get("target") or ""),
+                        str(entry.get("target_comment_id") or ""),
+                        str(entry.get("thread_id") or ""),
+                        str(entry.get("workflow") or ""),
+                        str(entry.get("operator_channel_id") or ""),
+                        str(entry.get("run_id") or ""),
                         draft,
                         key,
                         int(entry.get("words") or len(draft.split())),
                         int(entry.get("their_likes") or 0),
                         str(entry.get("drafted_at")
                             or datetime.now(timezone.utc).isoformat()),
+                        str(entry.get("posted_at") or ""),
                         str(entry.get("prompt_version") or ""),
                         json.dumps(list(entry.get("registers") or [])),
                         str(entry.get("source") or "native"),
@@ -148,13 +166,36 @@ class SqliteHistoryStore:
     def _connect(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            existed = self._path.exists()
             connection = sqlite3.connect(self._path)
             connection.row_factory = sqlite3.Row
+            if not existed:
+                connection.executescript(SCHEMA)
+                connection.execute(
+                    "INSERT INTO meta (key, value) VALUES (?, ?)",
+                    ("schema_version", str(SCHEMA_VERSION)),
+                )
+                connection.commit()
+                return connection
+
+            version = _schema_version(connection)
+            if version > SCHEMA_VERSION:
+                connection.close()
+                raise HistoryCorruptionError(
+                    f"the history store at {self._path} uses schema version "
+                    f"{version}, newer than this application's version "
+                    f"{SCHEMA_VERSION}. It has not been written to."
+                )
+            if version < 1:
+                connection.close()
+                raise HistoryCorruptionError(
+                    f"the history store at {self._path} has no supported "
+                    "schema version. It has not been written to."
+                )
+            if version == 1:
+                self._backup_v1()
+                _migrate_v1(connection)
             connection.executescript(SCHEMA)
-            connection.execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
-                ("schema_version", str(SCHEMA_VERSION)),
-            )
             return connection
         except sqlite3.DatabaseError as exc:
             raise HistoryCorruptionError(
@@ -162,6 +203,125 @@ class SqliteHistoryStore:
                 f"({exc}). It has not been written to. Run "
                 "`ytcomment history quarantine` to set it aside."
             ) from exc
+
+    def _backup_v1(self) -> Path:
+        """Copy the final v1 bytes before applying the schema migration."""
+
+        target = self._path.with_suffix(self._path.suffix + ".v1.bak")
+        counter = 1
+        while target.exists():
+            counter += 1
+            target = self._path.with_suffix(
+                self._path.suffix + f".v1.bak{counter}"
+            )
+        shutil.copy2(self._path, target)
+        return target
+
+
+def _event_key(entry: dict[str, Any], draft: str) -> str:
+    """Stable identity for one confirmed posting event."""
+
+    supplied = str(entry.get("event_key") or entry.get("event_id") or "").strip()
+    if supplied:
+        return supplied
+    identity = {
+        "video_id": str(entry.get("video_id") or ""),
+        "workflow": str(entry.get("workflow") or ""),
+        "target": str(entry.get("target") or ""),
+        "target_comment_id": str(entry.get("target_comment_id") or ""),
+        "thread_id": str(entry.get("thread_id") or ""),
+        "run_id": str(entry.get("run_id") or ""),
+        "draft": draft,
+        "drafted_at": str(entry.get("drafted_at") or ""),
+        "source": str(entry.get("source") or "native"),
+    }
+    encoded = json.dumps(
+        identity, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _schema_version(connection: sqlite3.Connection) -> int:
+    meta = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='meta'"
+    ).fetchone()
+    if meta is None:
+        return 0
+    row = connection.execute(
+        "SELECT value FROM meta WHERE key='schema_version'"
+    ).fetchone()
+    try:
+        return int(row[0]) if row else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _migrate_v1(connection: sqlite3.Connection) -> None:
+    """Transactionally rebuild v1 without fuzzy-text uniqueness."""
+
+    rows = connection.execute(
+        "SELECT id, video_id, video_title, target, draft, match_key, words, "
+        "their_likes, drafted_at, prompt_version, registers, source "
+        "FROM drafts ORDER BY id"
+    ).fetchall()
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("""
+            CREATE TABLE drafts_v2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_key TEXT NOT NULL UNIQUE,
+                video_id TEXT NOT NULL,
+                video_title TEXT NOT NULL DEFAULT '',
+                target TEXT NOT NULL DEFAULT '',
+                target_comment_id TEXT NOT NULL DEFAULT '',
+                thread_id TEXT NOT NULL DEFAULT '',
+                workflow TEXT NOT NULL DEFAULT '',
+                operator_channel_id TEXT NOT NULL DEFAULT '',
+                run_id TEXT NOT NULL DEFAULT '',
+                draft TEXT NOT NULL,
+                match_key TEXT NOT NULL,
+                words INTEGER NOT NULL DEFAULT 0,
+                their_likes INTEGER NOT NULL DEFAULT 0,
+                drafted_at TEXT NOT NULL DEFAULT '',
+                posted_at TEXT NOT NULL DEFAULT '',
+                prompt_version TEXT NOT NULL DEFAULT '',
+                registers TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'native'
+            )
+        """)
+        for row in rows:
+            entry = dict(row)
+            connection.execute(
+                "INSERT INTO drafts_v2 "
+                "(id, event_key, video_id, video_title, target, draft, "
+                "match_key, words, their_likes, drafted_at, prompt_version, "
+                "registers, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    entry["id"],
+                    _event_key(entry, str(entry["draft"])),
+                    entry["video_id"],
+                    entry["video_title"],
+                    entry["target"],
+                    entry["draft"],
+                    entry["match_key"],
+                    entry["words"],
+                    entry["their_likes"],
+                    entry["drafted_at"],
+                    entry["prompt_version"],
+                    entry["registers"],
+                    entry["source"],
+                ),
+            )
+        connection.execute("DROP TABLE drafts")
+        connection.execute("ALTER TABLE drafts_v2 RENAME TO drafts")
+        connection.execute(
+            "UPDATE meta SET value=? WHERE key='schema_version'",
+            (str(SCHEMA_VERSION),),
+        )
+        connection.commit()
+    except BaseException:
+        connection.rollback()
+        raise
 
 
 def digest_of(path: Path) -> str:
@@ -203,10 +363,34 @@ def migrate_json(
             "modified."
         )
 
-    added = store.append([
+    malformed = [
+        index
+        for index, entry in enumerate(entries)
+        if (
+            not isinstance(entry, dict)
+            or not isinstance(entry.get("draft"), str)
+            or not entry["draft"].strip()
+        )
+    ]
+    if malformed:
+        sample = ", ".join(str(index) for index in malformed[:10])
+        more = (
+            f" and {len(malformed) - 10} more"
+            if len(malformed) > 10
+            else ""
+        )
+        raise HistoryCorruptionError(
+            f"{source} contains {len(malformed)} malformed record(s) at "
+            f"zero-based index(es) {sample}{more}. Every record must be an "
+            "object with a non-empty text draft. Nothing was imported and "
+            "the source has not been modified."
+        )
+
+    validated = [
         dict(entry, source="migrated")
-        for entry in entries if isinstance(entry, dict)
-    ])
+        for entry in entries
+    ]
+    added = store.append(validated)
 
     after = digest_of(source)
     if before != after:

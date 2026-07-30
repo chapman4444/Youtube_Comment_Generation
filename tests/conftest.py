@@ -28,7 +28,24 @@ from harness_support import (  # noqa: F401 - re-exported for the proofs
 
 
 @pytest.fixture(autouse=True)
-def production_state_is_off_limits():
+def isolated_application_state(monkeypatch, tmp_path_factory):
+    """Every production state resolver is confined to a disposable root."""
+
+    root = tmp_path_factory.mktemp("fake-application-state")
+    locations = {
+        "YTCOMMENT_STATE_DIR": root / "explicit",
+        "LOCALAPPDATA": root / "local-app-data",
+        "APPDATA": root / "roaming-app-data",
+        "XDG_STATE_HOME": root / "xdg-state",
+    }
+    for name, path in locations.items():
+        path.mkdir()
+        monkeypatch.setenv(name, str(path))
+    return root
+
+
+@pytest.fixture(autouse=True)
+def production_state_is_off_limits(isolated_application_state):
     """No test may write to the real draft history.
 
     Pointing the code under test at tmp_path is the fix; this is the assertion

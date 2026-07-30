@@ -29,9 +29,9 @@ class HistoryStore(Protocol):
     def append(self, entries: Sequence[dict[str, Any]]) -> int:
         """Add drafts that are not already recorded; return how many were new.
 
-        Deduplication is by (video_id, normalised draft text), because the
-        operator may run the same build twice and must not get two rows for
-        one reply — that would double-count the likes it eventually earns.
+        Deduplication is by stable posting-event identity. Fuzzy text is
+        matching metadata, not persistence identity: identical text posted
+        to different targets remains two rows.
         """
         ...
 

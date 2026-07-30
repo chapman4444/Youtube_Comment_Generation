@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -68,16 +69,21 @@ from ...infrastructure.filesystem_artifacts import (
     FilesystemArtifactStore,
     unique_run_root,
 )
-from ...infrastructure.sqlite_history import SqliteHistoryStore, migrate_json
+from ...infrastructure.sqlite_history import migrate_json
 from ...infrastructure.system_clipboard import SystemClipboard
 from ...infrastructure.system_clock import SystemClock
-from ...infrastructure.saved_transcripts import SavedTranscriptFallback
-from ...infrastructure.transcript_chain import ChainedTranscripts
-from ...infrastructure.transcript_api import TranscriptAdapter, library_available
-from ...infrastructure.whisper_transcript import WhisperTranscriptAdapter
-from ...infrastructure.ytdlp_transcript import YtDlpTranscriptAdapter
-from ...infrastructure.youtube_api import YouTubeAdapter, build_session
+from ...infrastructure.transcript_api import library_available
 from . import formatters
+from .state_storage import (
+    history_store,
+    legacy_state_path as _legacy_state_path,
+    load_window_settings as _load_window_settings,
+    private_state_directory as _private_state_directory,
+    save_window_settings as _save_window_settings,
+    window_settings_path as _window_settings_path,
+)
+from .composition import default_ports
+from .window_options import apply_window_options
 
 LOGGER = logging.getLogger("ytcomment")
 
@@ -105,8 +111,6 @@ def build_parser() -> argparse.ArgumentParser:
                         choices=("DEBUG", "INFO", "WARNING", "ERROR"))
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="show per-item progress, not just steps")
-    parser.add_argument("--profile", action="store_true",
-                        help="report how long the run took and what it spent")
     parser.add_argument("--log-jsonl", action="store_true", dest="log_jsonl",
                         help="emit structured logs, one JSON object per line")
 
@@ -233,6 +237,27 @@ def build_parser() -> argparse.ArgumentParser:
     history = subparsers.add_parser("history", help="the drafts you recorded")
     history_sub = history.add_subparsers(dest="action")
     history_sub.add_parser("list", help="every recorded draft")
+    record = history_sub.add_parser(
+        "record",
+        help="record a draft only after you manually posted it",
+    )
+    record.add_argument("video", help=VIDEO_HELP)
+    draft_source = record.add_mutually_exclusive_group(required=True)
+    draft_source.add_argument("--draft", help="the exact posted text")
+    draft_source.add_argument(
+        "--draft-file",
+        help="a UTF-8 file containing the exact posted text",
+    )
+    record.add_argument("--workflow", choices=("comment", "reply"),
+                        required=True)
+    record.add_argument("--target", default="")
+    record.add_argument("--target-comment-id", default="",
+                        dest="target_comment_id")
+    record.add_argument("--thread-id", default="", dest="thread_id")
+    record.add_argument("--run-id", default="", dest="run_id")
+    record.add_argument("--event-id", default="", dest="event_id")
+    record.add_argument("--registers", default=None)
+    record.add_argument("--posted-at", default=None, dest="posted_at")
     migrate = history_sub.add_parser(
         "migrate", help="copy a legacy posted_history.json into the store"
     )
@@ -250,6 +275,9 @@ def build_parser() -> argparse.ArgumentParser:
                              help=VIDEO_HELP)
     build_board.add_argument("--max-comments", type=int, default=None,
                              dest="max_comments")
+    build_board.add_argument("--my-channel-id", default=None,
+                             dest="channel_id")
+    build_board.add_argument("--my-handle", default=None, dest="handle")
     build_board.add_argument("--output-dir", default=None,
                              dest="output_directory")
 
@@ -302,7 +330,7 @@ def build_parser() -> argparse.ArgumentParser:
     gui_parser.add_argument("--registers", default=None)
     gui_parser.add_argument("--dial", action="append", default=None,
                             metavar="NAME=VALUE")
-    gui_parser.add_argument("--limit", type=int, default=10,
+    gui_parser.add_argument("--limit", type=int, default=None,
                             dest="guided_limit")
     gui_parser.add_argument("--max-comments", type=int, default=None,
                             dest="max_comments")
@@ -333,6 +361,15 @@ def build_parser() -> argparse.ArgumentParser:
     config_sub.add_parser(
         "path", help="show where settings and state are read from"
     )
+
+    privacy = subparsers.add_parser(
+        "privacy", help="check publishable files for personal data"
+    )
+    privacy_sub = privacy.add_subparsers(dest="action")
+    privacy_check = privacy_sub.add_parser(
+        "check", help="audit Git-tracked files before publishing"
+    )
+    privacy_check.add_argument("--root", default=".")
 
     runs = subparsers.add_parser("run", help="inspect past runs")
     runs_sub = runs.add_subparsers(dest="action")
@@ -386,52 +423,6 @@ def load_config_file(path: str | None) -> dict[str, Any]:
         from ...domain.errors import ConfigurationError
         raise ConfigurationError(f"{location} must contain a JSON object.")
     return loaded
-
-
-def default_ports(configuration: Configuration, api_key: str, events):
-    """Construct the real adapters. Replaced wholesale in tests."""
-
-    return {
-        "youtube": YouTubeAdapter(
-            api_key, build_session(configuration.get("proxy_url", ""))
-        ),
-        # Three sources, in preference order, then this machine's own saved
-        # copy. They fail independently: an address refused by the scrape
-        # endpoint was being served by yt-dlp's player API in the same minute.
-        #
-        # The scrape stays first because it is one request against yt-dlp's
-        # several, and because the adapter now stops trying after three
-        # refusals -- so on a blocked machine its cost collapses to nothing
-        # and yt-dlp answers instead.
-        "transcripts": SavedTranscriptFallback(
-            ChainedTranscripts(
-                TranscriptAdapter(
-                    configuration.get("transcript_languages", ("en",)),
-                    # The caption endpoint is the thing that gets IP-banned,
-                    # and a proxy is its documented workaround. This setting
-                    # reached only the Data API adapter, never the one banned.
-                    proxy_url=configuration.get("proxy_url", ""),
-                ),
-                YtDlpTranscriptAdapter(
-                    configuration.get("transcript_languages", ("en",)),
-                    proxy_url=configuration.get("proxy_url", ""),
-                ),
-                # Last, and only when asked for. Every source above is one
-                # request; this downloads the audio and listens to it. It is
-                # also the only one that can produce anything for a video
-                # with no captions published at all.
-                *([WhisperTranscriptAdapter(
-                    configuration.get("transcript_languages", ("en",)),
-                    proxy_url=configuration.get("proxy_url", ""),
-                    model_name=configuration.get("whisper_model", "small.en"),
-                    events=events,
-                )] if configuration.get("transcribe_locally") else []),
-            ),
-            configuration.get("output_directory", "output"),
-        ),
-        "clipboard": SystemClipboard(),
-        "events": events,
-    }
 
 
 def video_from_clipboard(clipboard, stdout) -> str:
@@ -719,7 +710,8 @@ def _whisper_state(configuration) -> str:
 
     if not installed:
         return ("not installed - videos with no captions at all cannot be "
-                "transcribed. Run: pip install faster-whisper")
+                "transcribed. Run: python -m pip install -e "
+                "\".[local-transcription]\"")
     if not wanted:
         return (f"installed, off. Turn it on with --transcribe or "
                 f"YTCOMMENT_TRANSCRIBE_LOCALLY=1 ({model})")
@@ -764,41 +756,117 @@ def run_doctor(configuration: Configuration, api_key: str, stream) -> int:
     """
 
     root = Path(configuration.get("output_directory", "output"))
-    writable, write_detail = _write_check(root)
-    store = history_store(configuration)
-    try:
-        recorded = f"{len(store.load()):,} drafts recorded"
-        history_ok = True
-    except Exception as exc:              # noqa: BLE001 - doctor reports, never fails
-        recorded = f"UNREADABLE ({type(exc).__name__}); run history quarantine"
-        history_ok = False
 
+    def safe_detail(exc: Exception) -> str:
+        """Bound one failed probe without echoing paths or credentials."""
+
+        detail = redact(
+            str(exc),
+            api_key,
+            configuration.get("proxy_url", ""),
+        )
+        for private, replacement in (
+            (str(Path.home()), "<user-home>"),
+            (str(root), "<output-directory>"),
+        ):
+            if private:
+                detail = detail.replace(private, replacement)
+                detail = detail.replace(
+                    private.replace("\\", "/"), replacement
+                )
+        detail = re.sub(
+            r"([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^@/\s]+@",
+            r"\1[credentials-redacted]@",
+            detail,
+            flags=re.IGNORECASE,
+        )
+        detail = " ".join(detail.split())
+        if len(detail) > 240:
+            detail = detail[:237] + "..."
+        return detail or "no detail"
+
+    def checked(name, probe):
+        try:
+            ok, detail = probe()
+            return name, str(detail), bool(ok)
+        except Exception as exc:          # noqa: BLE001 - diagnostic boundary
+            return (
+                name,
+                f"CHECK FAILED ({type(exc).__name__}): {safe_detail(exc)}",
+                False,
+            )
+
+    def history_state() -> tuple[bool, str]:
+        store = history_store(configuration)
+        return True, f"{len(store.load()):,} drafts recorded"
+
+    # Run this first because creating a missing output directory also makes
+    # the saved-transcript check precise. It is still printed in its familiar
+    # place below.
+    output_check = checked("output directory", lambda: _write_check(root))
     checks = [
-        ("python", f"{sys.version_info.major}.{sys.version_info.minor}"
-                   f".{sys.version_info.micro}", True),
-        ("api key", "resolved" if api_key else
-         f"NOT FOUND (set {' or '.join(API_KEY_VARIABLES)})", bool(api_key)),
+        checked(
+            "python",
+            lambda: (
+                True,
+                f"{sys.version_info.major}.{sys.version_info.minor}"
+                f".{sys.version_info.micro}",
+            ),
+        ),
+        checked(
+            "api key",
+            lambda: (
+                bool(api_key),
+                "resolved" if api_key else
+                f"NOT FOUND (set {' or '.join(API_KEY_VARIABLES)})",
+            ),
+        ),
         # Every source that can supply the words, named separately. The
         # transcript stack is four deep now and "transcript library:
         # installed" answered one quarter of the question -- which is worse
         # than answering none of it, because it reads like the whole answer.
-        ("transcript: scrape",
-         "installed" if library_available()
-         else "not installed - the usual source is unavailable",
-         True),
-        ("transcript: yt-dlp",
-         "installed - backs up the scrape endpoint, blocked separately"
-         if ytdlp_available()
-         else "not installed - run: pip install yt-dlp",
-         True),
-        ("transcript: whisper", _whisper_state(configuration), True),
-        ("transcript: saved", _saved_transcript_state(configuration), True),
-        ("prompt resources",
-         f"{prompt_resources.prompt_version()} "
-         f"({len(list(prompt_resources.PROMPTS.glob('*.md')))} templates at "
-         f"{prompt_resources.PROMPTS})", True),
-        ("output directory", write_detail, writable),
-        ("history store", recorded, history_ok),
+        checked(
+            "transcript: scrape",
+            lambda: (
+                True,
+                "installed" if library_available()
+                else (
+                    "not installed - run: python -m pip install -e "
+                    "\".[transcripts]\""
+                ),
+            ),
+        ),
+        checked(
+            "transcript: yt-dlp",
+            lambda: (
+                True,
+                "installed - backs up the scrape endpoint, blocked separately"
+                if ytdlp_available()
+                else (
+                    "not installed - run: python -m pip install -e "
+                    "\".[transcripts]\""
+                ),
+            ),
+        ),
+        checked(
+            "transcript: whisper",
+            lambda: (True, _whisper_state(configuration)),
+        ),
+        checked(
+            "transcript: saved",
+            lambda: (True, _saved_transcript_state(configuration)),
+        ),
+        checked(
+            "prompt resources",
+            lambda: (
+                True,
+                f"{prompt_resources.prompt_version()} "
+                f"({len(list(prompt_resources.PROMPTS.glob('*.md')))} "
+                f"templates at {prompt_resources.PROMPTS})",
+            ),
+        ),
+        output_check,
+        checked("history store", history_state),
     ]
     print("Installation check", file=stream)
     print("", file=stream)
@@ -854,7 +922,14 @@ def run_reply(
         # different job from deciding how much evidence a packet needs, and
         # using the packet's number meant a comment at position 700 was
         # invisible while the scan reported "complete".
-        max_comments=configuration.get("reply_scan_comments", 3000),
+        max_comments=(
+            arguments.max_comments
+            if arguments.max_comments is not None
+            else configuration.get("reply_scan_comments", 3000)
+        ),
+        max_replies_per_thread=configuration.get(
+            "max_replies_per_thread", 100
+        ),
         only_unanswered=not getattr(arguments, "show_all", False),
     )
 
@@ -1002,29 +1077,29 @@ def run_packet_window(
     to show. This opens first and asks after.
     """
 
+    if getattr(arguments, "dry_run", False):
+        from ...domain.errors import ConfigurationError
+
+        raise ConfigurationError(
+            "--dry-run cannot be combined with --window. Run without "
+            "--window to preview the request with no network, files, or "
+            "clipboard changes."
+        )
+
     from ..gui import builder
     from ..gui.options import PacketOptionsModel
     from ..gui.packet_window import PacketWindow
 
     settings_file = _window_settings_path(configuration)
     options = PacketOptionsModel.from_settings(
-        _load_window_settings(settings_file))
-    # A video given on the command line still wins; without one the box is
-    # simply empty, which is the point.
-    if getattr(arguments, "video", None):
-        options.video = arguments.video
-    if not options.output_directory:
-        options.output_directory = str(
-            configuration.get("output_directory", "output"))
-    # The flag outranks the remembered value, which outranks the setting.
-    # Reading only the setting meant `gui --my-handle x` was silently
-    # ignored and reply mode opened with nobody -- the same shape of defect
-    # as the handle that was hardcoded into the launchers.
-    typed_handle = getattr(arguments, "handle", None)
-    if typed_handle:
-        options.my_handle = typed_handle
-    elif not options.my_handle:
-        options.my_handle = configuration.get("my_handle", "")
+        _load_window_settings(
+            settings_file,
+            legacy=_legacy_state_path(configuration, "window_settings.json"),
+        )
+    )
+    apply_window_options(
+        options, arguments, configuration, start_mode=start_mode
+    )
 
     factory = build_ports or default_ports
     # Loaded here, not in the window's package: filenames and the output
@@ -1039,9 +1114,24 @@ def run_packet_window(
         name: prompt_resources.load(name).text
         for name in ("reply_workflow.md", "reply_final_check.md")
     }
+    from ...infrastructure.json_preset_store import JsonPresetStore
+
+    preset_store = JsonPresetStore(
+        _private_state_directory(configuration) / "writing_presets.json"
+    )
 
     def ports_for(events):
-        return factory(configuration, api_key, events)
+        if build_ports is not None:
+            return factory(configuration, api_key, events)
+        job = getattr(events, "job", None)
+        return factory(
+            configuration,
+            api_key,
+            events,
+            cancelled=(lambda: bool(job and job.cancelled)),
+            transcribe_locally=options.transcribe_locally,
+            whisper_model=options.whisper_model,
+        )
 
     def store_for(video_id, directory):
         return _artifact_store({}, configuration, video_id, directory)
@@ -1053,7 +1143,11 @@ def run_packet_window(
                 ports_factory=ports_for,
                 templates=reply_templates,
                 artifacts_for=store_for,
-                session_factory=_guided_session_for,
+                session_factory=lambda **kwargs: _guided_session_for(
+                    **kwargs,
+                    history=history_store(configuration),
+                    prompt_version=prompt_resources.prompt_version(),
+                ),
                 scan=_scan_for_window,
                 triage_for=lambda candidates, maximum_characters: (
                     build_triage_packet(
@@ -1073,15 +1167,10 @@ def run_packet_window(
             prompt_version=prompt_resources.prompt_version(),
         )
 
-    print(
-        "Opening the packet window. It needs no video to open; paste or type "
-        "one when you have it. Nothing is posted.",
-        file=stdout,
-    )
     launch = launcher
     if launch is None:                              # pragma: no cover - real Tk
         from ..gui.packet_window import launch as launch
-    def comment_session_for(packet):
+    def comment_session_for(run):
         """A session over the packet the window just built.
 
         Comment mode could build a packet and copy it and then had nowhere to
@@ -1092,10 +1181,16 @@ def run_packet_window(
         from ...application.comment_session import CommentSession
 
         return CommentSession(
-            packet_text=packet.text,
-            video={"video_id": options.video, "title": ""},
-            registers=tuple(packet.variations),
-            artifacts=store_for(options.video, options.output_directory),
+            packet_text=run.text,
+            video=dict(run.video),
+            registers=tuple(run.packet.variations),
+            packet_path=run.packet_path,
+            prompt_version=str(
+                run.run_record.get("prompt_version") or ""
+            ),
+            run_id=str(getattr(run.artifacts, "root", "") or ""),
+            artifacts=run.artifacts,
+            history=history_store(configuration),
             clipboard=clipboard if clipboard is not None else SystemClipboard(),
             events=events,
         )
@@ -1106,11 +1201,11 @@ def run_packet_window(
         build=build,
         mode=start_mode,
         comment_session_factory=comment_session_for,
+        preset_store=preset_store,
         open_path=lambda path: desktop.open_path(
             path, editor=configuration.get("editor", "")),
     )
     _save_window_settings(settings_file, getattr(window, "options", options))
-    print("Window closed.", file=stdout)
     return EXIT_SUCCESS
 
 
@@ -1130,6 +1225,7 @@ class WindowScan:
     waiting: list = field(default_factory=list)
     total: int = 0
     owner_channel_id: str = ""
+    api_operations_used: int = 0
 
 
 def _scan_for_window(*, video, handle, max_comments, youtube, events, clock):
@@ -1147,19 +1243,23 @@ def _scan_for_window(*, video, handle, max_comments, youtube, events, clock):
         command, youtube=youtube, events=events, clock=clock or SystemClock(),
     )
     found = result.value
+    video_record = youtube.video(command.video_id)
     return WindowScan(
         video_id=command.video_id,
-        video=youtube.video(command.video_id),
+        video=video_record,
         threads=list(found.threads),
         waiting=[c for c in found.candidates if c.outstanding],
         total=len(found.candidates),
         owner_channel_id=found.owner_channel_id,
+        api_operations_used=int(
+            getattr(youtube, "api_operations_used", 0) or 0
+        ),
     )
 
 
 def _guided_session_for(
     *, found, waiting, transcript, templates, artifacts, events,
-    registers, dials, packet_characters,
+    registers, dials, packet_characters, history=None, prompt_version="",
 ):
     """A guided session over the people a window's scan just found."""
 
@@ -1176,50 +1276,13 @@ def _guided_session_for(
         variations=tuple(registers),
         dials=dict(dials),
         packet_characters=packet_characters,
+        prompt_version=prompt_version,
+        run_id=str(getattr(artifacts, "root", "") or ""),
         artifacts=artifacts,
+        history=history,
         clipboard=SystemClipboard(),
         events=events,
     )
-
-
-def _window_settings_path(configuration) -> Path:
-    """Beside the output directory, not in the repository.
-
-    A settings file carries a handle and an output path. It is the operator's
-    and it is personal data, so it never lives where a commit could pick it
-    up.
-    """
-
-    return Path(
-        configuration.get("output_directory", "output")
-    ).expanduser().parent / "window_settings.json"
-
-
-def _load_window_settings(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        # A missing or malformed settings file must never stop the window
-        # opening. The worst it can cost is that nothing was remembered.
-        return {}
-
-
-def _save_window_settings(path: Path, options) -> None:
-    """Remember what was set. Never raises: closing a window is not a place
-    to discover that a directory is read-only."""
-
-    from ..gui.options import PacketOptionsModel
-
-    if not isinstance(options, PacketOptionsModel):
-        return
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(options.to_settings(), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-    except OSError as failure:
-        LOGGER.warning("could not save window settings: %s", failure)
 
 
 def run_gui_preview(stdout, *, launcher=None, clipboard=None) -> int:
@@ -1400,15 +1463,46 @@ def run_gui(
     return EXIT_SUCCESS
 
 
-def history_store(configuration) -> SqliteHistoryStore:
-    return SqliteHistoryStore(
-        Path(configuration.get("output_directory", "output")).parent
-        / "engagement_history.sqlite3"
-    )
-
-
 def run_history(arguments, configuration, stdout) -> int:
     store = history_store(configuration)
+
+    if arguments.action == "record":
+        from ...domain.ids import extract_video_id
+
+        if arguments.draft_file:
+            draft = Path(arguments.draft_file).expanduser().read_text(
+                encoding="utf-8"
+            )
+        else:
+            draft = str(arguments.draft or "")
+        posted_at = (
+            arguments.posted_at
+            or datetime.now(timezone.utc).isoformat()
+        )
+        entry = {
+            "event_id": arguments.event_id,
+            "video_id": extract_video_id(arguments.video),
+            "target": arguments.target,
+            "target_comment_id": arguments.target_comment_id,
+            "thread_id": arguments.thread_id,
+            "workflow": arguments.workflow,
+            "run_id": arguments.run_id,
+            "draft": draft,
+            "posted_at": posted_at,
+            "prompt_version": prompt_resources.prompt_version(),
+            "registers": (
+                list(parse_registers(arguments.registers))
+                if arguments.registers else []
+            ),
+            "source": "native",
+        }
+        added = store.append([entry])
+        print(
+            "Recorded as posted." if added
+            else "That posting event was already recorded.",
+            file=stdout,
+        )
+        return EXIT_SUCCESS
 
     if arguments.action == "migrate":
         report = migrate_json(arguments.source, store)
@@ -1457,13 +1551,30 @@ def run_scoreboard(
     video_id = extract_video_id(arguments.video)
     factory = build_ports or default_ports
     ports = factory(configuration, api_key, events)
+    operator_channel_id = (
+        arguments.channel_id
+        or configuration.get("my_channel_id", "")
+    )
+    if not operator_channel_id:
+        handle = arguments.handle or configuration.get("my_handle", "")
+        if handle:
+            operator_channel_id = ports["youtube"].channel_id_for_handle(handle)
+    if not operator_channel_id:
+        raise ConfigurationError(
+            "Scoreboard needs your channel identity. Pass --my-channel-id "
+            "(preferred) or --my-handle, or configure YTCOMMENT_MY_CHANNEL_ID."
+        )
 
     result = scoreboard.handle(
         video_id,
         history=ports.get("history") or history_store(configuration),
         youtube=ports["youtube"],
         events=ports["events"],
+        operator_channel_id=operator_channel_id,
         max_comments=configuration.get("max_comments", 500),
+        max_replies_per_thread=configuration.get(
+            "max_replies_per_thread", 100
+        ),
     )
 
     text = scoreboard.render(result.value)
@@ -1647,6 +1758,9 @@ def run_comment_build(
                     if arguments.registers else ()),
         dials=parse_dials(arguments.dial or []),
         max_comments=configuration.get("max_comments", 500),
+        max_replies_per_thread=configuration.get(
+            "max_replies_per_thread", 100
+        ),
         packet_characters=configuration.get("packet_characters"),
         explicit_length=(parse_length(arguments.length)
                          if arguments.length else None),
@@ -1790,6 +1904,14 @@ def main(
         if arguments.group == "doctor":
             return run_doctor(configuration, api_key, stdout)
 
+        if arguments.group == "privacy":
+            if arguments.action == "check":
+                from .privacy_command import run as run_privacy
+
+                return run_privacy(arguments.root, stdout)
+            parser.print_help(stdout)
+            return EXIT_SUCCESS
+
         if arguments.group == "config":
             if arguments.action == "path":
                 root = Path(configuration.get("output_directory", "output"))
@@ -1797,6 +1919,8 @@ def main(
                     "Where this run reads and writes",
                     "",
                     f"  output directory  {root.resolve()}",
+                    f"  private state     "
+                    f"{_private_state_directory(configuration).resolve()}",
                     f"  history store     {history_store(configuration).path}",
                     f"  prompt resources  {prompt_resources.PROMPTS}",
                     f"  prompt version    {prompt_resources.prompt_version()}",

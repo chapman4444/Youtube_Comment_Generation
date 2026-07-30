@@ -26,6 +26,15 @@ from llm_youtube_comment_generation.infrastructure import prompt_resources
 OWNER = "UC" + "o" * 22
 
 
+class RecordingHistory:
+    def __init__(self):
+        self.entries = []
+
+    def append(self, entries):
+        self.entries.extend(dict(entry) for entry in entries)
+        return len(entries)
+
+
 def message(cid, author, text, when, *, channel=None, likes=0):
     return {
         "comment_id": cid,
@@ -96,6 +105,28 @@ def test_a_whole_run_walks_every_person_and_writes_the_file(session):
     review = session.artifacts.read(REVIEW_FILENAME)
     for author in ("@alice", "@bob", "@carol"):
         assert author in review
+
+
+def test_reply_history_waits_for_explicit_post_confirmation(session):
+    history = RecordingHistory()
+    session.history = history
+    session.prompt_version = "abc123"
+    session.run_id = "run-1"
+    session.start()
+    session.next_person()
+    session.copy_packet()
+    session.submit(answer("the reply that was manually posted"))
+
+    assert history.entries == []
+    assert session.record_posted() == 1
+
+    recorded = history.entries[0]
+    assert recorded["workflow"] == "reply"
+    assert recorded["target_comment_id"] == "r1"
+    assert recorded["thread_id"] == "mine"
+    assert recorded["operator_channel_id"] == OWNER
+    assert session.accepted[-1].posted_recorded
+    assert "posting recorded: yes" in session.artifacts.read(REVIEW_FILENAME)
 
 
 def test_every_accepted_draft_is_saved_before_the_next_one_starts(session):

@@ -28,7 +28,10 @@ from llm_youtube_comment_generation.interfaces.gui.options import (
 
 
 def configuration(output_directory):
-    return resolve(flags={"output_directory": str(output_directory)})
+    return resolve(flags={
+        "output_directory": str(output_directory),
+        "state_directory": str(Path(output_directory).parent / "private-state"),
+    })
 
 
 # -- where it lives --------------------------------------------------------
@@ -44,13 +47,26 @@ def test_the_settings_file_is_not_in_the_repository(tmp_path):
     assert project not in path.parents, f"{path} is inside the project"
 
 
-def test_it_sits_beside_the_output_rather_than_inside_it(tmp_path):
-    """Inside output/ it would be swept up by anything that cleans runs."""
+def test_it_sits_in_the_private_state_directory(tmp_path):
+    """It cannot be swept into a project or generated review package."""
 
     path = CLI._window_settings_path(configuration(tmp_path / "output"))
 
     assert path.name.endswith(".json")
-    assert path.parent == tmp_path
+    assert path.parent == tmp_path / "private-state"
+
+
+def test_legacy_settings_are_copied_to_private_state_on_first_read(tmp_path):
+    legacy = tmp_path / "window_settings.json"
+    legacy.write_text('{"my_handle": "@legacy"}', encoding="utf-8")
+    private = tmp_path / "private" / "window_settings.json"
+
+    loaded = CLI._load_window_settings(private, legacy=legacy)
+
+    assert loaded["my_handle"] == "@legacy"
+    assert json.loads(private.read_text(encoding="utf-8"))["my_handle"] == \
+        "@legacy"
+    assert legacy.is_file()
 
 
 # -- reading ---------------------------------------------------------------
@@ -118,3 +134,65 @@ def test_something_that_is_not_an_options_model_is_ignored(tmp_path):
     CLI._save_window_settings(path, None)
 
     assert json.loads(path.read_text(encoding="utf-8"))["my_handle"] == "@keep"
+
+
+def test_explicit_window_flags_beat_saved_values(tmp_path):
+    options = PacketOptionsModel(
+        output_directory="saved",
+        packet_characters=300_000,
+        comment_variations=("short_hook",),
+    )
+    arguments = CLI.build_parser().parse_args([
+        "comment", "build", "--window",
+        "--output-dir", str(tmp_path / "typed"),
+        "--packet-characters", "310000",
+        "--max-comments", "777",
+        "--registers", "dry_joke",
+        "--length", "long",
+    ])
+
+    CLI.apply_window_options(
+        options,
+        arguments,
+        resolve(),
+        start_mode="comment",
+    )
+
+    assert options.output_directory == str(tmp_path / "typed")
+    assert options.packet_characters == 310_000
+    assert options.max_top == options.max_recent == 777
+    assert options.comment_variations == ("dry_joke",)
+    assert options.length == "long"
+
+
+def test_reply_window_max_comments_maps_to_reply_scan_only():
+    options = PacketOptionsModel(max_top=100, reply_scan_comments=3000)
+    arguments = CLI.build_parser().parse_args([
+        "gui", "--max-comments", "4500", "--my-handle", "@owner",
+    ])
+
+    CLI.apply_window_options(
+        options,
+        arguments,
+        resolve(),
+        start_mode="reply",
+    )
+
+    assert options.reply_scan_comments == 4500
+    assert options.max_top == 100
+
+
+def test_comment_window_can_enable_local_whisper_from_the_command_line():
+    options = PacketOptionsModel()
+    arguments = CLI.build_parser().parse_args([
+        "comment", "build", "--window", "--transcribe",
+    ])
+
+    CLI.apply_window_options(
+        options,
+        arguments,
+        resolve(),
+        start_mode="comment",
+    )
+
+    assert options.transcribe_locally is True

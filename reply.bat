@@ -12,11 +12,13 @@ REM Nothing is ever posted.
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
+call "%~dp0setup_venv.bat"
+if errorlevel 1 goto :failed
+
 REM Always run the code beside this launcher, never an older editable install
 REM from another folder.
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 set "YTCOMMENT_PYTHON=%~dp0.venv\Scripts\python.exe"
-if not exist "!YTCOMMENT_PYTHON!" set "YTCOMMENT_PYTHON=python"
 
 REM Who you are. Never written in this file: it is personal data and this
 REM file is meant to be publishable. Set it once with

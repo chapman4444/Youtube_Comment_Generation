@@ -1,127 +1,129 @@
 # CLI and GUI Contract
 
-## Canonical Rule
+## Shared application boundary
 
-The CLI and GUI use the same typed commands, validators, handlers, and result objects.
-
-The GUI does not implement a separate version of the application.
-
-## Shared Command Flow
+CLI and GUI inputs resolve into the same application commands and sessions.
+The GUI does not reimplement packet selection, answer extraction, workflow
+transitions, history matching, or artifact publication.
 
 ```text
-User input
-    ↓
-CLI parser or GUI form
-    ↓
-Typed application command
-    ↓
-Application handler
-    ↓
-Domain logic and ports
-    ↓
-Typed result
-    ↓
+CLI arguments or GUI form
+    ->
+resolved options
+    ->
+typed application command
+    ->
+application handler and ports
+    ->
+typed result or run context
+    ->
 CLI formatter or GUI view
 ```
 
-## Example Commands
+## Option precedence
+
+The window resolves values in this order:
 
 ```text
-InspectVideoCommand
-BuildCommentPacketCommand
-TargetPublicCommentCommand
-TargetReplyCommand
-ScanOwnedThreadsCommand
-BuildTriagePacketCommand
-StartGuidedReplySessionCommand
-SubmitGuidedAnswerCommand
-BuildScoreboardCommand
-InspectRunCommand
+built-in default
+    < saved window setting
+    < resolved non-default configuration
+    < explicit command-line flag
 ```
 
-## CLI Responsibilities
+Comment evidence depth and reply discovery depth are separate values:
 
-The CLI may:
+- comment `--max-comments` controls comment evidence retrieval;
+- reply `--max-comments` overrides `reply_scan_comments`;
+- the GUI reply scan uses `reply_scan_comments`, never the comment packet's
+  `max_top`;
+- `max_replies_per_thread` controls bounded per-thread reply retrieval.
 
-- parse arguments;
-- load configuration;
-- create typed commands;
-- call application handlers;
-- render human output;
-- emit JSON;
-- emit JSONL progress;
-- map typed errors to exit codes.
+Every exposed window flag is projected into the model. Unsupported flags are
+not silently accepted.
 
-The CLI may not contain domain logic.
+## Writing presets
 
-## GUI Responsibilities
+A `WritingPreset` contains only reusable prose choices:
 
-The GUI may:
+- comment and reply registers;
+- dial selections;
+- length and optional target words.
 
-- collect input;
-- select targets;
-- create typed commands;
-- display workflow state;
-- show progress and warnings;
-- navigate candidates;
-- copy packets;
-- accept answers;
-- open outputs.
+Built-ins are immutable. Custom presets are atomically stored in the private
+application-state directory and may replace another custom preset with the
+same case-insensitive name. A preset can never carry a video, handle, channel
+ID, proxy, output path, retrieval count, or credential.
 
-The GUI may not:
+## Dry-run
 
-- reconstruct answered state;
-- resolve mentions;
-- rank candidates;
-- parse answers independently;
-- build packets;
-- own transitions;
-- write final review files;
-- maintain separate validation rules.
+Non-windowed `comment build --dry-run` performs no network request, artifact
+commit, or clipboard write. `--window --dry-run` is rejected before opening a
+window because an interactive Build action would otherwise be ambiguous.
 
-## Equivalent CLI Command
+## GUI work and cancellation
 
-Where practical, the GUI should show the equivalent CLI command for the configured operation.
+The packet window opens before retrieval. Work begins only when the operator
+presses Build or starts a reply scan. External work runs on a background
+thread and cancellation is cooperative:
 
-This improves:
+- the YouTube adapter checks before every request and page;
+- application events check between major steps;
+- transcript acquisition and artifact publication have explicit safe points.
 
-- reproducibility;
-- debugging;
-- support;
-- testability;
-- operator understanding.
+## Manual posting and history
 
-## Suggested CLI Command Areas
+The application has no YouTube write scope and never posts. Model-answer
+acceptance writes `comment_drafts.md` or `replies_to_review.md`, but it does not
+enter engagement history automatically.
+
+After manually posting, the operator must confirm **Record as posted** in the
+GUI or run:
 
 ```text
-llm-youtube video inspect
-llm-youtube comment build
-llm-youtube reply target-comment
-llm-youtube reply target-reply
-llm-youtube reply scan-mine
-llm-youtube reply triage
-llm-youtube reply guided
-llm-youtube review open
-llm-youtube history list
-llm-youtube scoreboard build
-llm-youtube run inspect
-llm-youtube config print
-llm-youtube doctor
+ytcomment history record VIDEO --workflow comment --draft-file comment.txt
+ytcomment history record VIDEO --workflow reply --draft-file reply.txt \
+  --target-comment-id COMMENT_ID --run-id RUN
 ```
 
-Final names should use the operator’s vocabulary consistently.
+SQLite uses a stable posting-event key for idempotency. Fuzzy normalized text
+is retained only for later scoreboard matching, so identical text posted to
+different targets remains distinct.
 
-## Global CLI Capabilities
+The GUI asks for confirmation using the exact latest accepted draft. After a
+successful record, the review artifact marks that draft's posting record as
+present and the action becomes unavailable for that draft.
 
-Where applicable:
+## Scoreboard identity
+
+Scoreboard builds require the operator's immutable channel ID, supplied
+directly or resolved from a configured handle. Live comments and replies from
+other channels are excluded before matching. Exact text is tried first;
+bounded edit matching refuses short/common prefixes, preserves ambiguity, and
+never consumes one live item twice. Posting context distinguishes top-level
+comments from replies when history provides it.
+
+## Private desktop state
+
+Remembered window geometry, window options, custom presets, and SQLite history
+live in the operating system's per-user state directory. Existing settings and
+history beside the old output directory are copied forward on first use; the
+legacy files are left untouched.
+
+`ytcomment privacy check` audits Git's publishable file set. Review-package
+creation runs the same audit against the staged allowlisted copy before
+WinRAR is allowed to create the archive.
+
+## Global capabilities
+
+Implemented global options include:
 
 ```text
 --output human|json
 --progress auto|jsonl|none
 --config FILE
 --log-level LEVEL
---profile
---dry-run
+--dry-run (on commands that expose it)
 ```
 
-Do not add flags solely to satisfy a pattern. Every flag must have clear product value.
+Do not advertise a parsed option until an executable path consumes it.

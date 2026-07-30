@@ -8,10 +8,12 @@ REM tell "this reply is not there" from "I did not look far enough".
 setlocal
 cd /d "%~dp0"
 
+call "%~dp0setup_venv.bat"
+if errorlevel 1 goto :done
+
 REM Always run the code beside this launcher.
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 set "YTCOMMENT_PYTHON=%~dp0.venv\Scripts\python.exe"
-if not exist "%YTCOMMENT_PYTHON%" set "YTCOMMENT_PYTHON=python"
 
 set "VIDEO=%~1"
 if "%VIDEO%"=="" set /p "VIDEO=YouTube URL or video ID: "

@@ -136,5 +136,5 @@ def test_a_dry_run_spends_nothing_and_returns_early():
     )
 
     assert result.value.dry_run is True
-    assert youtube.requests_used == 0
-    assert result.metrics["requests"] == 0
+    assert youtube.api_operations_used == 0
+    assert result.metrics["api_operations"] == 0

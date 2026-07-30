@@ -121,6 +121,21 @@ def test_the_chosen_model_reaches_the_transcriber():
     assert chain[-1]._model_name == "medium.en"
 
 
+def test_window_options_can_enable_whisper_without_mutating_configuration():
+    configuration = resolve(flags={"output_directory": "output"})
+    wired = CLI.default_ports(
+        configuration,
+        "a-key",
+        events=None,
+        transcribe_locally=True,
+        whisper_model="tiny.en",
+    )
+    chain = sources(wired["transcripts"])
+
+    assert isinstance(chain[-1], WhisperTranscriptAdapter)
+    assert chain[-1]._model_name == "tiny.en"
+
+
 # -- the proxy reaches what actually gets banned ---------------------------
 
 

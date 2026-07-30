@@ -49,6 +49,7 @@ from ...domain.writing_options import (
     resolved_variation_keys,
     variation_keys,
 )
+from ...domain.writing_presets import WritingPreset
 
 #: The field names the old application writes into its settings file. Kept
 #: exactly, so a settings file written by either is read by both.
@@ -57,7 +58,8 @@ REMEMBERED = (
     "packet_characters", "max_top", "max_recent", "max_threads",
     "max_replies", "top_repliers", "include_replies", "per_thread",
     "include_answered", "use_triage", "length", "custom_length",
-    "auto_run", "auto_watch", "editor_path",
+    "auto_run", "auto_watch", "editor_path", "reply_scan_comments",
+    "guided_limit", "window_geometry", "transcribe_locally", "whisper_model",
 )
 
 #: The four length choices, and what the old window calls them.
@@ -161,10 +163,13 @@ class PacketOptionsModel:
     max_recent: int = 100
     max_threads: int = 20
     max_replies: int = 8
+    reply_scan_comments: int = 3000
     include_replies: bool = True
     overwrite: bool = False
     languages: str = "en"
     proxy_url: str = ""
+    transcribe_locally: bool = False
+    whisper_model: str = "small.en"
 
     # -- the packet -------------------------------------------------------
     packet_characters: int = DEFAULT_PACKET_CHARACTERS
@@ -186,8 +191,10 @@ class PacketOptionsModel:
     per_thread: bool = False
     include_answered: bool = False
     use_triage: bool = True
+    guided_limit: int = 10
     auto_run: bool = False
     auto_watch: bool = False
+    window_geometry: str = ""
 
     # -- derived ----------------------------------------------------------
 
@@ -288,6 +295,12 @@ class PacketOptionsModel:
                 "Reply mode needs your @username, so it knows which comments "
                 "are yours."
             )
+        if self.reply_scan_comments < 1:
+            found.append("Reply scan comments must be at least 1.")
+        if self.max_replies < 1:
+            found.append("Replies per thread must be at least 1.")
+        if self.guided_limit < 1:
+            found.append("Reply limit must be at least 1.")
         for name, value in (self.dials or {}).items():
             if name not in DIALS:
                 found.append(f"There is no dial called {name!r}.")
@@ -409,6 +422,45 @@ class PacketOptionsModel:
             comment_approach_mode="default",
             reply_approach_mode="default",
             dials={},
+        )
+
+    def apply_writing_preset(
+        self,
+        preset: WritingPreset,
+    ) -> "PacketOptionsModel":
+        """Apply prose choices without touching personal or retrieval data."""
+
+        return replace(
+            self,
+            comment_variations=tuple(preset.comment_variations),
+            reply_variations=tuple(preset.reply_variations),
+            comment_approach_mode=(
+                "custom" if preset.comment_variations else "default"
+            ),
+            reply_approach_mode=(
+                "custom" if preset.reply_variations else "default"
+            ),
+            dials=preset.dial_values,
+            length=preset.length,
+            custom_length=preset.custom_length,
+        )
+
+    def as_writing_preset(
+        self,
+        name: str,
+        *,
+        description: str = "",
+    ) -> WritingPreset:
+        """Capture only reusable writing choices, never personal settings."""
+
+        return WritingPreset(
+            name=name,
+            description=description,
+            comment_variations=self.comment_variations,
+            reply_variations=self.reply_variations,
+            dials=tuple(self.dials.items()),
+            length=self.length,
+            custom_length=self.custom_length,
         )
 
 

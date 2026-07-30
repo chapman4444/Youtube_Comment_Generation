@@ -475,12 +475,12 @@ def test_quota_spent_is_visible():
     """Quota is finite and does not refill until midnight Pacific."""
 
     port = FakeYouTubePort(videos=video_fixture())
-    assert port.requests_used == 0
+    assert port.api_operations_used == 0
 
     port.video("gC-J7zwYMAM")
     port.comment_threads("gC-J7zwYMAM")
 
-    assert port.requests_used == 2
+    assert port.api_operations_used == 2
 
 
 def test_an_api_failure_arrives_as_a_domain_error():

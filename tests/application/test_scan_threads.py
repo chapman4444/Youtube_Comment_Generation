@@ -211,8 +211,11 @@ def test_the_since_cutoff_marks_what_is_new_without_discarding_context():
 def test_quota_is_reported():
     result = scan()
 
-    assert result.value.requests_used > 0
-    assert result.metrics["requests"] == result.value.requests_used
+    assert result.value.api_operations_used > 0
+    assert (
+        result.metrics["api_operations"]
+        == result.value.api_operations_used
+    )
 
 
 # --------------------------------------------------------------------------

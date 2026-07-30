@@ -73,6 +73,9 @@ OPEN_REVIEW
 - Invalid answer parsing never advances state.
 - Packet text cannot be accepted as an answer.
 - Every accepted draft is saved immediately.
+- Accepting a draft never implies posting it.
+- Recording a posting is explicit, confirmed, idempotent, and reflected in
+  the saved review artifact.
 - Exactly one layer owns transitions.
 - CLI and GUI submit intents; they do not set state directly.
 - Exactly one next action is exposed during a guided run.

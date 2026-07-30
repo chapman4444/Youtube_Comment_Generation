@@ -17,6 +17,7 @@ Two rules are absolute here:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Sequence
 
 from ..domain.candidates import ReplyCandidate
@@ -47,6 +48,8 @@ class AcceptedDraft:
     status: str = ""
     their_text: str = ""
     draft: str = ""
+    posted_recorded: bool = False
+    posted_at: str = ""
 
 
 @dataclass
@@ -62,8 +65,11 @@ class GuidedSession:
     variations: tuple[str, ...] = ()
     dials: dict[str, str] = field(default_factory=dict)
     packet_characters: int = 280_000
+    prompt_version: str = ""
+    run_id: str = ""
 
     artifacts: Any = None
+    history: Any = None
     clipboard: Any = None
     events: Any = None
 
@@ -219,6 +225,37 @@ class GuidedSession:
                    f"{len(self.accepted)} replies ready to review")
         return self.state
 
+    def record_posted(self, index: int = -1) -> int:
+        """Record one reply only after the operator confirms posting it."""
+
+        if self.history is None:
+            raise RuntimeError("No engagement history store is configured.")
+        if not self.accepted:
+            raise RuntimeError("No accepted reply is available to record.")
+        item = self.accepted[index]
+        if item.posted_recorded:
+            return 0
+        posted_at = datetime.now(timezone.utc).isoformat()
+        added = self.history.append([{
+            "video_id": str(self.video.get("video_id") or ""),
+            "video_title": str(self.video.get("title") or ""),
+            "target": item.author,
+            "target_comment_id": item.comment_id,
+            "thread_id": item.thread_id,
+            "workflow": "reply",
+            "operator_channel_id": self.owner_channel_id,
+            "draft": item.draft,
+            "prompt_version": self.prompt_version,
+            "registers": list(self.variations),
+            "run_id": self.run_id,
+            "posted_at": posted_at,
+            "source": "native",
+        }])
+        item.posted_recorded = True
+        item.posted_at = posted_at
+        self._save_review()
+        return added
+
     # -- internals -------------------------------------------------------
 
     def _save_review(self) -> None:
@@ -265,6 +302,8 @@ def render_review(session: GuidedSession) -> str:
             "",
             f"- their comment id: `{draft.comment_id}`",
             f"- status when drafted: {draft.status}",
+            f"- posting recorded: "
+            f"{'yes' if draft.posted_recorded else 'no'}",
             "",
             "**They said:**",
             "",

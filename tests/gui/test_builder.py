@@ -25,6 +25,7 @@ from llm_youtube_comment_generation.interfaces.gui.worker import (
     Cancelled,
 )
 from llm_youtube_comment_generation.ports.events import EventKind, ProgressEvent
+from llm_youtube_comment_generation.domain.statuses import OperationResult
 
 
 class FakeStore:
@@ -167,6 +168,69 @@ def test_the_named_length_is_resolved_by_the_domain_not_the_window():
         _run(BackgroundJob(), options(length="auto"), handle)
 
     assert seen["command"].explicit_length is None
+
+
+@pytest.mark.parametrize(
+    "video",
+    ("gC-J7zwYMAM", "https://www.youtube.com/watch?v=gC-J7zwYMAM"),
+)
+def test_comment_build_returns_the_original_canonical_run_context(video):
+    stores = []
+
+    def artifacts_for(video_id, directory):
+        store = FakeStore()
+        stores.append((video_id, store))
+        return store
+
+    def handle(command, **kwargs):
+        class Packet:
+            text = "packet"
+            variations = ("short_hook",)
+
+            def __len__(self):
+                return len(self.text)
+
+        packet = Packet()
+        return OperationResult(
+            value={
+                "packet": packet,
+                "run": {
+                    "video_id": command.video_id,
+                    "video_title": "Canonical title",
+                    "prompt_version": "abc123",
+                },
+            },
+            artifacts=["packet.md", "run.json"],
+        )
+
+    import llm_youtube_comment_generation.interfaces.gui.builder as module
+
+    original = module.build_comment_packet.handle
+    module.build_comment_packet.handle = handle
+    try:
+        result = build_comment(
+            PacketOptionsModel(video=video),
+            BackgroundJob(),
+            ports_factory=lambda events: {
+                "youtube": None, "transcripts": None
+            },
+            templates={
+                "comment_workflow.md": "x",
+                "comment_final_check.md": "y",
+            },
+            artifacts_for=artifacts_for,
+        )
+    finally:
+        module.build_comment_packet.handle = original
+
+    assert len(stores) == 1
+    assert stores[0][0] == "gC-J7zwYMAM"
+    assert result.video == {
+        "video_id": "gC-J7zwYMAM",
+        "title": "Canonical title",
+    }
+    assert result.artifacts is stores[0][1]
+    assert result.packet_path.endswith("packet.md")
 
 
 def test_the_window_never_names_a_template_or_a_run_directory():

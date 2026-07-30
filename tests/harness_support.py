@@ -17,6 +17,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 # genuinely stepped aside rather than merely that some callable exists.
 REAL_SOCKET = socket.socket
 REAL_CREATE_CONNECTION = socket.create_connection
+REAL_HOME = pathlib.Path.home()
+REAL_LOCAL_APP_DATA = os.environ.get("LOCALAPPDATA", "")
 
 
 class HarnessViolation(RuntimeError):
@@ -38,10 +40,27 @@ def protected_state_paths() -> list[pathlib.Path]:
     # The legacy application is still the behavioural reference and still holds
     # the live history, so it is guarded from here too: the new suite must not
     # be the thing that destroys it.
-    return [
+    private = (
+        pathlib.Path(REAL_LOCAL_APP_DATA) / "YouTubeCommentGeneration"
+        if REAL_LOCAL_APP_DATA
+        else REAL_HOME / ".local" / "state" / "YouTubeCommentGeneration"
+    )
+    names = (
+        "engagement_history.sqlite3",
+        "window_settings.json",
+        "writing_presets.json",
+    )
+    guarded = [
         REPO_ROOT / "posted_history.json",
         REPO_ROOT.parent / "Comment_Generation_Claude02" / "posted_history.json",
     ]
+    guarded.extend(private / name for name in names)
+    guarded.extend(REPO_ROOT / name for name in names)
+    guarded.extend(
+        REPO_ROOT.parent / "Comment_Generation_Claude02" / name
+        for name in names
+    )
+    return guarded
 
 
 def snapshot_protected_state() -> dict[pathlib.Path, bytes | None]:

@@ -32,12 +32,19 @@ class ScanMyThreadsCommand:
     handle: str = ""
     since: str = ""
     max_comments: int = 500
+    max_replies_per_thread: int = 100
     only_unanswered: bool = True
 
     video_id: str = field(init=False, default="")
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "video_id", extract_video_id(self.video))
+        if self.max_comments < 1:
+            raise ConfigurationError("max_comments must be at least 1.")
+        if self.max_replies_per_thread < 1:
+            raise ConfigurationError(
+                "max_replies_per_thread must be at least 1."
+            )
         if not self.channel_id and not self.handle:
             raise ConfigurationError(
                 "Reply mode needs to know who you are. Pass --my-handle "
@@ -52,7 +59,7 @@ class ThreadScan:
     candidates: list[ReplyCandidate] = field(default_factory=list)
     owner_channel_id: str = ""
     retrieval: RetrievalOutcome = field(default_factory=RetrievalOutcome)
-    requests_used: int = 0
+    api_operations_used: int = 0
     scanned_comments: int = 0
 
 
@@ -111,7 +118,10 @@ def handle(
 
     threads: list[OwnerThread] = []
     for index, comment in enumerate(mine, 1):
-        page = youtube.replies(comment["comment_id"], maximum=1000)
+        page = youtube.replies(
+            comment["comment_id"],
+            maximum=command.max_replies_per_thread,
+        )
         outcomes.append(page.outcome)
         new = [r for r in page.comments if reply_is_new(r, cutoff)]
         threads.append(OwnerThread(
@@ -142,7 +152,7 @@ def handle(
         status=_worst(outcomes),
         retrieved=len(scanned) + sum(len(t.replies) for t in threads),
         reported_total=None,
-        requests_used=youtube.requests_used,
+        api_operations_used=youtube.api_operations_used,
         notes=tuple(note for outcome in outcomes for note in outcome.notes),
     )
     if not retrieval.may_conclude_absence:
@@ -164,14 +174,14 @@ def handle(
         candidates=candidates,
         owner_channel_id=owner,
         retrieval=retrieval,
-        requests_used=youtube.requests_used,
+        api_operations_used=youtube.api_operations_used,
         scanned_comments=len(scanned),
     )
     result.metrics = {
         "threads": len(threads),
         "candidates": len(candidates),
         "outstanding": sum(1 for c in candidates if c.outstanding),
-        "requests": youtube.requests_used,
+        "api_operations": youtube.api_operations_used,
     }
     return result
 

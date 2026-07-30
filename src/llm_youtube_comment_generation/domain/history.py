@@ -19,8 +19,39 @@ def normalise_for_match(text: str) -> str:
 
     body = strip_invisible(str(text or "")).casefold()
     body = re.sub(r"^@[\w.\-]+\s*", "", body)      # a leading mention
-    body = re.sub(r"[^a-z0-9 ]+", " ", body)
+    # ``\w`` is Unicode-aware in Python. ASCII-only filtering made a draft
+    # written entirely in another script disappear from both persistence
+    # metadata and matching.
+    body = re.sub(r"[_]+", " ", body)
+    body = re.sub(r"[^\w ]+", " ", body, flags=re.UNICODE)
     return " ".join(body.split())
+
+
+MIN_FUZZY_CHARACTERS = 40
+MIN_FUZZY_WORDS = 6
+
+
+def _same_post_kind(entry: dict[str, Any], live: dict[str, Any]) -> bool:
+    """Use posting context when history has it; migrated rows remain usable."""
+
+    workflow = str(entry.get("workflow") or "").casefold()
+    if workflow in ("comment", "top-level-comment"):
+        return not bool(live.get("is_reply"))
+    if workflow in ("reply", "guided-reply"):
+        return bool(live.get("is_reply"))
+    return True
+
+
+def _bounded_prefix(left: str, right: str) -> bool:
+    """Allow a bounded tail edit, never a one-word/common-opening guess."""
+
+    shorter = left if len(left) <= len(right) else right
+    if len(shorter) < MIN_FUZZY_CHARACTERS:
+        return False
+    if len(shorter.split()) < MIN_FUZZY_WORDS:
+        return False
+    comparable = min(60, len(shorter))
+    return left[:comparable] == right[:comparable]
 
 
 def score_history(
@@ -77,16 +108,18 @@ def score_history(
         if not text:
             continue
         claim(row, [j for j, item in enumerate(live)
-                    if j not in claimed and item[0] == text])
+                    if j not in claimed
+                    and item[0] == text
+                    and _same_post_kind(rows[row], item[2])])
 
     for row, text in enumerate(wanted):
         if not text or row in matched:
             continue
-        head = text[:60]
         claim(row, [
             j for j, item in enumerate(live)
             if j not in claimed
-            and (item[0].startswith(head) or text.startswith(item[0][:60]))
+            and _same_post_kind(rows[row], item[2])
+            and _bounded_prefix(text, item[0])
         ])
 
     scored: list[dict[str, Any]] = []

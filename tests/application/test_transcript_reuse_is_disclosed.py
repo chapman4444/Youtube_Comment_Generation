@@ -34,8 +34,10 @@ TEMPLATES = {
 class TranscriptStub:
     def __init__(self, result):
         self.result = result
+        self.calls = 0
 
     def fetch(self, video_id, languages=()):
+        self.calls += 1
         return self.result
 
 
@@ -69,15 +71,18 @@ def build(transcript, **command_options):
                         "description": "d", "comment_count": 4}},
         comments=[comment(i) for i in range(4)],
     )
-    return handle(
+    source = TranscriptStub(transcript)
+    result = handle(
         BuildCommentPacketCommand(video=VIDEO, **command_options),
         youtube=youtube,
-        transcripts=TranscriptStub(transcript),
+        transcripts=source,
         events=FakeEventSink(),
         artifacts=CollectingArtifacts(),
         templates=TEMPLATES,
         prompt_version="test",
     )
+    result.transcript_calls = source.calls
+    return result
 
 
 def reused():
@@ -144,3 +149,22 @@ def test_a_missing_transcript_is_still_its_own_warning():
     assert any(w.code is WarningCode.TRANSCRIPT_UNAVAILABLE
                for w in result.warnings)
     assert any("without a transcript" in w.message for w in result.warnings)
+
+
+def test_one_comment_build_acquires_the_transcript_exactly_once():
+    for transcript in (
+        fresh(),
+        reused(),
+        TranscriptResult(
+            availability=TranscriptAvailability.NOT_PUBLISHED,
+            source="youtube-transcript-api",
+        ),
+        TranscriptResult(
+            availability=TranscriptAvailability.FETCH_FAILED,
+            source="youtube-transcript-api",
+            detail="blocked",
+        ),
+    ):
+        result = build(transcript, allow_no_transcript=True)
+        assert result.transcript_calls == 1
+        assert result.value["run"]["transcript"]["source"] == transcript.source

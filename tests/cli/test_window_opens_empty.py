@@ -34,10 +34,21 @@ class Clipboard:
 
 
 @pytest.fixture
-def opened(monkeypatch):
+def opened(monkeypatch, isolated_application_state):
     """Records what would have been launched, and launches nothing."""
 
     captured: dict = {}
+    private_state = isolated_application_state / "explicit"
+    monkeypatch.setattr(
+        CLI,
+        "_window_settings_path",
+        lambda _configuration: private_state / "window_settings.json",
+    )
+    monkeypatch.setattr(
+        CLI,
+        "_private_state_directory",
+        lambda _configuration: private_state,
+    )
 
     def fake_launch(**kwargs):
         captured.update(kwargs)
@@ -73,7 +84,8 @@ def test_an_empty_clipboard_still_opens_the_window(opened, tmp_path):
 
     assert code == 0
     assert opened, "no window was opened"
-    assert "needs no video to open" in printed
+    assert "Opening the packet window" not in printed
+    assert "Window closed" not in printed
 
 
 def test_the_window_opens_with_an_empty_video_box(opened, tmp_path):
@@ -98,6 +110,19 @@ def test_the_window_is_given_something_that_can_build(opened, tmp_path):
          "--output-dir", str(tmp_path)])
 
     assert callable(opened["build"])
+
+
+def test_the_window_receives_private_custom_preset_storage(
+    opened,
+    tmp_path,
+    isolated_application_state,
+):
+    run(["comment", "build", "--window", "--no-copy",
+         "--output-dir", str(tmp_path)])
+
+    store = opened["preset_store"]
+    assert store.path.name == "writing_presets.json"
+    assert store.path.is_relative_to(isolated_application_state)
 
 
 def test_a_packet_on_the_clipboard_does_not_stop_the_window(opened, tmp_path):
@@ -138,10 +163,21 @@ def test_the_reply_window_does_not_demand_a_video_before_opening(opened, tmp_pat
     assert opened["options"].video == ""
 
 
-def test_the_handle_reaches_the_window(opened, tmp_path):
+def test_the_handle_reaches_the_window(
+    opened,
+    tmp_path,
+    isolated_application_state,
+):
     run(["gui", "--my-handle", "someone", "--output-dir", str(tmp_path)])
 
     assert opened["options"].my_handle in ("someone", "@someone")
+    saved = (
+        isolated_application_state
+        / "explicit"
+        / "window_settings.json"
+    )
+    assert saved.is_file()
+    assert saved.resolve().is_relative_to(isolated_application_state.resolve())
 
 
 def test_the_build_command_without_the_window_still_needs_a_video(tmp_path):
@@ -154,3 +190,20 @@ def test_the_build_command_without_the_window_still_needs_a_video(tmp_path):
     )
 
     assert code != 0 or "clipboard" in printed.lower()
+
+
+def test_windowed_dry_run_is_refused_before_a_window_opens(opened, tmp_path):
+    clipboard = Clipboard("keep this")
+
+    code, printed = run(
+        [
+            "comment", "build", "--window", "--dry-run",
+            "--output-dir", str(tmp_path),
+        ],
+        clipboard=clipboard,
+    )
+
+    assert code != 0
+    assert opened == {}
+    assert clipboard.value == "keep this"
+    assert "cannot be combined" in printed

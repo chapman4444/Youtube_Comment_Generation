@@ -100,7 +100,7 @@ def test_missing_whisper_library_is_reported_as_optional(tmp_path, monkeypatch):
 
     assert code == 0
     assert "not installed" in printed
-    assert "pip install faster-whisper" in printed
+    assert 'python -m pip install -e ".[local-transcription]"' in printed
 
 
 # -- saved transcripts: what this machine can do with no network -----------
@@ -161,4 +161,87 @@ def test_a_missing_library_says_the_command_that_installs_it(tmp_path,
 
     _code, printed = report(tmp_path)
 
-    assert "pip install yt-dlp" in printed
+    assert 'python -m pip install -e ".[transcripts]"' in printed
+
+
+def test_each_failed_probe_is_isolated_and_later_checks_still_run(
+    tmp_path,
+    monkeypatch,
+):
+    def fail(message):
+        def probe(*_args, **_kwargs):
+            raise RuntimeError(message)
+        return probe
+
+    monkeypatch.setattr(
+        CLI,
+        "library_available",
+        fail("scrape unavailable"),
+    )
+    monkeypatch.setattr(
+        CLI,
+        "ytdlp_available",
+        fail("player unavailable"),
+    )
+    monkeypatch.setattr(
+        CLI,
+        "_saved_transcript_state",
+        fail("saved scan unavailable"),
+    )
+    monkeypatch.setattr(
+        CLI.prompt_resources,
+        "prompt_version",
+        fail("manifest malformed"),
+    )
+    monkeypatch.setattr(
+        CLI,
+        "_write_check",
+        fail("cannot probe output"),
+    )
+    monkeypatch.setattr(
+        CLI,
+        "history_store",
+        fail("history lifecycle unavailable"),
+    )
+
+    code, printed = report(tmp_path)
+
+    assert code == 0
+    assert printed.count("CHECK FAILED (RuntimeError)") == 6
+    for name in (
+        "transcript: scrape",
+        "transcript: yt-dlp",
+        "transcript: saved",
+        "prompt resources",
+        "output directory",
+        "history store",
+    ):
+        assert name in printed
+
+
+def test_failed_probe_details_are_bounded_and_redacted(tmp_path, monkeypatch):
+    private = str(tmp_path)
+    proxy = "http://" + "operator:secret@" + "example.test:8080"
+    configuration = resolve(flags={
+        "output_directory": private,
+        "proxy_url": proxy,
+    })
+    monkeypatch.setattr(
+        CLI,
+        "_write_check",
+        lambda _root: (_ for _ in ()).throw(
+            RuntimeError(f"{private} {proxy} " + "x" * 400)
+        ),
+    )
+    stream = io.StringIO()
+
+    code = CLI.run_doctor(configuration, "eight-char-secret", stream)
+    printed = stream.getvalue()
+
+    assert code == 0
+    assert private not in printed
+    assert "operator:secret" not in printed
+    assert len(next(
+        line for line in printed.splitlines()
+        if "output directory" in line
+    )) < 340

@@ -22,6 +22,7 @@ beside the run, same immediate write. An interrupted run has to survive.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from ..domain.extraction import extract_hardened_final, looks_like_packet_text
@@ -47,6 +48,8 @@ class AcceptedComment:
     video_id: str = ""
     video_title: str = ""
     registers: tuple[str, ...] = ()
+    posted_recorded: bool = False
+    posted_at: str = ""
 
 
 @dataclass
@@ -57,7 +60,10 @@ class CommentSession:
     video: dict[str, Any] = field(default_factory=dict)
     registers: tuple[str, ...] = ()
     packet_path: str = ""
+    prompt_version: str = ""
+    run_id: str = ""
     artifacts: Any = None
+    history: Any = None
     clipboard: Any = None
     events: Any = None
 
@@ -172,6 +178,33 @@ class CommentSession:
                    f"{len(self.accepted)} drafts ready to review")
         return self.state
 
+    def record_posted(self, index: int = -1) -> int:
+        """Record one draft only after the operator confirms posting it."""
+
+        if self.history is None:
+            raise RuntimeError("No engagement history store is configured.")
+        if not self.accepted:
+            raise RuntimeError("No accepted comment is available to record.")
+        item = self.accepted[index]
+        if item.posted_recorded:
+            return 0
+        posted_at = datetime.now(timezone.utc).isoformat()
+        added = self.history.append([{
+            "video_id": item.video_id,
+            "video_title": item.video_title,
+            "workflow": "comment",
+            "draft": item.draft,
+            "prompt_version": self.prompt_version,
+            "registers": list(item.registers),
+            "run_id": self.run_id,
+            "posted_at": posted_at,
+            "source": "native",
+        }])
+        item.posted_recorded = True
+        item.posted_at = posted_at
+        self._save()
+        return added
+
     # -- internals -------------------------------------------------------
 
     def _save(self) -> None:
@@ -205,5 +238,12 @@ def render_drafts(session: CommentSession) -> str:
         return "\n".join(lines) + "\n"
 
     for index, item in enumerate(session.accepted, 1):
-        lines.extend([f"## Draft {index}", "", item.draft, ""])
+        lines.extend([
+            f"## Draft {index}",
+            "",
+            f"_Posting recorded: {'yes' if item.posted_recorded else 'no'}_",
+            "",
+            item.draft,
+            "",
+        ])
     return "\n".join(lines) + "\n"

@@ -87,11 +87,12 @@ class YouTubePort(Protocol):
         ...
 
     @property
-    def requests_used(self) -> int:
-        """API requests spent so far.
+    def api_operations_used(self) -> int:
+        """Logical YouTube Data API operations issued so far.
 
-        Exposed because quota is finite and the operator pays for it in a
-        currency that does not refill until midnight Pacific.
+        One adapter ``get`` call is one operation, whether the HTTP transport
+        sends it once or retries it. This is a logical-operation metric, not a
+        physical-network-attempt counter.
         """
         ...
 

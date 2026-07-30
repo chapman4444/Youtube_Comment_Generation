@@ -27,6 +27,21 @@ youtube_packet_settings.json
 window_settings.json
 settings.json
 .env
+writing_presets.json
+
+# Local work notes and one-off handoffs. These are useful on the operator's
+# machine but are not application documentation.
+/local_notes/
+/BUILD_DESIGN_REQUEST_FOR_CLAUDE.md
+/CHANGES_MADE.md
+/FILES_CHANGED.txt
+/HANDOFF.md
+/OTHER_COMPUTER_FIX.txt
+/PHASES.md
+/REMAINING_UNVERIFIED.md
+/TEST_RESULTS_AFTER.txt
+/launcher_fix_for_other_computer.zip
+/cmd_dump.ahk
 
 # ----------------------------------------------------------------- credentials
 # The API key lives in the environment. These exist so that a key written to a
@@ -63,3 +78,5 @@ models/
 .idea/
 Thumbs.db
 desktop.ini
+# Generated package for external code review.
+review_packages/

@@ -16,9 +16,10 @@ from llm_youtube_comment_generation.domain.statuses import (
 )
 
 VIDEO = "gC-J7zwYMAM"
+OWNER = "UC" + "o" * 22
 
 
-def posted(text, likes=0, replies=0):
+def posted(text, likes=0, replies=0, channel=OWNER):
     return {
         "comment_id": f"c{abs(hash(text)) % 10000}",
         "text": text,
@@ -26,6 +27,8 @@ def posted(text, likes=0, replies=0):
         "total_reply_count": replies,
         "published_at": "2026-07-01T00:00:00Z",
         "updated_at": "2026-07-01T00:00:00Z",
+        "author_channel_id": channel,
+        "is_reply": False,
     }
 
 
@@ -35,6 +38,7 @@ def run(drafts, live, *, max_comments=2000):
         history=FakeHistoryStore(drafts),
         youtube=FakeYouTubePort(comments=live),
         events=FakeEventSink(),
+        operator_channel_id=OWNER,
         max_comments=max_comments,
     )
 
@@ -112,16 +116,29 @@ def test_one_live_reply_is_never_credited_to_two_drafts():
 
 
 def test_an_ambiguous_draft_is_not_reported_as_a_finding():
+    opening = "the shared opening contains enough specific words to compare safely"
     result = run(
-        [{"video_id": VIDEO, "draft": "the shared opening"}],
+        [{"video_id": VIDEO, "draft": opening}],
         [
-            posted("the shared opening and one tail", likes=1),
-            posted("the shared opening and another tail", likes=2),
+            posted(opening + " and one tail", likes=1),
+            posted(opening + " and another tail", likes=2),
         ],
     )
 
     assert len(result.value.ambiguous) == 1
     assert result.value.matched == []
+
+
+def test_matching_text_from_another_channel_is_not_credited():
+    text = "the operator and another channel happened to use identical text"
+
+    result = run(
+        [{"video_id": VIDEO, "draft": text}],
+        [posted(text, likes=99, channel="UC" + "x" * 22)],
+    )
+
+    assert result.value.matched == []
+    assert len(result.value.unmatched) == 1
 
 
 def test_drafts_for_other_videos_are_not_scored():

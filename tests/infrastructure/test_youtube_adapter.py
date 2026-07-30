@@ -51,6 +51,22 @@ class RecordedSession:
         return self._responses.pop(0)
 
 
+class SimulatedRetryingSession:
+    """A session whose one logical get represents transport-level attempts."""
+
+    def __init__(self, *, attempts, response=None, error=None):
+        self.transport_attempts = attempts
+        self.response = response
+        self.error = error
+        self.logical_get_calls = 0
+
+    def get(self, _url, params=None, timeout=None):
+        self.logical_get_calls += 1
+        if self.error is not None:
+            raise self.error
+        return self.response
+
+
 def thread_page(ids, next_token=None, reply_counts=None):
     reply_counts = reply_counts or {}
     payload = {
@@ -157,7 +173,7 @@ def test_pagination_walks_until_the_tokens_run_out():
 
     assert [c["comment_id"] for c in page.comments] == ["c1", "c2", "c3"]
     assert page.outcome.status is RetrievalStatus.COMPLETE
-    assert page.outcome.requests_used == 3
+    assert page.outcome.api_operations_used == 3
 
 
 def test_a_repeated_page_token_stops_the_scan_rather_than_looping():
@@ -186,7 +202,7 @@ def test_the_page_request_cap_bounds_a_runaway_thread():
     page = port.comment_threads("v", maximum=1_000_000)
 
     assert page.outcome.status is RetrievalStatus.TOP_LEVEL_TRUNCATED
-    assert page.outcome.requests_used == MAX_PAGE_REQUESTS
+    assert page.outcome.api_operations_used == MAX_PAGE_REQUESTS
     assert any("page requests" in note for note in page.outcome.notes)
 
 
@@ -294,6 +310,83 @@ def test_cancelling_before_a_request_sends_nothing():
         port.video("gC-J7zwYMAM")
 
     assert session.calls == []
+    assert port.api_operations_used == 0
+
+
+def test_success_without_retry_is_one_logical_api_operation():
+    session = SimulatedRetryingSession(
+        attempts=1,
+        response=RecordedResponse({"items": [{"id": "video"}]}),
+    )
+    port = YouTubeAdapter("k", session)
+
+    port.get("videos", {"id": "gC-J7zwYMAM"})
+
+    assert session.transport_attempts == 1
+    assert port.api_operations_used == 1
+
+
+def test_retry_then_success_remains_one_logical_api_operation():
+    session = SimulatedRetryingSession(
+        attempts=2,
+        response=RecordedResponse({"items": [{"id": "video"}]}),
+    )
+    port = YouTubeAdapter("k", session)
+
+    port.get("videos", {"id": "gC-J7zwYMAM"})
+
+    assert session.transport_attempts == 2
+    assert session.logical_get_calls == 1
+    assert port.api_operations_used == 1
+
+
+def test_retry_exhaustion_still_records_the_one_logical_operation():
+    session = SimulatedRetryingSession(
+        attempts=4,
+        error=RuntimeError("transport retries exhausted"),
+    )
+    port = YouTubeAdapter("k", session)
+
+    with pytest.raises(RuntimeError, match="retries exhausted"):
+        port.get("videos", {"id": "gC-J7zwYMAM"})
+
+    assert session.transport_attempts == 4
+    assert port.api_operations_used == 1
+
+
+def test_non_retryable_4xx_is_one_logical_api_operation():
+    response = RecordedResponse(
+        {"error": {"message": "bad input"}},
+        status_code=400,
+    )
+    port = adapter([response])
+
+    with pytest.raises(YouTubeAPIError):
+        port.video("gC-J7zwYMAM")
+
+    assert port.api_operations_used == 1
+
+
+@pytest.mark.parametrize("maximum", (0, -1))
+def test_non_positive_comment_limit_is_refused_before_a_request(maximum):
+    session = RecordedSession([])
+    port = YouTubeAdapter("k", session)
+
+    with pytest.raises(ConfigurationError, match="at least 1"):
+        port.comment_threads("v", maximum=maximum)
+
+    assert session.calls == []
+
+
+@pytest.mark.parametrize("maximum", (0, -1))
+def test_non_positive_reply_limit_is_refused_before_a_request(maximum):
+    session = RecordedSession([])
+    port = YouTubeAdapter("k", session)
+
+    with pytest.raises(ConfigurationError, match="at least 1"):
+        port.replies("c1", maximum=maximum)
+
+    assert session.calls == []
 
 
 # --------------------------------------------------------------------------
@@ -332,7 +425,7 @@ def test_quota_accounting_counts_every_request():
 
     port.comment_threads("v", maximum=100)
 
-    assert port.requests_used == 2
+    assert port.api_operations_used == 2
 
 
 def test_a_handle_resolves_to_a_channel_id():

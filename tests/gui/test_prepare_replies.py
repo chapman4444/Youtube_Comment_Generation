@@ -203,3 +203,29 @@ def test_the_transcript_is_fetched_for_the_video_that_was_scanned():
     result = run()
 
     assert result.session.kwargs["transcript"].entries
+
+
+def test_reply_scan_uses_its_own_depth_not_comment_evidence_limit():
+    seen = {}
+
+    def scan(**kwargs):
+        seen.update(kwargs)
+        return Scan([Person("@alice")])
+
+    run(
+        model=options(max_top=100, reply_scan_comments=4321),
+        scan=scan,
+    )
+
+    assert seen["max_comments"] == 4321
+
+
+def test_guided_limit_bounds_the_session_queue():
+    people = [Person(f"@person{i}") for i in range(5)]
+
+    result = run(
+        waiting=people,
+        model=options(guided_limit=2),
+    )
+
+    assert len(result.session.targets) == 2

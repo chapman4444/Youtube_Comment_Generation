@@ -37,6 +37,7 @@ from tkinter import ttk
 from typing import Any, Callable
 
 from ...domain.writing_options import DIALS, dial_choice_label
+from ...domain.writing_presets import BUILT_IN_PRESETS, WritingPreset
 from ...domain.errors import ConfigurationError
 from ...domain.ids import extract_video_id
 from ...domain.video import watch_url
@@ -51,72 +52,20 @@ from .options import (
 )
 from .sequence import ReplySequence, Step, read_clipboard
 from .worker import BackgroundJob
+from .layout import initial_size, valid_saved_geometry
+from .run_receipt import comment_receipt, reply_receipt
+from .widgets import Tooltip
+from .advanced_dialog import AdvancedDialog
 
 PADDING = 8
 LEFT_WIDTH = 440
 WINDOW_WIDTH = 1024
 WINDOW_HEIGHT = 700
+CURRENT_PRESET = "Current settings"
 
 #: How often the clipboard chip refreshes. Slow enough to cost nothing, fast
 #: enough that copying an answer and looking up feels immediate.
 CLIPBOARD_POLL_MS = 700
-
-
-class Tooltip:
-    """Small delayed help popup using the same text as persistent help."""
-
-    def __init__(self, widget: tk.Misc, text: Callable[[], str]) -> None:
-        self.widget = widget
-        self.text = text
-        self.after_id: str | None = None
-        self.tip: tk.Toplevel | None = None
-        widget.bind("<Enter>", self.schedule, add="+")
-        widget.bind("<Leave>", self.hide, add="+")
-        widget.bind("<FocusIn>", self.schedule, add="+")
-        widget.bind("<FocusOut>", self.hide, add="+")
-
-    def schedule(self, _event=None) -> None:
-        self.hide()
-        self.after_id = self.widget.after(550, self.show)
-
-    def show(self) -> None:
-        text = self.text().strip()
-        if not text:
-            return
-        self.tip = tk.Toplevel(self.widget)
-        self.tip.wm_overrideredirect(True)
-        x = min(
-            self.widget.winfo_rootx() + 12,
-            self.widget.winfo_screenwidth() - 390,
-        )
-        y = min(
-            self.widget.winfo_rooty() + self.widget.winfo_height() + 4,
-            self.widget.winfo_screenheight() - 180,
-        )
-        self.tip.wm_geometry(f"+{max(0, x)}+{max(0, y)}")
-        ttk.Label(
-            self.tip, text=text, justify="left", wraplength=360,
-            relief="solid", borderwidth=1, padding=6,
-        ).pack()
-
-    def hide(self, _event=None) -> None:
-        if self.after_id:
-            try:
-                self.widget.after_cancel(self.after_id)
-            except tk.TclError:
-                pass
-            self.after_id = None
-        if self.tip is not None:
-            try:
-                self.tip.destroy()
-            except tk.TclError:
-                pass
-            self.tip = None
-
-    def destroy(self) -> None:
-        """Cancel delayed work before the associated widget is destroyed."""
-
-        self.hide()
 
 
 class PacketWindow:
@@ -131,10 +80,15 @@ class PacketWindow:
         build: Callable[[PacketOptionsModel, str, BackgroundJob], Any] | None = None,
         open_path: Callable[[str], str] | None = None,
         comment_session_factory: Callable[[Any], Any] | None = None,
+        preset_store: Any = None,
+        ask_preset_name: Callable[[], str | None] | None = None,
+        confirm_delete_preset: Callable[[str], bool] | None = None,
+        confirm_record_posted: Callable[[str], bool] | None = None,
         notify: Callable[[str, str], None] | None = None,
         poll: bool = True,
         mode: str = "comment",
     ) -> None:
+        self._owns_root = root is None
         self.root = root if root is not None else tk.Tk()
         self.options = options or PacketOptionsModel()
         initial_video = (self.options.video or "").strip()
@@ -151,6 +105,18 @@ class PacketWindow:
         self._build_packet = build
         self._open_path = open_path or (lambda path: "")
         self._comment_session_factory = comment_session_factory
+        self._preset_store = preset_store
+        self._ask_preset_name = (
+            ask_preset_name or self._default_ask_preset_name
+        )
+        self._confirm_delete_preset = (
+            confirm_delete_preset or self._default_confirm_delete_preset
+        )
+        self._confirm_record_posted = (
+            confirm_record_posted or self._default_confirm_record_posted
+        )
+        self._presets: dict[str, WritingPreset] = {}
+        self._reload_presets()
         self.comment_session: Any = None
         # Injected: the default is a modal dialog, and a modal dialog blocks
         # the event loop until somebody clicks it. That is untestable and it
@@ -178,7 +144,10 @@ class PacketWindow:
         self.custom_length = tk.StringVar(value=self.options.custom_length)
         self.length_hint = tk.StringVar(value=self.options.length_hint())
         self.length_error = tk.StringVar(value="")
+        self.run_receipt = tk.StringVar(value="")
         self.approach_summary = tk.StringVar(value="")
+        self.approach_filter = tk.StringVar(value="")
+        self.preset_name = tk.StringVar(value=CURRENT_PRESET)
         # Retained as model compatibility only. There are no mode radio
         # buttons: checkbox count is the visible and authoritative mode.
         self.approach_mode = tk.StringVar(value="default")
@@ -199,6 +168,11 @@ class PacketWindow:
         self.root.rowconfigure(1, weight=1)
 
         self._compose()
+        if self._owns_root:
+            self._apply_initial_geometry()
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.bind("<Control-b>", self._shortcut_build, add="+")
+        self.root.bind("<Control-Shift-C>", self._shortcut_copy, add="+")
         self.refresh()
         self.root.bind("<FocusIn>", self._window_focused, add="+")
         if poll:
@@ -209,14 +183,47 @@ class PacketWindow:
     def _compose(self) -> None:
         self._build_top()
 
-        middle = ttk.Frame(self.root)
+        middle = ttk.Panedwindow(self.root, orient="horizontal")
         middle.grid(row=1, column=0, sticky="nsew", padx=PADDING)
-        middle.columnconfigure(1, weight=1)
-        middle.rowconfigure(0, weight=1)
-        self._build_left(middle)
-        self._build_right(middle)
+        left = self._build_left(middle)
+        right = self._build_right(middle)
+        middle.add(left, weight=0)
+        middle.add(right, weight=1)
+        self.middle_panes = middle
 
         self._build_bottom()
+
+    def _apply_initial_geometry(self) -> None:
+        saved = str(self.options.window_geometry or "").strip()
+        if valid_saved_geometry(saved):
+            self.root.geometry(saved)
+            return
+        width, height = initial_size(
+            self.root.winfo_screenwidth(),
+            self.root.winfo_screenheight(),
+        )
+        self.root.geometry(f"{width}x{height}")
+
+    def close(self) -> None:
+        """Remember the operator's layout before closing."""
+
+        try:
+            self.options.window_geometry = self.root.geometry()
+        except tk.TclError:
+            pass
+        self.root.destroy()
+
+    def _shortcut_build(self, _event=None) -> str:
+        if (
+            getattr(self, "comment_session", None) is None
+            and getattr(self, "session", None) is None
+        ):
+            self.do_primary()
+        return "break"
+
+    def _shortcut_copy(self, _event=None) -> str:
+        self.do_copy()
+        return "break"
 
     def _build_top(self) -> None:
         """The video, and what the clipboard holds. Never hidden.
@@ -254,24 +261,75 @@ class PacketWindow:
                                      state="disabled")
         self.use_button.grid(row=2, column=2, columnspan=2, sticky="e")
 
-    def _build_left(self, parent: ttk.Frame) -> None:
+    def _build_left(self, parent: ttk.Frame) -> ttk.Frame:
         left = ttk.Frame(parent, width=LEFT_WIDTH)
-        left.grid(row=0, column=0, sticky="nsw", padx=(0, PADDING))
         left.grid_propagate(False)
         left.columnconfigure(0, weight=1)
 
         modes = ttk.Frame(left)
         modes.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.mode_bar = modes
         for text, value in (("Comment", "comment"), ("Reply", "reply")):
             ttk.Radiobutton(modes, text=text, value=value, variable=self.mode,
                             command=self._mode_changed).pack(
                                 side="left", padx=(0, 12))
+        self.reset_options_button = ttk.Button(
+            modes, text="Reset writing options", command=self.reset_options
+        )
+        self.reset_options_button.pack(side="right")
+        self.advanced_button = ttk.Button(
+            modes, text="Advanced...", command=self.open_advanced
+        )
+        self.advanced_button.pack(side="right", padx=(0, 6))
+
+        presets = ttk.LabelFrame(left, text="Writing preset")
+        presets.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        presets.columnconfigure(0, weight=1)
+        self.preset_box = ttk.Combobox(
+            presets,
+            textvariable=self.preset_name,
+            state="readonly",
+            values=self._preset_names(),
+            width=23,
+        )
+        self.preset_box.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        self.preset_box.bind(
+            "<<ComboboxSelected>>", lambda _event: self.apply_selected_preset()
+        )
+        ttk.Button(
+            presets, text="Apply", command=self.apply_selected_preset,
+        ).grid(row=0, column=1, padx=(2, 0), pady=4)
+        ttk.Button(
+            presets, text="Save as...", command=self.save_current_preset,
+        ).grid(row=0, column=2, padx=(4, 0), pady=4)
+        self.delete_preset_button = ttk.Button(
+            presets, text="Delete", command=self.delete_selected_preset,
+        )
+        self.delete_preset_button.grid(
+            row=0, column=3, padx=(4, 4), pady=4
+        )
+        self._tooltips.append(Tooltip(
+            self.preset_box, self._selected_preset_help
+        ))
 
         approaches = ttk.LabelFrame(left, text="Registers and approaches")
-        approaches.grid(row=1, column=0, sticky="ew")
+        approaches.grid(row=2, column=0, sticky="ew")
         approaches.columnconfigure(0, weight=1)
+        search = ttk.Frame(approaches)
+        search.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 0))
+        search.columnconfigure(1, weight=1)
+        ttk.Label(search, text="Find:").grid(row=0, column=0, sticky="w")
+        self.approach_search = ttk.Entry(
+            search, textvariable=self.approach_filter
+        )
+        self.approach_search.grid(
+            row=0, column=1, sticky="ew", padx=(6, 0)
+        )
+        self.approach_filter.trace_add(
+            "write", lambda *_args: self._render_approaches()
+        )
         canvas_frame = ttk.Frame(approaches)
-        canvas_frame.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 0))
+        canvas_frame.grid(row=1, column=0, sticky="ew", padx=4, pady=(4, 0))
         canvas_frame.columnconfigure(0, weight=1)
         self.approach_canvas = tk.Canvas(
             canvas_frame, height=190, highlightthickness=0, width=400
@@ -281,6 +339,7 @@ class PacketWindow:
         )
         self.approach_canvas.configure(yscrollcommand=approach_scroll.set)
         self.approach_canvas.grid(row=0, column=0, sticky="ew")
+        self.approach_canvas.bind("<MouseWheel>", self._scroll_approaches)
         approach_scroll.grid(row=0, column=1, sticky="ns")
         self.approach_frame = ttk.Frame(self.approach_canvas)
         self.approach_window = self.approach_canvas.create_window(
@@ -304,9 +363,9 @@ class PacketWindow:
         ttk.Label(
             approaches, textvariable=self.approach_summary,
             foreground="#555555", wraplength=LEFT_WIDTH - 24, justify="left",
-        ).grid(row=1, column=0, sticky="ew", padx=4, pady=(2, 0))
+        ).grid(row=2, column=0, sticky="ew", padx=4, pady=(2, 0))
         summary_buttons = ttk.Frame(approaches)
-        summary_buttons.grid(row=2, column=0, sticky="ew", padx=4, pady=(2, 0))
+        summary_buttons.grid(row=3, column=0, sticky="ew", padx=4, pady=(2, 0))
         ttk.Button(
             summary_buttons, text="Clear selections",
             command=self.clear_custom_approaches,
@@ -314,10 +373,10 @@ class PacketWindow:
         ttk.Label(
             approaches, textvariable=self.resolution_summary,
             foreground="#805000", wraplength=LEFT_WIDTH - 30, justify="left",
-        ).grid(row=3, column=0, sticky="ew", padx=4, pady=(2, 4))
+        ).grid(row=4, column=0, sticky="ew", padx=4, pady=(2, 4))
 
         dials = ttk.LabelFrame(left, text="How the answer is written")
-        dials.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        dials.grid(row=3, column=0, sticky="ew", pady=(8, 0))
         dials.columnconfigure(1, weight=1)
         self.dial_boxes: dict[str, ttk.Combobox] = {}
         self.dial_labels: dict[str, ttk.Label] = {}
@@ -353,7 +412,7 @@ class PacketWindow:
                 ))
 
         length = ttk.LabelFrame(left, text="Length")
-        length.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        length.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         row = ttk.Frame(length)
         row.pack(fill="x", padx=4, pady=(4, 0))
         for value, label in LENGTH_CHOICES:
@@ -373,7 +432,9 @@ class PacketWindow:
         )
         self.custom_length_entry.pack(side="left", padx=(4, 0))
         self.custom_length_entry.bind(
-            "<KeyRelease>", lambda _e: self.refresh()
+            "<KeyRelease>", lambda _e: (
+                self._mark_current_preset(), self.refresh()
+            )
         )
         self._tooltips.append(Tooltip(
             self.custom_length_entry,
@@ -386,16 +447,10 @@ class PacketWindow:
                   foreground="#a00000", wraplength=LEFT_WIDTH - 24).pack(
             fill="x", padx=4, pady=(0, 4))
 
-        buttons = ttk.Frame(left)
-        buttons.grid(row=4, column=0, sticky="ew", pady=(8, 0))
-        ttk.Button(buttons, text="Advanced...",
-                   command=self.open_advanced).pack(side="left")
-        ttk.Button(buttons, text="Reset writing options",
-                   command=self.reset_options).pack(side="left", padx=(6, 0))
+        return left
 
-    def _build_right(self, parent: ttk.Frame) -> None:
+    def _build_right(self, parent: ttk.Frame) -> ttk.Frame:
         right = ttk.Frame(parent)
-        right.grid(row=0, column=1, sticky="nsew")
         right.columnconfigure(0, weight=1)
         right.rowconfigure(0, weight=1)
 
@@ -404,18 +459,26 @@ class PacketWindow:
 
         packet_tab = ttk.Frame(self.output_tabs, padding=PADDING)
         packet_tab.columnconfigure(0, weight=1)
-        packet_tab.rowconfigure(1, weight=1)
+        packet_tab.rowconfigure(2, weight=1)
         self.output_tabs.add(packet_tab, text="Generated packet")
         ttk.Label(
             packet_tab, text="The complete packet appears here after Build.",
             foreground="#444444",
         ).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.run_receipt_label = ttk.Label(
+            packet_tab,
+            textvariable=self.run_receipt,
+            foreground="#444444",
+            justify="left",
+            wraplength=760,
+        )
+        self.run_receipt_label.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         self.packet_preview = tk.Text(
             packet_tab, wrap="word", state="disabled", background="#f6f6f6"
         )
-        self.packet_preview.grid(row=1, column=0, sticky="nsew")
+        self.packet_preview.grid(row=2, column=0, sticky="nsew")
         packet_actions = ttk.Frame(packet_tab)
-        packet_actions.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        packet_actions.grid(row=3, column=0, sticky="ew", pady=(6, 0))
         self.build_button = ttk.Button(
             packet_actions, text="Build and copy packet",
             command=self.do_primary,
@@ -439,7 +502,7 @@ class PacketWindow:
         card = ttk.LabelFrame(right, text="", padding=PADDING)
         self.output_tabs.add(card, text="Paste answer")
         card.columnconfigure(0, weight=1)
-        card.rowconfigure(2, weight=1)
+        card.rowconfigure(3, weight=1)
 
         self.card_title = ttk.Label(card, text="", font=("TkDefaultFont", 10, "bold"))
         self.card_title.grid(row=0, column=0, sticky="w")
@@ -451,20 +514,49 @@ class PacketWindow:
                             relief="flat", background="#f6f6f6")
         self.said.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
 
+        answer = ttk.LabelFrame(card, text="Model answer")
+        answer.grid(row=3, column=0, sticky="nsew", pady=(0, 6))
+        answer.columnconfigure(0, weight=1)
+        answer.rowconfigure(0, weight=1)
+        self.answer_input = tk.Text(
+            answer, height=10, width=35, wrap="word", undo=True
+        )
+        self.answer_input.grid(row=0, column=0, sticky="nsew")
+        answer_scroll = ttk.Scrollbar(
+            answer, orient="vertical", command=self.answer_input.yview
+        )
+        answer_scroll.grid(row=0, column=1, sticky="ns")
+        self.answer_input.configure(yscrollcommand=answer_scroll.set)
+        self.answer_input.bind("<KeyRelease>", lambda _event: self.refresh())
+        self.answer_input.bind(
+            "<Control-Return>", lambda _event: self.do_primary()
+        )
+
         actions = ttk.Frame(card)
-        actions.grid(row=3, column=0, sticky="ew")
+        actions.grid(row=4, column=0, sticky="ew")
         self.primary = ttk.Button(actions, text="", command=self.do_primary)
         self.primary.pack(side="left")
+        self.paste_answer_button = ttk.Button(
+            actions, text="Paste clipboard", command=self.paste_answer
+        )
+        self.paste_answer_button.pack(side="left", padx=(6, 0))
         self.copy_button = ttk.Button(actions, text="", command=self.do_copy,
                                       state="disabled")
         self.copy_button.pack(side="left", padx=(6, 0))
+        self.record_button = ttk.Button(
+            actions,
+            text="Record as posted",
+            command=self.record_posted,
+            state="disabled",
+        )
+        self.record_button.pack(side="left", padx=(6, 0))
         self.cancel_button = ttk.Button(actions, text="Cancel",
                                         command=self.job.cancel,
                                         state="disabled")
         self.cancel_button.pack(side="right")
 
         footer = ttk.Frame(card)
-        footer.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        footer.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         self.back_button = ttk.Button(footer, text="Back", command=self.go_back)
         self.back_button.pack(side="left")
         self.skip_button = ttk.Button(footer, text="Skip", command=self.skip)
@@ -477,6 +569,7 @@ class PacketWindow:
             footer, text="", foreground="#666666"
         )
         self.packet_size_label.pack(side="right", padx=(0, 12))
+        return right
 
     def _build_bottom(self) -> None:
         bottom = ttk.Frame(self.root, padding=(PADDING, 4, PADDING, PADDING))
@@ -507,24 +600,133 @@ class PacketWindow:
 
     # -- state -------------------------------------------------------------
 
+    def _reload_presets(self) -> None:
+        presets = (
+            tuple(self._preset_store.all())
+            if self._preset_store is not None
+            else BUILT_IN_PRESETS
+        )
+        self._presets = {preset.name: preset for preset in presets}
+        if hasattr(self, "preset_box"):
+            self.preset_box.configure(values=self._preset_names())
+
+    def _preset_names(self) -> tuple[str, ...]:
+        return (CURRENT_PRESET,) + tuple(self._presets)
+
+    def _selected_preset_help(self) -> str:
+        preset = self._presets.get(self.preset_name.get())
+        return preset.description if preset is not None else (
+            "The writing choices currently shown."
+        )
+
+    def _mark_current_preset(self) -> None:
+        if hasattr(self, "preset_name"):
+            self.preset_name.set(CURRENT_PRESET)
+
+    def apply_selected_preset(self) -> None:
+        selected = self.preset_name.get()
+        preset = self._presets.get(selected)
+        if preset is None:
+            return
+        # Capture the video and other fields before replacing the model.
+        self.gather()
+        self.options = self.options.apply_writing_preset(preset)
+        self.length.set(self.options.length)
+        self.custom_length.set(self.options.custom_length)
+        for name, box in self.dial_boxes.items():
+            box.set(dial_choice_label(self.options.dial_values()[name]))
+        self._fill_approaches()
+        self.preset_name.set(preset.name)
+        self.say(f"Applied preset: {preset.name}.")
+        self.refresh()
+
+    def save_current_preset(self) -> None:
+        if self._preset_store is None:
+            self.say("Custom preset storage is not available.")
+            return
+        name = self._ask_preset_name()
+        if name is None:
+            return
+        try:
+            preset = self.gather().as_writing_preset(name)
+            saved = self._preset_store.save(preset)
+        except Exception as failure:        # noqa: BLE001 - visible refusal
+            self.say(f"Preset was not saved: {failure}")
+            return
+        self._reload_presets()
+        self.preset_name.set(saved.name)
+        self.say(f"Saved custom preset: {saved.name}.")
+        self.refresh()
+
+    def delete_selected_preset(self) -> None:
+        selected = self.preset_name.get()
+        preset = self._presets.get(selected)
+        if preset is None:
+            self.say("Choose a custom preset to delete.")
+            return
+        if preset.builtin:
+            self.say("Built-in presets cannot be deleted.")
+            return
+        if self._preset_store is None or not self._confirm_delete_preset(
+            preset.name
+        ):
+            return
+        try:
+            deleted = self._preset_store.delete(preset.name)
+        except Exception as failure:        # noqa: BLE001 - visible refusal
+            self.say(f"Preset was not deleted: {failure}")
+            return
+        if deleted:
+            self._reload_presets()
+            self.preset_name.set(CURRENT_PRESET)
+            self.say(f"Deleted custom preset: {preset.name}.")
+        self.refresh()
+
     def _fill_approaches(self) -> None:
-        for tooltip in self._approach_tooltips:
-            tooltip.destroy()
-        self._approach_tooltips = []
-        for child in self.approach_frame.winfo_children():
-            child.destroy()
-        self.approach_vars = {}
-        self.approach_checks = {}
+        """Replace the mode's variables, then render the current filter."""
+
         mode = self.mode.get()
         selected = set(
             self.options.reply_variations if mode == "reply"
             else self.options.comment_variations
         )
+        self.approach_vars = {
+            key: tk.BooleanVar(value=key in selected)
+            for key, _label, _dimension, _description in approach_choices(mode)
+        }
         self.approach_mode.set("custom" if selected else "default")
-        for row, (key, label, dimension, description) in enumerate(
-            approach_choices(mode)
-        ):
-            variable = tk.BooleanVar(value=key in selected)
+        self._render_approaches()
+        self._apply_resolved_approaches()
+        self._update_approach_state()
+
+    def _render_approaches(self) -> None:
+        """Render matching choices without dropping hidden selections."""
+
+        if not hasattr(self, "approach_frame"):
+            return
+        for tooltip in self._approach_tooltips:
+            tooltip.destroy()
+        self._approach_tooltips = []
+        for child in self.approach_frame.winfo_children():
+            child.destroy()
+        self.approach_checks = {}
+        mode = self.mode.get()
+        wanted = self.approach_filter.get().strip().casefold()
+        row = 0
+        last_dimension = ""
+        for key, label, dimension, description in approach_choices(mode):
+            searchable = f"{key} {label} {dimension} {description}".casefold()
+            if wanted and wanted not in searchable:
+                continue
+            if dimension != last_dimension:
+                ttk.Label(
+                    self.approach_frame,
+                    text=dimension.title(),
+                    foreground="#555555",
+                ).grid(row=row, column=0, sticky="w", padx=2, pady=(5, 1))
+                row += 1
+                last_dimension = dimension
+            variable = self.approach_vars[key]
             text = f"{label}  [{dimension}]"
             check = ttk.Checkbutton(
                 self.approach_frame,
@@ -546,8 +748,21 @@ class PacketWindow:
             )
             self._approach_tooltips.append(
                 Tooltip(check, lambda value=help_text: value))
-            self.approach_vars[key] = variable
             self.approach_checks[key] = check
+            row += 1
+        if not self.approach_checks:
+            ttk.Label(
+                self.approach_frame,
+                text="No approaches match that search.",
+                foreground="#666666",
+            ).grid(row=0, column=0, sticky="w", padx=2, pady=6)
+        self.approach_canvas.yview_moveto(0)
+
+    def _scroll_approaches(self, event) -> str:
+        self.approach_canvas.yview_scroll(
+            -1 if event.delta > 0 else 1, "units"
+        )
+        return "break"
         self._apply_resolved_approaches()
         self._update_approach_state()
 
@@ -578,6 +793,7 @@ class PacketWindow:
             )
 
     def _approach_selected(self) -> None:
+        self._mark_current_preset()
         self._store_approaches()
         self._apply_resolved_approaches()
         self._update_approach_state()
@@ -605,14 +821,18 @@ class PacketWindow:
 
     def _update_approach_state(self) -> None:
         count = sum(variable.get() for variable in self.approach_vars.values())
-        self.approach_summary.set(
-            f"{count} custom approach{'es' if count != 1 else ''} selected."
-            if count else
-            "No custom approaches selected — defaults will be used."
-        )
+        total = len(self.approach_vars)
+        if count == 0:
+            summary = "No approaches selected — defaults will be used."
+        elif count == total:
+            summary = f"All {total} approaches selected."
+        else:
+            summary = f"{count} of {total} approaches selected."
+        self.approach_summary.set(summary)
         self._apply_resolved_approaches()
 
     def clear_custom_approaches(self) -> None:
+        self._mark_current_preset()
         for variable in self.approach_vars.values():
             variable.set(False)
         self._store_approaches()
@@ -620,6 +840,7 @@ class PacketWindow:
         self.refresh()
 
     def use_default_approaches(self) -> None:
+        self._mark_current_preset()
         for variable in self.approach_vars.values():
             variable.set(False)
         self._store_approaches()
@@ -638,6 +859,7 @@ class PacketWindow:
         self.help_text.set(text)
 
     def _dial_chosen(self, dial: str) -> None:
+        self._mark_current_preset()
         box = self.dial_boxes[dial]
         for value in DIALS[dial].choices:
             if dial_choice_label(value) == box.get():
@@ -649,6 +871,7 @@ class PacketWindow:
         self.refresh()
 
     def _length_changed(self) -> None:
+        self._mark_current_preset()
         self.refresh()
 
     def gather(self) -> PacketOptionsModel:
@@ -662,6 +885,13 @@ class PacketWindow:
 
     def refresh(self) -> None:
         options = self.gather()
+        typed_answer = self._answer_text()
+        if hasattr(self, "delete_preset_button"):
+            selected_preset = self._presets.get(self.preset_name.get())
+            self._enable(
+                self.delete_preset_button,
+                bool(selected_preset and not selected_preset.builtin),
+            )
         self.length_hint.set(LENGTH_SUMMARIES.get(options.length, ""))
         length_problems = [
             problem for problem in options.problems(mode=self.mode.get())
@@ -715,6 +945,8 @@ class PacketWindow:
             self.card_title.configure(text=view.title)
             self.card_detail.configure(text=view.detail)
             self.primary.configure(text=view.primary_label)
+            if self.sequence.step in (Step.TRIAGE, Step.PEOPLE) and typed_answer:
+                self.primary.configure(text="Use pasted answer")
             self.copy_button.configure(
                 text="Copy again" if self.last_packet else (view.copy_label or "Copy")
             )
@@ -736,7 +968,8 @@ class PacketWindow:
                       "section. The packet lands on your clipboard.")
             )
             self.primary.configure(
-                text=("Use the answer on the clipboard" if waiting
+                text=(("Use pasted answer" if typed_answer
+                       else "Use the answer on the clipboard") if waiting
                       else "Build packet"))
             self.copy_button.configure(
                 text="Copy again" if self.last_packet else "Copy packet"
@@ -759,8 +992,15 @@ class PacketWindow:
                 getattr(self, "comment_session", None) is not None:
             offer = getattr(self, "_offer", None)
             self._enable(self.primary,
-                         bool(offer is not None and offer.offered))
+                         bool(typed_answer or (
+                             offer is not None and offer.offered
+                         )))
             self._enable(self.copy_button, bool(self.last_packet))
+            self._enable(
+                self.record_button,
+                self._record_available(self.comment_session),
+            )
+            self._update_record_button(self.comment_session)
             self._enable(self.cancel_button, self.job.running)
             self._enable(self.build_button, False)
             self.status.set(self._message or "Packet built and copied.")
@@ -771,11 +1011,30 @@ class PacketWindow:
             self.primary,
             has_video and not self.job.running and not blockers,
         )
+        if (
+            reply_mode
+            and getattr(self, "session", None) is not None
+            and self.sequence.step in (Step.TRIAGE, Step.PEOPLE)
+        ):
+            offer = getattr(self, "_offer", None)
+            self._enable(
+                self.primary,
+                bool(typed_answer or (offer is not None and offer.offered)),
+            )
         self._enable(
             self.build_button,
             has_video and not self.job.running and not blockers,
         )
         self._enable(self.copy_button, bool(self.last_packet))
+        active_session = (
+            getattr(self, "session", None) if self.mode.get() == "reply"
+            else getattr(self, "comment_session", None)
+        )
+        self._enable(
+            self.record_button,
+            self._record_available(active_session),
+        )
+        self._update_record_button(active_session)
         self._enable(self.cancel_button, self.job.running)
 
         # The last thing said wins. refresh() runs after every action, so
@@ -888,6 +1147,27 @@ class PacketWindow:
             self.say(f"Took an answer of {len(offer.payload):,} characters.")
         self.refresh()
 
+    def _answer_text(self) -> str:
+        if not hasattr(self, "answer_input"):
+            return ""
+        return self.answer_input.get("1.0", "end-1c").strip()
+
+    def _clear_answer(self) -> None:
+        if hasattr(self, "answer_input"):
+            self.answer_input.delete("1.0", "end")
+
+    def paste_answer(self) -> None:
+        """Paste explicitly into the visible answer field."""
+
+        text = self.read_clipboard().strip()
+        if not text:
+            self.say("The clipboard is empty.")
+            return
+        self.answer_input.delete("1.0", "end")
+        self.answer_input.insert("1.0", text)
+        self.say(f"Pasted {len(text):,} characters into the answer box.")
+        self.refresh()
+
     def paste_video(self) -> None:
         """Put whatever video the clipboard holds into the box.
 
@@ -920,6 +1200,8 @@ class PacketWindow:
         self.triage_packet = ""
         self.current_packet = ""
         self.last_packet = ""
+        self.run_receipt.set("")
+        self._clear_answer()
         self._offer = None
         self.progress_value.set(0.0)
         self._message = ""
@@ -982,7 +1264,7 @@ class PacketWindow:
         self.refresh()
 
     def take_answer(self) -> None:
-        """Hand the clipboard's answer to the session. Pressed, never automatic.
+        """Hand the visible or clipboard answer to the session.
 
         The session decides whether it is an answer at all — packet detection
         before extraction, the same order everywhere — so a refusal here is
@@ -991,17 +1273,18 @@ class PacketWindow:
 
         session = getattr(self, "session", None)
         offer = getattr(self, "_offer", None)
+        typed = self._answer_text()
         if session is None:
             return
-        if offer is None or not offer.offered:
-            self.say("There is no answer on the clipboard to use.")
+        if not typed and (offer is None or not offer.offered):
+            self.say("Paste an answer into the box or copy one to the clipboard.")
             return
 
         try:
             # The raw clipboard, not the extracted draft. The session owns
             # what counts as an answer; handing it an already-extracted one
             # made it extract a second time from text whose heading had gone.
-            result = session.submit(offer.raw)
+            result = session.submit(typed or offer.raw)
         except Exception as refusal:        # noqa: BLE001 - reported, not raised
             # The session refuses an answer for a person whose packet was
             # never copied, because a copy is how it knows the packet
@@ -1019,6 +1302,7 @@ class PacketWindow:
             return
 
         self.sequence.accepted = len(session.accepted)
+        self._clear_answer()
         self.say(f"Saved. {len(session.accepted)} so far.")
         self.sequence.next_person()
         if self.sequence.step is Step.PEOPLE:
@@ -1036,6 +1320,10 @@ class PacketWindow:
         "nothing is ever posted".
         """
 
+        self.run_receipt.set(comment_receipt(
+            getattr(packet, "run_record", {}) or {},
+            str(getattr(getattr(packet, "artifacts", None), "root", "") or ""),
+        ))
         if self._comment_session_factory is None:
             return
         try:
@@ -1047,20 +1335,21 @@ class PacketWindow:
                      f"{failure}")
 
     def take_comment_answer(self) -> None:
-        """Save the model's comment. Pressed, never automatic."""
+        """Save the model's comment from the visible box or clipboard."""
 
         session = getattr(self, "comment_session", None)
         offer = getattr(self, "_offer", None)
+        typed = self._answer_text()
         if session is None:
             self.say("Build a packet first.")
             return
-        if offer is None or not offer.offered:
-            self.say("There is no answer on the clipboard to use.")
+        if not typed and (offer is None or not offer.offered):
+            self.say("Paste an answer into the box or copy one to the clipboard.")
             return
 
         try:
             # The raw clipboard: the session owns what counts as an answer.
-            result = session.submit(offer.raw)
+            result = session.submit(typed or offer.raw)
         except Exception as refusal:        # noqa: BLE001 - reported
             self.say(f"{refusal} Copy the packet first.")
             return
@@ -1072,6 +1361,7 @@ class PacketWindow:
             return
 
         session.finish()
+        self._clear_answer()
         self.say(f"Draft saved. {len(session.accepted)} so far.")
         self.refresh()
 
@@ -1079,6 +1369,9 @@ class PacketWindow:
         """Take the session and the triage packet a reply scan produced."""
 
         self.session = run.session
+        self.run_receipt.set(reply_receipt(
+            getattr(run, "receipt", {}) or {}
+        ))
         self.triage_packet = run.triage_packet
         people = [getattr(t, "author", "") for t in run.session.targets]
         self.sequence = ReplySequence(people=tuple(people))
@@ -1118,12 +1411,15 @@ class PacketWindow:
 
         offer = getattr(self, "_offer", None)
         session = getattr(self, "session", None)
-        if session is None or offer is None or not offer.offered:
-            self.say("There is no triage answer on the clipboard to use.")
+        typed = self._answer_text()
+        if session is None or (
+            not typed and (offer is None or not offer.offered)
+        ):
+            self.say("Paste a triage answer into the box or copy one.")
             return
 
         wanted = {handle.lstrip("@").casefold()
-                  for handle in parse_triage_selection(offer.raw)}
+                  for handle in parse_triage_selection(typed or offer.raw)}
         if not wanted:
             self.say("No handles were found in that answer. The queue is "
                      "unchanged.")
@@ -1139,6 +1435,7 @@ class PacketWindow:
             return
 
         session.targets = kept
+        self._clear_answer()
         self.sequence = ReplySequence(
             people=tuple(getattr(t, "author", "") for t in kept))
         self.sequence.advance_to(Step.PEOPLE)
@@ -1203,6 +1500,60 @@ class PacketWindow:
     def do_copy(self) -> None:
         self._copy_current_packet(auto=False)
 
+    def record_posted(self) -> None:
+        """Explicitly mark the latest accepted draft as manually posted."""
+
+        session = (
+            getattr(self, "session", None) if self.mode.get() == "reply"
+            else getattr(self, "comment_session", None)
+        )
+        if session is None or not getattr(session, "accepted", ()):
+            self.say("There is no accepted draft to record.")
+            self.refresh()
+            return
+        item = session.accepted[-1]
+        draft = str(getattr(item, "draft", "") or "")
+        target = str(getattr(item, "author", "") or "")
+        preview = " ".join(draft.split())[:320]
+        target_line = f"\n\nTarget: {target}" if target else ""
+        prompt = (
+            f"Record the latest accepted "
+            f"{'reply' if target else 'comment'} as posted?"
+            f"{target_line}\n\n{preview}"
+            "\n\nThis updates local history only. It does not post to YouTube."
+        )
+        if not self._confirm_record_posted(prompt):
+            self.say("Posting record cancelled.")
+            self.refresh()
+            return
+        try:
+            added = session.record_posted()
+        except Exception as failure:        # noqa: BLE001 - visible refusal
+            self.say(f"The draft was saved, but history was not updated: {failure}")
+        else:
+            self.say(
+                "Recorded as posted."
+                if added else "That posting event was already recorded."
+            )
+        self.refresh()
+
+    @staticmethod
+    def _record_available(session: Any) -> bool:
+        accepted = list(getattr(session, "accepted", ()) or ())
+        return bool(
+            accepted
+            and not getattr(accepted[-1], "posted_recorded", False)
+        )
+
+    def _update_record_button(self, session: Any) -> None:
+        accepted = list(getattr(session, "accepted", ()) or ())
+        recorded = bool(
+            accepted and getattr(accepted[-1], "posted_recorded", False)
+        )
+        self.record_button.configure(
+            text="Posting recorded" if recorded else "Record as posted"
+        )
+
     def go_back(self) -> None:
         order = list(Step)
         index = order.index(self.sequence.step)
@@ -1238,6 +1589,8 @@ class PacketWindow:
         self.triage_packet = ""
         self.current_packet = ""
         self.last_packet = ""
+        self.run_receipt.set("")
+        self._clear_answer()
         self._offer = None
         self.progress_value.set(0.0)
         self._message = ""
@@ -1248,6 +1601,7 @@ class PacketWindow:
         for name, box in self.dial_boxes.items():
             box.set(dial_choice_label(DIALS[name].default))
         self._fill_approaches()
+        self.preset_name.set("Default")
         self.refresh()
 
     def open_advanced(self) -> None:        # pragma: no cover - opens a dialog
@@ -1313,71 +1667,32 @@ class PacketWindow:
 
         messagebox.showwarning(title, message)
 
+    def _default_ask_preset_name(self) -> str | None:  # pragma: no cover
+        from tkinter import simpledialog
 
-class AdvancedDialog:                       # pragma: no cover - opens a dialog
-    """The settings nobody changes twice: keys, folders, counts, proxy."""
+        return simpledialog.askstring(
+            "Save custom preset",
+            "Preset name:",
+            parent=self.root,
+        )
 
-    FIELDS = (
-        ("output_directory", "Output folder", str),
-        ("editor_path", "Open files with", str),
-        ("languages", "Transcript languages", str),
-        ("proxy_url", "Proxy URL", str),
-        ("my_handle", "Your @username", str),
-        ("max_top", "Relevance comments", int),
-        ("max_recent", "Recent comments", int),
-        ("max_threads", "Reply threads", int),
-        ("max_replies", "Replies per thread", int),
-        ("packet_characters", "Packet characters", int),
-    )
+    def _default_confirm_delete_preset(self, name: str) -> bool:  # pragma: no cover
+        from tkinter import messagebox
 
-    def __init__(self, parent, options: PacketOptionsModel, on_close=None):
-        self.options = options
-        self.on_close = on_close or (lambda: None)
-        self.top = tk.Toplevel(parent)
-        self.top.title("Advanced")
-        self.top.transient(parent)
-        self.variables: dict[str, tk.Variable] = {}
+        return bool(messagebox.askyesno(
+            "Delete custom preset",
+            f"Delete {name!r}?",
+            parent=self.root,
+        ))
 
-        frame = ttk.Frame(self.top, padding=PADDING)
-        frame.pack(fill="both", expand=True)
-        frame.columnconfigure(1, weight=1)
+    def _default_confirm_record_posted(self, message: str) -> bool:  # pragma: no cover
+        from tkinter import messagebox
 
-        for row, (name, label, kind) in enumerate(self.FIELDS):
-            ttk.Label(frame, text=f"{label}:").grid(row=row, column=0,
-                                                    sticky="w", pady=2)
-            variable: tk.Variable = (tk.IntVar(value=getattr(options, name))
-                                     if kind is int
-                                     else tk.StringVar(value=getattr(options, name)))
-            self.variables[name] = variable
-            widget = (ttk.Spinbox(frame, from_=0, to=2_000_000, increment=10,
-                                  textvariable=variable, width=14)
-                      if kind is int
-                      else ttk.Entry(frame, textvariable=variable, width=44))
-            widget.grid(row=row, column=1, sticky="ew", padx=(6, 0), pady=2)
-
-        row = len(self.FIELDS)
-        self.include_replies = tk.BooleanVar(value=options.include_replies)
-        ttk.Checkbutton(frame, text="Retrieve replies",
-                        variable=self.include_replies).grid(
-            row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self.overwrite = tk.BooleanVar(value=options.overwrite)
-        ttk.Checkbutton(frame, text="Overwrite a previous output folder",
-                        variable=self.overwrite).grid(
-            row=row + 1, column=0, columnspan=2, sticky="w")
-
-        ttk.Button(frame, text="Done", command=self.close).grid(
-            row=row + 2, column=1, sticky="e", pady=(10, 0))
-
-    def close(self) -> None:
-        for name, variable in self.variables.items():
-            try:
-                setattr(self.options, name, variable.get())
-            except tk.TclError:
-                continue
-        self.options.include_replies = self.include_replies.get()
-        self.options.overwrite = self.overwrite.get()
-        self.top.destroy()
-        self.on_close()
+        return bool(messagebox.askyesno(
+            "Record as posted",
+            message,
+            parent=self.root,
+        ))
 
 
 def launch(**kwargs) -> PacketWindow:       # pragma: no cover - real Tk

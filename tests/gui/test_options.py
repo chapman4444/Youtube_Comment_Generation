@@ -30,6 +30,9 @@ from llm_youtube_comment_generation.interfaces.gui.options import (
     dial_help,
     register_choices,
 )
+from llm_youtube_comment_generation.domain.writing_presets import (
+    BUILT_IN_PRESETS,
+)
 
 
 def model(**kwargs) -> PacketOptionsModel:
@@ -259,8 +262,11 @@ def test_the_field_names_are_the_old_applications():
 
     payload = model().to_settings()
 
-    for name in ("my_handle", "max_top", "max_recent", "use_triage",
-                 "custom_length", "auto_watch", "editor_path"):
+    for name in (
+        "my_handle", "max_top", "max_recent", "use_triage",
+        "custom_length", "auto_watch", "editor_path",
+        "transcribe_locally", "whisper_model",
+    ):
         assert name in payload
 
 
@@ -315,6 +321,43 @@ def test_reset_clears_the_writing_options_and_nothing_else():
     assert after.output_directory == "D:/out"
     assert after.my_handle == "@someone"
     assert after.video == before.video
+
+
+def test_preset_round_trip_preserves_writing_choices_only():
+    before = model(
+        comment_variations=("short_hook",),
+        reply_variations=("flat_contradiction",),
+        dials={"ending": "flat"},
+        length="long",
+        output_directory="D:/personal",
+    )
+
+    captured = before.as_writing_preset("My preset")
+    restored = PacketOptionsModel(
+        video=before.video,
+        output_directory=before.output_directory,
+    ).apply_writing_preset(captured)
+
+    assert restored.comment_variations == before.comment_variations
+    assert restored.reply_variations == before.reply_variations
+    assert restored.dials == before.dials
+    assert restored.length == before.length
+    assert restored.output_directory == "D:/personal"
+
+
+def test_builtin_default_preset_really_resets_writing_choices():
+    changed = model(
+        comment_variations=("short_hook",),
+        dials={"ending": "flat"},
+        length="long",
+    )
+
+    reset = changed.apply_writing_preset(BUILT_IN_PRESETS[0])
+
+    assert reset.comment_variations == ()
+    assert reset.reply_variations == ()
+    assert reset.dials == {}
+    assert reset.length == "auto"
 
 
 def test_approach_help_comes_from_authoritative_backend_metadata():

@@ -30,6 +30,14 @@ TEMPLATES = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def clear_prompt_resource_caches_after_each_test():
+    yield
+    prompt_resources.load.cache_clear()
+    prompt_resources._manifest.cache_clear()
+    prompt_resources._checksums.cache_clear()
+
+
 @pytest.fixture(scope="module")
 def recorded():
     return json.loads(CHECKSUMS.read_text(encoding="utf-8"))
@@ -178,3 +186,50 @@ def test_the_comment_template_declares_resolved_structural_contracts():
     assert "{critique_contract}" in workflow
     assert "{final_contract}" in workflow
     assert "### Harsh critique" not in workflow
+
+
+def _temporary_prompt_set(monkeypatch, tmp_path, raw: bytes, *, checksum=True):
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "sample.md").write_bytes(raw)
+    (prompts / "manifest.json").write_text(
+        json.dumps({"sample.md": {"placeholders": []}}),
+        encoding="utf-8",
+    )
+    checksums = {}
+    if checksum:
+        checksums["sample.md"] = {
+            "sha256": hashlib.sha256(b"expected bytes").hexdigest()
+        }
+    (prompts / "checksums.json").write_text(
+        json.dumps(checksums), encoding="utf-8"
+    )
+    monkeypatch.setattr(prompt_resources, "PROMPTS", prompts)
+    monkeypatch.setattr(prompt_resources, "MANIFEST", prompts / "manifest.json")
+    monkeypatch.setattr(prompt_resources, "CHECKSUMS", prompts / "checksums.json")
+    prompt_resources.load.cache_clear()
+    prompt_resources._manifest.cache_clear()
+    prompt_resources._checksums.cache_clear()
+
+
+def test_runtime_loader_refuses_changed_prompt_bytes(monkeypatch, tmp_path):
+    _temporary_prompt_set(monkeypatch, tmp_path, b"changed bytes")
+
+    with pytest.raises(ConfigurationError, match="expected.*actual"):
+        prompt_resources.load("sample.md")
+
+
+def test_runtime_loader_requires_a_checksum_entry(monkeypatch, tmp_path):
+    _temporary_prompt_set(
+        monkeypatch, tmp_path, b"expected bytes", checksum=False
+    )
+
+    with pytest.raises(ConfigurationError, match="no recorded checksum"):
+        prompt_resources.load("sample.md")
+
+
+def test_runtime_loader_reports_invalid_utf8(monkeypatch, tmp_path):
+    _temporary_prompt_set(monkeypatch, tmp_path, b"\xff")
+
+    with pytest.raises(ConfigurationError, match="not valid UTF-8"):
+        prompt_resources.load("sample.md")

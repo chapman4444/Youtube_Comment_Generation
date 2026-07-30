@@ -9,6 +9,9 @@ supposed to contain a program is the easiest thing in the world to check.
 from __future__ import annotations
 
 import re
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -36,7 +39,6 @@ LAUNCHERS = {
         # The window needs a queue that rarely exists. Without a way in that
         # does not, it cannot be looked at before it is needed.
         "interfaces.cli.main gui --preview",
-        "pause",
     ),
     "doctor.bat": ("interfaces.cli.main doctor", "pause"),
     "scoreboard.bat": ("interfaces.cli.main scoreboard", "pause"),
@@ -73,6 +75,27 @@ def test_every_launcher_uses_the_source_beside_it(name):
 
 
 @pytest.mark.parametrize("name", sorted(LAUNCHERS))
+def test_every_launcher_bootstraps_and_requires_the_project_venv(name):
+    text = (ROOT / name).read_text(encoding="utf-8")
+
+    assert 'call "%~dp0setup_venv.bat"' in text
+    assert "set \"YTCOMMENT_PYTHON=python\"" not in text
+
+
+def test_venv_bootstrap_selects_python_310_and_installs_both_caption_sources():
+    text = (ROOT / "setup_venv.bat").read_text(encoding="utf-8")
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert 'py -3.10 -m venv ".venv"' in text
+    assert '".[transcripts,local-transcription]"' in text
+    assert "youtube_transcript_api" in text
+    assert "yt_dlp" in text
+    assert "faster_whisper" in text
+    assert 'transcripts = ["youtube-transcript-api>=1.0", "yt-dlp"]' in project
+    assert 'local-transcription = ["faster-whisper"]' in project
+
+
+@pytest.mark.parametrize("name", sorted(LAUNCHERS))
 def test_the_launcher_ends_where_it_can_be_read(name):
     """Without a pause, a double-clicked window closes before the operator
     can read what happened — including the error telling him why."""
@@ -82,6 +105,18 @@ def test_the_launcher_ends_where_it_can_be_read(name):
              if line.strip()]
 
     assert "endlocal" in lines[-1] or "pause" in lines[-1]
+
+
+def test_gui_launcher_closes_without_startup_or_shutdown_chatter():
+    text = (ROOT / "gui.bat").read_text(encoding="utf-8")
+
+    assert "pause" not in text.lower()
+    assert "Building the comment packet, then opening the window" not in text
+    assert r".venv\Scripts\pythonw.exe" in text
+    assert (
+        'start "" "!YTCOMMENT_PYTHONW!" '
+        "-m llm_youtube_comment_generation.interfaces.cli.main comment build"
+    ) in text
 
 
 def test_a_dry_run_does_not_claim_a_packet_was_built():
@@ -152,3 +187,45 @@ def test_every_launcher_passes_extra_arguments_through():
     for name in ("comment.bat", "reply.bat", "gui.bat"):
         text = (ROOT / name).read_text(encoding="utf-8")
         assert "!EXTRA!" in text, f"{name} drops everything after the video"
+
+
+def test_review_zip_records_snapshot_verification_evidence():
+    text = (ROOT / "make_review_zip.bat").read_text(encoding="utf-8")
+
+    assert "tools\\create_review_evidence.py" in text
+    assert 'call "%PROJECT_ROOT%setup_venv.bat"' in text
+    assert '"%PROJECT_PY%" tools\\create_review_evidence.py' in text
+    assert '"REVIEW_PROMPT.md"' in text
+    assert "REVIEW_VERIFICATION.md" in text
+    assert "WinRAR.exe" in text
+    assert "Youtube_Comment_Generation_review.new.zip" in text
+    assert '"%WINRAR_EXE%" t -y "%TEMP_ARCHIVE%"' in text
+    assert 'move /y "%TEMP_ARCHIVE%" "%ARCHIVE%"' in text
+    evidence = text.index('tools\\create_review_evidence.py')
+    replacement = text.index('move /y "%TEMP_ARCHIVE%" "%ARCHIVE%"')
+    assert evidence < replacement
+
+
+@pytest.mark.opens_for_real
+def test_module_help_has_no_duplicate_import_runpy_warning():
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-B",
+            "-m",
+            "llm_youtube_comment_generation.interfaces.cli.main",
+            "--help",
+        ],
+        cwd=ROOT,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert "Build YouTube comment and reply packets" in completed.stdout
+    assert "RuntimeWarning" not in completed.stderr
+    assert "unpredictable behaviour" not in completed.stderr

@@ -246,15 +246,15 @@ class FakeYouTubePort:
         # replies() port method on the instance and make it uncallable.
         self._replies = {k: [dict(r) for r in v] for k, v in (replies or {}).items()}
         self.handles = dict(handles or {})
-        self._requests = 0
+        self._api_operations = 0
         self.raise_on_video: Exception | None = None
 
     @property
-    def requests_used(self) -> int:
-        return self._requests
+    def api_operations_used(self) -> int:
+        return self._api_operations
 
     def video(self, video_id: str) -> dict[str, Any]:
-        self._requests += 1
+        self._api_operations += 1
         if self.raise_on_video is not None:
             raise self.raise_on_video
         if video_id not in self.videos:
@@ -268,7 +268,7 @@ class FakeYouTubePort:
         order: str = "relevance",
         maximum: int = 100,
     ) -> CommentPage:
-        self._requests += 1
+        self._api_operations += 1
         pool = [dict(c, order_source=order) for c in self.comments]
         taken = pool[:maximum]
         complete = len(taken) == len(pool)
@@ -279,7 +279,7 @@ class FakeYouTubePort:
                         else RetrievalStatus.TOP_LEVEL_TRUNCATED),
                 retrieved=len(taken),
                 reported_total=len(pool),
-                requests_used=1,
+                api_operations_used=1,
                 notes=() if complete else (
                     f"stopped after {len(taken):,} of {len(pool):,} comments",
                 ),
@@ -287,7 +287,7 @@ class FakeYouTubePort:
         )
 
     def replies(self, parent_comment_id: str, *, maximum: int = 100) -> CommentPage:
-        self._requests += 1
+        self._api_operations += 1
         pool = self.replies_for(parent_comment_id)
         taken = pool[:maximum]
         complete = len(taken) == len(pool)
@@ -298,7 +298,7 @@ class FakeYouTubePort:
                         else RetrievalStatus.REPLY_THREAD_TRUNCATED),
                 retrieved=len(taken),
                 reported_total=len(pool),
-                requests_used=1,
+                api_operations_used=1,
             ),
         )
 
@@ -306,7 +306,7 @@ class FakeYouTubePort:
         return [dict(r) for r in self._replies.get(parent_comment_id, [])]
 
     def channel_id_for_handle(self, handle: str) -> str:
-        self._requests += 1
+        self._api_operations += 1
         wanted = handle if handle.startswith("@") else "@" + handle
         found = self.handles.get(wanted)
         if not found:

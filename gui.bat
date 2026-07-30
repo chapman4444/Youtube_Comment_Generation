@@ -5,10 +5,10 @@ REM Double-click this file, or run it from a terminal. You do not have to type
 REM anything: copy the video URL in your browser first and the video is taken
 REM from the clipboard. A URL or ID passed as an argument still wins.
 REM
-REM The packet is built first, in this console, and then the window opens on
-REM it. Copy the packet, paste it into your model, bring the answer back.
+REM The window opens first. Choose a video and press Build; then copy the
+REM packet, paste it into your model, and bring the answer back.
 REM Nothing is ever posted; accepted drafts are saved to comment_drafts.md
-REM beside the run.
+REM beside the packet and its run record.
 REM
 REM   gui.bat --replies     the other window: work through people who replied
 REM                         to YOUR comment and have not heard back. Needs a
@@ -19,12 +19,15 @@ REM                         quota, nothing written.
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
+call "%~dp0setup_venv.bat"
+if errorlevel 1 goto :failed
+
 REM Always run the code beside this launcher. An editable install elsewhere on
 REM the computer may also provide ytcomment, but it must never make this folder
 REM silently open an older GUI.
 set "PYTHONPATH=%~dp0src;%PYTHONPATH%"
 set "YTCOMMENT_PYTHON=%~dp0.venv\Scripts\python.exe"
-if not exist "!YTCOMMENT_PYTHON!" set "YTCOMMENT_PYTHON=python"
+set "YTCOMMENT_PYTHONW=%~dp0.venv\Scripts\pythonw.exe"
 
 REM Who you are, for reply mode only. The setting wins if you have exported
 REM YTCOMMENT_MY_HANDLE; otherwise this line is used.
@@ -61,10 +64,7 @@ echo !ALLARGS! | findstr /i /c:"--replies" >nul
 if not errorlevel 1 goto :replies
 
 :run
-echo.
-echo Building the comment packet, then opening the window ...
-echo.
-"!YTCOMMENT_PYTHON!" -m llm_youtube_comment_generation.interfaces.cli.main comment build !VIDEOARG! --window --no-copy !EXTRA!
+start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.cli.main comment build !VIDEOARG! --window --no-copy !EXTRA!
 set "RC=!ERRORLEVEL!"
 if "!RC!"=="0" goto :done
 
@@ -106,14 +106,14 @@ if not defined HANDLE (
 echo.
 echo Opening the window on the reply side, as @!HANDLE! ...
 echo.
-"!YTCOMMENT_PYTHON!" -m llm_youtube_comment_generation.interfaces.cli.main gui !VIDEOARG! --my-handle "!HANDLE!" !EXTRA!
+start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.cli.main gui !VIDEOARG! --my-handle "!HANDLE!" !EXTRA!
 goto :done
 
 :preview
 echo.
 echo Opening a preview window. Nothing is fetched and nothing is saved.
 echo.
-"!YTCOMMENT_PYTHON!" -m llm_youtube_comment_generation.interfaces.cli.main gui --preview
+start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.cli.main gui --preview
 goto :done
 
 :nothing
@@ -125,6 +125,4 @@ echo.
 echo That did not work. Run doctor.bat to check the installation.
 
 :done
-echo.
-pause
 endlocal

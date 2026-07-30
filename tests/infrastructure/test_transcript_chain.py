@@ -81,6 +81,36 @@ def test_no_captions_ends_the_search():
     assert second.calls == 0
 
 
+def test_no_captions_runs_an_explicit_local_fallback():
+    absent = Source(no_captions())
+    local = Source(available("local-whisper"))
+
+    result = ChainedTranscripts(
+        absent,
+        local_fallback=local,
+    ).fetch(VIDEO)
+
+    assert result.source == "local-whisper"
+    assert absent.calls == 1
+    assert local.calls == 1
+
+
+def test_private_video_never_runs_the_local_fallback():
+    private = Source(TranscriptResult(
+        availability=TranscriptAvailability.NOT_PUBLIC,
+        source="captions",
+    ))
+    local = Source(available("local-whisper"))
+
+    result = ChainedTranscripts(
+        private,
+        local_fallback=local,
+    ).fetch(VIDEO)
+
+    assert result.availability is TranscriptAvailability.NOT_PUBLIC
+    assert local.calls == 0
+
+
 def test_a_private_video_ends_the_search_too():
     private = Source(TranscriptResult(
         availability=TranscriptAvailability.NOT_PUBLIC, source="a"))

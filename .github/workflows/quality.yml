@@ -1,0 +1,60 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Python ${{ matrix.python-version }} on Windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -e ".[verify,transcripts,quality]"
+
+      - name: Failure-class lint
+        run: python -m ruff check src tests tools
+
+      - name: Privacy audit
+        run: python tools/privacy_audit.py
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: Transcript provider import smoke
+        run: python -c "import youtube_transcript_api, yt_dlp"
+
+      - name: Install and import local Whisper provider
+        if: matrix.python-version == '3.12'
+        run: |
+          python -m pip install -e ".[local-transcription]"
+          python -c "import faster_whisper"
+
+      - name: Two-run determinism
+        if: matrix.python-version == '3.12'
+        run: python tools/verify_two_runs.py
+
+      - name: Clean wheel installation
+        if: matrix.python-version == '3.12'
+        run: python tools/verify_clean_install.py

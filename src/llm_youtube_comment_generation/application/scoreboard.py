@@ -55,7 +55,9 @@ def handle(
     history,
     youtube,
     events,
+    operator_channel_id: str,
     max_comments: int = 2000,
+    max_replies_per_thread: int = 100,
 ) -> OperationResult:
     result = OperationResult()
     events.emit(ProgressEvent(EventKind.STARTED, step="scoreboard",
@@ -66,23 +68,31 @@ def handle(
         drafts = [d for d in drafts if d.get("video_id") == video_id]
 
     outcomes: list[RetrievalOutcome] = []
-    posted: list[dict[str, Any]] = []
+    scanned: list[dict[str, Any]] = []
 
     if video_id and drafts:
         page = youtube.comment_threads(video_id, order="time",
                                        maximum=max_comments)
-        posted.extend(page.comments)
+        scanned.extend(page.comments)
         outcomes.append(page.outcome)
         for comment in list(page.comments):
             if (comment.get("total_reply_count") or 0) > 0:
-                thread = youtube.replies(comment["comment_id"], maximum=1000)
-                posted.extend(thread.comments)
+                thread = youtube.replies(
+                    comment["comment_id"],
+                    maximum=max_replies_per_thread,
+                )
+                scanned.extend(thread.comments)
                 outcomes.append(thread.outcome)
+
+    posted = [
+        item for item in scanned
+        if item.get("author_channel_id") == operator_channel_id
+    ]
 
     retrieval = RetrievalOutcome(
         status=_worst(outcomes),
-        retrieved=len(posted),
-        requests_used=getattr(youtube, "requests_used", 0),
+        retrieved=len(scanned),
+        api_operations_used=getattr(youtube, "api_operations_used", 0),
         notes=tuple(note for outcome in outcomes for note in outcome.notes),
     )
 

@@ -33,6 +33,23 @@ from .worker import BackgroundJob
 LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class CommentRun:
+    """The packet plus the canonical run context that produced it."""
+
+    packet: Any
+    video: dict[str, Any]
+    artifacts: Any
+    packet_path: str
+    run_record: dict[str, Any]
+
+    @property
+    def text(self) -> str:
+        """Compatibility surface used by the window's packet preview."""
+
+        return str(getattr(self.packet, "text", "") or "")
+
+
 class JobEvents:
     """An event sink that reports to the window instead of the console.
 
@@ -94,6 +111,7 @@ def build_comment(
         variations=options.registers_for("comment"),
         dials=options.dial_values(),
         max_comments=max(options.max_top, options.max_recent) or 500,
+        max_replies_per_thread=options.max_replies,
         packet_characters=options.packet_characters,
         explicit_length=_length(options),
         allow_no_transcript=True,
@@ -117,13 +135,30 @@ def build_comment(
     )
 
     packet = result.value["packet"]
+    run_record = dict(result.value.get("run") or {})
+    root = getattr(artifacts, "root", "")
+    packet_path = str(root / build_comment_packet.PACKET_FILENAME) if hasattr(
+        root, "__truediv__"
+    ) else (
+        f"{str(root).rstrip('/')}/{build_comment_packet.PACKET_FILENAME}"
+        if root else build_comment_packet.PACKET_FILENAME
+    )
     for warning in result.warnings:
         job.say(f"{warning.code.value}: {warning.message}")
     job.say(
         f"Wrote {len(packet):,} characters to "
         f"{getattr(artifacts, 'root', 'the run directory')}", 1.0
     )
-    return packet
+    return CommentRun(
+        packet=packet,
+        video={
+            "video_id": str(run_record.get("video_id") or command.video_id),
+            "title": str(run_record.get("video_title") or ""),
+        },
+        artifacts=artifacts,
+        packet_path=packet_path,
+        run_record=run_record,
+    )
 
 
 @dataclass
@@ -139,6 +174,7 @@ class ReplyRun:
     session: Any
     triage_packet: str = ""
     people: tuple[str, ...] = ()
+    receipt: dict[str, Any] | None = None
 
 
 def prepare_replies(
@@ -171,7 +207,7 @@ def prepare_replies(
     found = scan(
         video=options.video,
         handle=options.my_handle,
-        max_comments=options.max_top or 3000,
+        max_comments=options.reply_scan_comments,
         youtube=ports["youtube"],
         events=events,
         clock=clock,
@@ -185,12 +221,13 @@ def prepare_replies(
     transcript = ports["transcripts"].fetch(found.video_id)
     job.check_cancelled()
 
+    artifacts = artifacts_for(found.video_id, options.output_directory)
     session = session_factory(
         found=found,
-        waiting=found.waiting,
+        waiting=found.waiting[:options.guided_limit],
         transcript=transcript,
         templates=templates,
-        artifacts=artifacts_for(found.video_id, options.output_directory),
+        artifacts=artifacts,
         events=events,
         registers=options.registers_for("reply"),
         dials=options.dial_values(),
@@ -210,6 +247,28 @@ def prepare_replies(
         session=session,
         triage_packet=triage,
         people=tuple(getattr(c, "author", "") for c in found.waiting),
+        receipt={
+            "video": dict(found.video),
+            "total": found.total,
+            "waiting": len(found.waiting),
+            "api_operations_used": int(
+                getattr(found, "api_operations_used", 0) or 0
+            ),
+            "transcript": {
+                "availability": getattr(
+                    getattr(transcript, "availability", "available"),
+                    "value",
+                    str(getattr(transcript, "availability", "available")),
+                ),
+                "source": str(getattr(transcript, "source", "") or ""),
+                "language": str(getattr(transcript, "language", "") or ""),
+                "entries": len(getattr(transcript, "entries", ()) or ()),
+                "detail": str(getattr(transcript, "detail", "") or ""),
+            },
+            "registers": list(options.registers_for("reply")),
+            "dials": options.dial_values(),
+            "output": str(getattr(artifacts, "root", "") or ""),
+        },
     )
 
 

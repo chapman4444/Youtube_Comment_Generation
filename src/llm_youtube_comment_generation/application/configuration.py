@@ -44,6 +44,9 @@ PRECEDENCE = (
 
 DEFAULTS: dict[str, Any] = {
     "output_directory": "output",
+    # Empty is resolved at the composition boundary to the operating
+    # system's private per-user application-data directory.
+    "state_directory": "",
     "packet_characters": DEFAULT_PACKET_CHARACTERS,
     "max_comments": 500,
     "max_replies_per_thread": 100,
@@ -79,6 +82,7 @@ DEFAULTS: dict[str, Any] = {
 # reading an environment variable somebody else already uses.
 ENVIRONMENT_KEYS: dict[str, str] = {
     "output_directory": "YTCOMMENT_OUTPUT_DIR",
+    "state_directory": "YTCOMMENT_STATE_DIR",
     "packet_characters": "YTCOMMENT_PACKET_CHARACTERS",
     "max_comments": "YTCOMMENT_MAX_COMMENTS",
     "log_level": "YTCOMMENT_LOG_LEVEL",
@@ -205,6 +209,12 @@ def validate(resolved: Mapping[str, Resolved]) -> None:
         )
     if resolved["max_comments"].value < 1:
         raise ConfigurationError("max_comments must be at least 1.")
+    if resolved["reply_scan_comments"].value < 1:
+        raise ConfigurationError("reply_scan_comments must be at least 1.")
+    if resolved["max_replies_per_thread"].value < 1:
+        raise ConfigurationError(
+            "max_replies_per_thread must be at least 1."
+        )
     if resolved["output_format"].value not in ("human", "json"):
         raise ConfigurationError(
             f"output_format must be human or json, got "
