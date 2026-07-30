@@ -25,7 +25,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from ..domain.extraction import extract_hardened_final, looks_like_packet_text
+from ..domain.extraction import (
+    comment_answer_identification_problem,
+    extract_hardened_final,
+    looks_like_packet_text,
+)
 from ..domain.statuses import OperationResult, OperationStatus
 from ..domain.workflow import (
     Intent,
@@ -36,6 +40,11 @@ from ..domain.workflow import (
     reject_answer,
 )
 from ..ports.events import EventKind, ProgressEvent
+from .debug_build import (
+    DEBUG_BUNDLE_FILENAME,
+    DEBUG_RESPONSE_FILENAME,
+    render_debug_bundle,
+)
 
 DRAFT_FILENAME = "comment_drafts.md"
 
@@ -66,9 +75,13 @@ class CommentSession:
     history: Any = None
     clipboard: Any = None
     events: Any = None
+    debug_build: bool = False
+    debug_settings: dict[str, Any] = field(default_factory=dict)
+    run_record: dict[str, Any] = field(default_factory=dict)
 
     state: WorkflowState = field(default_factory=WorkflowState)
     accepted: list[AcceptedComment] = field(default_factory=list)
+    debug_response: str = ""
 
     def start(self) -> WorkflowState:
         """Move to "the packet is ready", which is where this begins.
@@ -121,6 +134,22 @@ class CommentSession:
                        "that paste was the packet itself")
             return result
 
+        identification_problem = comment_answer_identification_problem(
+            text,
+            video_title=str(self.video.get("title", "")),
+            video_id=str(self.video.get("video_id", "")),
+        )
+        if identification_problem:
+            reject_answer(self.state, identification_problem)
+            result.status = OperationStatus.REFUSED
+            result.value = self.state
+            self._emit(
+                EventKind.WARNING,
+                "comment",
+                "the required Video line is malformed",
+            )
+            return result
+
         draft = extract_hardened_final(text)
         if not draft:
             reject_answer(
@@ -134,6 +163,8 @@ class CommentSession:
             return result
 
         accept_answer(self.state, draft)
+        if self.debug_build:
+            self.debug_response = text
         self.accepted.append(AcceptedComment(
             draft=draft,
             video_id=str(self.video.get("video_id", "")),
@@ -205,12 +236,28 @@ class CommentSession:
         self._save()
         return added
 
+    def debug_bundle(self) -> str:
+        """The shareable diagnostic record for this build, if requested."""
+
+        if not self.debug_build:
+            return ""
+        return render_debug_bundle(
+            settings=self.debug_settings,
+            run=self.run_record,
+            packet_text=self.packet_text,
+            response_text=self.debug_response,
+            draft=self.accepted[-1].draft if self.accepted else "",
+        )
+
     # -- internals -------------------------------------------------------
 
     def _save(self) -> None:
         if self.artifacts is None or not self.accepted:
             return
         self.artifacts.stage(DRAFT_FILENAME, render_drafts(self))
+        if self.debug_build and self.debug_response:
+            self.artifacts.stage(DEBUG_RESPONSE_FILENAME, self.debug_response)
+            self.artifacts.stage(DEBUG_BUNDLE_FILENAME, self.debug_bundle())
         self.artifacts.commit()
 
     def _emit(self, kind: EventKind, step: str, message: str) -> None:

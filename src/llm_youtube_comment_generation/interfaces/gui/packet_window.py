@@ -161,6 +161,7 @@ class PacketWindow:
         self.custom_length = tk.StringVar(value=self.options.custom_length)
         self.length_hint = tk.StringVar(value=self.options.length_hint())
         self.length_error = tk.StringVar(value="")
+        self.debug_build = tk.BooleanVar(value=False)
         self.run_receipt = tk.StringVar(value="")
         self.approach_summary = tk.StringVar(value="")
         self.approach_filter = tk.StringVar(value="")
@@ -217,6 +218,10 @@ class PacketWindow:
         self.middle_panes = middle
 
         self._build_bottom()
+
+    def _tip(self, widget: tk.Misc, text: str | Callable[[], str]) -> None:
+        provider = text if callable(text) else (lambda value=text: value)
+        self._tooltips.append(Tooltip(widget, provider))
 
     def _apply_initial_geometry(self) -> None:
         saved = str(self.options.window_geometry or "").strip()
@@ -281,15 +286,27 @@ class PacketWindow:
         self.video_url_label.grid(
             row=0, column=1, sticky="ew", padx=(10, 6)
         )
+        self._tip(
+            self.video_url_label,
+            "The YouTube video currently selected for the next build.",
+        )
 
         self.paste_button = ttk.Button(
             bar, text="Paste video", command=self.paste_video
         )
         self.paste_button.grid(row=0, column=2, padx=(0, 6))
+        self._tip(
+            self.paste_button,
+            "Select the YouTube link or video ID currently on the clipboard.",
+        )
         self.clear_video_button = ttk.Button(
             bar, text="Clear video", command=self.clear_video
         )
         self.clear_video_button.grid(row=0, column=3, padx=(0, 6))
+        self._tip(
+            self.clear_video_button,
+            "Clear only the selected video and its current packet.",
+        )
         self.clip_chip = ttk.Label(bar, textvariable=self.clip_label,
                                    foreground="#4a4a4a")
         self.clip_chip.grid(row=1, column=1, columnspan=3, sticky="e")
@@ -297,6 +314,58 @@ class PacketWindow:
                                      command=self.use_clipboard,
                                      state="disabled")
         self.use_button.grid(row=2, column=2, columnspan=2, sticky="e")
+        self._tip(
+            self.use_button,
+            "Use the detected clipboard video. If another video is selected, "
+            "this replaces it.",
+        )
+
+        workflow = ttk.Frame(bar)
+        workflow.grid(row=2, column=1, sticky="w", pady=(4, 0))
+        self.build_button = ttk.Button(
+            workflow,
+            text="Build",
+            command=self.build_packet,
+        )
+        self.build_button.pack(side="left")
+        self.stop_button = ttk.Button(
+            workflow,
+            text="Stop",
+            command=self.stop_build,
+            state="disabled",
+        )
+        self.stop_button.pack(side="left", padx=(6, 0))
+        self.reset_button = ttk.Button(
+            workflow,
+            text="Reset",
+            command=self.reset_all,
+        )
+        self.reset_button.pack(side="left", padx=(14, 0))
+        self.debug_build_check = ttk.Checkbutton(
+            workflow,
+            text="Debug build",
+            variable=self.debug_build,
+            command=self.refresh,
+        )
+        self.debug_build_check.pack(side="left", padx=(14, 0))
+        self._tip(
+            self.build_button,
+            "Retrieve the selected video evidence, create the packet, and "
+            "copy it to the clipboard.",
+        )
+        self._tip(
+            self.stop_button,
+            "Stop the active retrieval or transcription at the next safe point.",
+        )
+        self._tip(
+            self.reset_button,
+            "Return the whole window to its opening state and clear every tab.",
+        )
+        self._tip(
+            self.debug_build_check,
+            "For this one build, add a diagnostic request and save a shareable "
+            "bundle with safe settings, the packet, and the full model response.",
+        )
 
     def _build_left(self, parent: ttk.Frame) -> ttk.Frame:
         left = ttk.Frame(parent, width=LEFT_WIDTH)
@@ -306,18 +375,39 @@ class PacketWindow:
         modes = ttk.Frame(left)
         modes.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         self.mode_bar = modes
+        self.mode_buttons: list[ttk.Radiobutton] = []
         for text, value in (("Comment", "comment"), ("Reply", "reply")):
-            ttk.Radiobutton(modes, text=text, value=value, variable=self.mode,
-                            command=self._mode_changed).pack(
-                                side="left", padx=(0, 12))
+            button = ttk.Radiobutton(
+                modes,
+                text=text,
+                value=value,
+                variable=self.mode,
+                command=self._mode_changed,
+            )
+            button.pack(side="left", padx=(0, 12))
+            self.mode_buttons.append(button)
+            self._tip(
+                button,
+                "Build a new top-level comment."
+                if value == "comment"
+                else "Find replies to your comments and draft responses.",
+            )
         self.reset_options_button = ttk.Button(
             modes, text="Reset writing options", command=self.reset_options
         )
         self.reset_options_button.pack(side="right")
+        self._tip(
+            self.reset_options_button,
+            "Reset only approaches, writing choices, and length.",
+        )
         self.advanced_button = ttk.Button(
             modes, text="Advanced...", command=self.open_advanced
         )
         self.advanced_button.pack(side="right", padx=(0, 6))
+        self._tip(
+            self.advanced_button,
+            "Open retrieval, transcript, account, and output settings.",
+        )
 
         presets = ttk.LabelFrame(left, text="Writing preset")
         presets.grid(row=1, column=0, sticky="ew", pady=(0, 6))
@@ -333,21 +423,33 @@ class PacketWindow:
         self.preset_box.bind(
             "<<ComboboxSelected>>", lambda _event: self.apply_selected_preset()
         )
-        ttk.Button(
-            presets, text="Apply", command=self.apply_selected_preset,
-        ).grid(row=0, column=1, padx=(2, 0), pady=4)
-        ttk.Button(
-            presets, text="Save as...", command=self.save_current_preset,
-        ).grid(row=0, column=2, padx=(4, 0), pady=4)
+        self.save_preset_button = ttk.Button(
+            presets, text="Save preset...", command=self.save_current_preset,
+        )
+        self.save_preset_button.grid(
+            row=0, column=1, padx=(4, 0), pady=4
+        )
         self.delete_preset_button = ttk.Button(
             presets, text="Delete", command=self.delete_selected_preset,
         )
         self.delete_preset_button.grid(
-            row=0, column=3, padx=(4, 4), pady=4
+            row=0, column=2, padx=(4, 4), pady=4
         )
-        self._tooltips.append(Tooltip(
-            self.preset_box, self._selected_preset_help
-        ))
+        self._tip(
+            self.preset_box,
+            lambda: (
+                f"{self._selected_preset_help()} Selecting it immediately "
+                "changes the approaches, writing choices, and length."
+            ),
+        )
+        self._tip(
+            self.save_preset_button,
+            "Save the approaches, writing choices, and length currently shown.",
+        )
+        self._tip(
+            self.delete_preset_button,
+            "Delete the selected custom preset. Built-in presets are protected.",
+        )
 
         approaches = ttk.LabelFrame(left, text="Registers and approaches")
         approaches.grid(row=2, column=0, sticky="ew")
@@ -362,6 +464,10 @@ class PacketWindow:
         self.approach_search.grid(
             row=0, column=1, sticky="ew", padx=(6, 0)
         )
+        self._tip(
+            self.approach_search,
+            "Filter the approach list by name, category, or description.",
+        )
         self.approach_filter.trace_add(
             "write", lambda *_args: self._render_approaches()
         )
@@ -369,7 +475,11 @@ class PacketWindow:
         canvas_frame.grid(row=1, column=0, sticky="ew", padx=4, pady=(4, 0))
         canvas_frame.columnconfigure(0, weight=1)
         self.approach_canvas = tk.Canvas(
-            canvas_frame, height=190, highlightthickness=0, width=400
+            canvas_frame,
+            height=190,
+            highlightthickness=0,
+            width=400,
+            yscrollincrement=20,
         )
         approach_scroll = ttk.Scrollbar(
             canvas_frame, orient="vertical", command=self.approach_canvas.yview
@@ -377,6 +487,9 @@ class PacketWindow:
         self.approach_canvas.configure(yscrollcommand=approach_scroll.set)
         self.approach_canvas.grid(row=0, column=0, sticky="ew")
         self._bind_approach_wheel(self.approach_canvas)
+        self._bind_approach_wheel(approaches)
+        self._bind_approach_wheel(canvas_frame)
+        self._bind_approach_wheel(approach_scroll)
         approach_scroll.grid(row=0, column=1, sticky="ns")
         self.approach_frame = ttk.Frame(self.approach_canvas)
         self._bind_approach_wheel(self.approach_frame)
@@ -404,10 +517,15 @@ class PacketWindow:
         ).grid(row=2, column=0, sticky="ew", padx=4, pady=(2, 0))
         summary_buttons = ttk.Frame(approaches)
         summary_buttons.grid(row=3, column=0, sticky="ew", padx=4, pady=(2, 0))
-        ttk.Button(
+        self.clear_approaches_button = ttk.Button(
             summary_buttons, text="Clear selections",
             command=self.clear_custom_approaches,
-        ).pack(side="left")
+        )
+        self.clear_approaches_button.pack(side="left")
+        self._tip(
+            self.clear_approaches_button,
+            "Clear every checked approach and return to the default set.",
+        )
         ttk.Label(
             approaches, textvariable=self.resolution_summary,
             foreground="#805000", wraplength=LEFT_WIDTH - 30, justify="left",
@@ -490,23 +608,10 @@ class PacketWindow:
     def _build_right(self, parent: ttk.Frame) -> ttk.Frame:
         right = ttk.Frame(parent)
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(1, weight=1)
-
-        toolbar = ttk.Frame(right)
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        self.build_button = ttk.Button(
-            toolbar, text="Build and copy packet",
-            command=self.build_packet,
-        )
-        self.build_button.pack(side="left")
-        self.stop_button = ttk.Button(
-            toolbar, text="Stop", command=self.stop_build,
-            state="disabled",
-        )
-        self.stop_button.pack(side="left", padx=(6, 0))
+        right.rowconfigure(0, weight=1)
 
         self.output_tabs = ttk.Notebook(right)
-        self.output_tabs.grid(row=1, column=0, sticky="nsew")
+        self.output_tabs.grid(row=0, column=0, sticky="nsew")
 
         activity_tab = ttk.Frame(self.output_tabs, padding=PADDING)
         activity_tab.columnconfigure(0, weight=1)
@@ -537,6 +642,11 @@ class PacketWindow:
         log_scroll.grid(row=1, column=1, sticky="ns")
         self.log.configure(yscrollcommand=log_scroll.set)
         self._add_text_context_menu(self.log)
+        self._tip(
+            self.log,
+            "Build progress and retrieval details. Select text and right-click "
+            "to copy it.",
+        )
 
         self._add_evidence_tab(
             "metadata",
@@ -581,6 +691,10 @@ class PacketWindow:
             yscrollcommand=transcript_scroll.set
         )
         self._add_text_context_menu(self.transcript_preview)
+        self._tip(
+            self.transcript_preview,
+            "The retrieved or locally transcribed video transcript.",
+        )
         self.evidence_views["transcript"] = self.transcript_preview
         transcript_actions = ttk.Frame(transcript_tab)
         transcript_actions.grid(row=2, column=0, sticky="ew", pady=(6, 0))
@@ -591,6 +705,10 @@ class PacketWindow:
             state="disabled",
         )
         transcript_copy.pack(side="left")
+        self._tip(
+            transcript_copy,
+            "Copy the transcript shown in this tab.",
+        )
         self.evidence_copy_buttons["transcript"] = transcript_copy
         self.transcript_api_button = ttk.Button(
             transcript_actions,
@@ -599,6 +717,10 @@ class PacketWindow:
             state="disabled",
         )
         self.transcript_api_button.pack(side="left", padx=(6, 0))
+        self._tip(
+            self.transcript_api_button,
+            "Retry using YouTube's published transcript service only.",
+        )
         self.ytdlp_captions_button = ttk.Button(
             transcript_actions,
             text="2. yt-dlp captions",
@@ -606,6 +728,10 @@ class PacketWindow:
             state="disabled",
         )
         self.ytdlp_captions_button.pack(side="left", padx=(6, 0))
+        self._tip(
+            self.ytdlp_captions_button,
+            "Retry published captions using yt-dlp only.",
+        )
         self.saved_transcript_button = ttk.Button(
             transcript_actions,
             text="3. Saved transcript",
@@ -613,6 +739,10 @@ class PacketWindow:
             state="disabled",
         )
         self.saved_transcript_button.pack(side="left", padx=(6, 0))
+        self._tip(
+            self.saved_transcript_button,
+            "Reuse a transcript already saved for this video.",
+        )
         self.run_whisper_button = ttk.Button(
             transcript_actions,
             text="4. Whisper",
@@ -620,6 +750,11 @@ class PacketWindow:
             state="disabled",
         )
         self.run_whisper_button.pack(side="left", padx=(6, 0))
+        self._tip(
+            self.run_whisper_button,
+            "Download the audio and create a local Whisper transcript within "
+            "the limits set in Advanced.",
+        )
 
         self._add_evidence_tab(
             "comments",
@@ -630,6 +765,13 @@ class PacketWindow:
             "replies",
             "Replies",
             "All replies retained from the selected comment threads.",
+        )
+        self._add_evidence_tab(
+            "debug",
+            "Debug bundle",
+            "A privacy-safe diagnostic bundle for a Debug build. It includes "
+            "safe settings, the exact packet, and—after validation—the full "
+            "model response.",
         )
 
         packet_tab = ttk.Frame(self.output_tabs, padding=PADDING)
@@ -654,6 +796,10 @@ class PacketWindow:
         )
         self.packet_preview.grid(row=2, column=0, sticky="nsew")
         self._add_text_context_menu(self.packet_preview)
+        self._tip(
+            self.packet_preview,
+            "The complete generated packet sent to your model.",
+        )
         packet_actions = ttk.Frame(packet_tab)
         packet_actions.grid(row=3, column=0, sticky="ew", pady=(6, 0))
         self.packet_copy_button = ttk.Button(
@@ -661,6 +807,10 @@ class PacketWindow:
             state="disabled",
         )
         self.packet_copy_button.pack(side="left")
+        self._tip(
+            self.packet_copy_button,
+            "Copy the generated packet to the clipboard again.",
+        )
         self.packet_count = ttk.Label(packet_actions, text="")
         self.packet_count.pack(side="right")
 
@@ -683,10 +833,25 @@ class PacketWindow:
                                      justify="left", foreground="#444444")
         self.card_detail.grid(row=1, column=0, sticky="ew", pady=(4, 6))
 
-        self.said = tk.Text(card, height=4, width=35, wrap="word", state="disabled",
-                            relief="flat", background="#f6f6f6")
-        self.said.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        saved = ttk.LabelFrame(card, text="Saved final draft")
+        saved.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        saved.columnconfigure(0, weight=1)
+        self.said = tk.Text(
+            saved,
+            height=4,
+            width=35,
+            wrap="word",
+            state="disabled",
+            relief="flat",
+            background="#f6f6f6",
+        )
+        self.said.grid(row=0, column=0, sticky="nsew")
         self._add_text_context_menu(self.said)
+        self._tip(
+            self.said,
+            "The final draft appears here after it passes validation and is saved.",
+        )
+        self._set_text(self.said, "No answer has been saved yet.")
 
         answer = ttk.LabelFrame(card, text="Model answer")
         answer.grid(row=3, column=0, sticky="nsew", pady=(0, 6))
@@ -702,6 +867,11 @@ class PacketWindow:
         answer_scroll.grid(row=0, column=1, sticky="ns")
         self.answer_input.configure(yscrollcommand=answer_scroll.set)
         self._add_text_context_menu(self.answer_input)
+        self._tip(
+            self.answer_input,
+            "Paste the model's complete answer here, then click Validate and "
+            "save answer.",
+        )
         self.answer_input.bind("<KeyRelease>", lambda _event: self.refresh())
         self.answer_input.bind(
             "<Control-Return>", lambda _event: self.do_primary()
@@ -711,13 +881,25 @@ class PacketWindow:
         actions.grid(row=4, column=0, sticky="ew")
         self.primary = ttk.Button(actions, text="", command=self.do_primary)
         self.primary.pack(side="left")
+        self._tip(
+            self.primary,
+            "Check the complete model answer and save its Hardened final draft.",
+        )
         self.paste_answer_button = ttk.Button(
-            actions, text="Paste clipboard", command=self.paste_answer
+            actions, text="Paste answer", command=self.paste_answer
         )
         self.paste_answer_button.pack(side="left", padx=(6, 0))
+        self._tip(
+            self.paste_answer_button,
+            "Paste the clipboard into the model-answer box without saving it.",
+        )
         self.copy_button = ttk.Button(actions, text="", command=self.do_copy,
                                       state="disabled")
         self.copy_button.pack(side="left", padx=(6, 0))
+        self._tip(
+            self.copy_button,
+            "Copy the current packet to the clipboard again.",
+        )
         self.record_button = ttk.Button(
             actions,
             text="Record as posted",
@@ -725,19 +907,27 @@ class PacketWindow:
             state="disabled",
         )
         self.record_button.pack(side="left", padx=(6, 0))
-        self.cancel_button = ttk.Button(
-            actions, text="Stop", command=self.stop_build, state="disabled"
+        self._tip(
+            self.record_button,
+            "After you manually post the saved draft on YouTube, record that "
+            "fact in local history.",
         )
-        self.cancel_button.pack(side="right")
+        self.cancel_button = self.stop_button
 
         footer = ttk.Frame(card)
         footer.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         self.back_button = ttk.Button(footer, text="Back", command=self.go_back)
         self.back_button.pack(side="left")
+        self._tip(
+            self.back_button,
+            "Return to the previous person in a reply workflow.",
+        )
         self.skip_button = ttk.Button(footer, text="Skip", command=self.skip)
         self.skip_button.pack(side="left", padx=(6, 0))
-        ttk.Button(footer, text="Start over",
-                   command=self.start_over).pack(side="left", padx=(6, 0))
+        self._tip(
+            self.skip_button,
+            "Skip the current person without saving a reply.",
+        )
         self.progress_label = ttk.Label(footer, text="", foreground="#666666")
         self.progress_label.pack(side="right")
         self.packet_size_label = ttk.Label(
@@ -784,6 +974,10 @@ class PacketWindow:
         scroll.grid(row=1, column=1, sticky="ns")
         view.configure(yscrollcommand=scroll.set)
         self._add_text_context_menu(view)
+        self._tip(
+            view,
+            f"The retrieved {title.lower()} for the selected video.",
+        )
         actions = ttk.Frame(tab)
         actions.grid(row=2, column=0, sticky="ew", pady=(6, 0))
         button = ttk.Button(
@@ -793,6 +987,10 @@ class PacketWindow:
             state="disabled",
         )
         button.pack(side="left")
+        self._tip(
+            button,
+            f"Copy the {title.lower()} shown in this tab.",
+        )
         self.evidence_views[key] = view
         self.evidence_copy_buttons[key] = button
 
@@ -818,15 +1016,41 @@ class PacketWindow:
         self.transcript_notice_label.grid(
             row=0, column=1, sticky="ew", padx=(3, 10)
         )
+        self._tip(
+            self.transcript_indicator,
+            "Green means a transcript is ready, yellow means Whisper is "
+            "working, red means no transcript is available, and gray means "
+            "it has not been checked.",
+        )
+        self._tip(
+            self.transcript_notice_label,
+            lambda: self.transcript_notice.get(),
+        )
 
-        ttk.Label(bottom, text="Progress:").grid(
+        self.progress_caption = ttk.Label(bottom, text="Progress:")
+        self.progress_caption.grid(
             row=0, column=2, sticky="w"
         )
-        ttk.Progressbar(bottom, orient="horizontal", mode="determinate",
-                        maximum=1.0, variable=self.progress_value).grid(
-            row=0, column=3, sticky="ew", padx=(8, 8))
-        ttk.Label(bottom, textvariable=self.status).grid(row=0, column=4,
-                                                         sticky="e")
+        self.progress_bar = ttk.Progressbar(
+            bottom,
+            orient="horizontal",
+            mode="determinate",
+            maximum=1.0,
+            variable=self.progress_value,
+        )
+        self.progress_bar.grid(
+            row=0, column=3, sticky="ew", padx=(8, 8)
+        )
+        self.status_label = ttk.Label(bottom, textvariable=self.status)
+        self.status_label.grid(row=0, column=4, sticky="e")
+        self._tip(
+            self.progress_bar,
+            "Estimated progress for the active retrieval or transcription.",
+        )
+        self._tip(
+            self.status_label,
+            lambda: self.status.get(),
+        )
 
     # -- state -------------------------------------------------------------
 
@@ -844,6 +1068,13 @@ class PacketWindow:
 
     def _clear_transcript_preview(self) -> None:
         self._set_evidence_view("transcript", "")
+
+    @staticmethod
+    def _set_text(widget: tk.Text, text: str) -> None:
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", text)
+        widget.configure(state="disabled")
 
     def _set_evidence_view(self, key: str, text: str) -> None:
         view = self.evidence_views.get(key)
@@ -1114,7 +1345,7 @@ class PacketWindow:
             direction = 1
         else:
             return "break"
-        self.approach_canvas.yview_scroll(direction, "units")
+        self.approach_canvas.yview_scroll(direction * 3, "units")
         return "break"
         self._apply_resolved_approaches()
         self._update_approach_state()
@@ -1233,6 +1464,7 @@ class PacketWindow:
         self.options.video = self.video.get().strip()
         self.options.length = self.length.get()
         self.options.custom_length = self.custom_length.get()
+        self.options.debug_build = bool(self.debug_build.get())
         self._store_approaches()
         return self.options
 
@@ -1311,34 +1543,49 @@ class PacketWindow:
             self.card_title.configure(text=view.title)
             self.card_detail.configure(text=view.detail)
             self.primary.configure(text=view.primary_label)
-            if self.sequence.step in (Step.TRIAGE, Step.PEOPLE) and typed_answer:
-                self.primary.configure(text="Use pasted answer")
+            if self.sequence.step is Step.TRIAGE:
+                self.primary.configure(text="Use selected people")
+            elif self.sequence.step is Step.PEOPLE:
+                self.primary.configure(text="Validate and save reply")
             self.copy_button.configure(
-                text="Copy again" if self.last_packet else (view.copy_label or "Copy")
+                text=(
+                    "Copy packet again"
+                    if self.last_packet
+                    else (view.copy_label or "Copy packet")
+                )
             )
             self.progress_label.configure(text=view.progress)
             self._enable(self.back_button, view.can_go_back)
             self._enable(self.skip_button, view.can_skip)
         else:
             waiting = getattr(self, "comment_session", None) is not None
+            saved = bool(
+                waiting
+                and getattr(self.comment_session, "accepted", ())
+            )
             offer = getattr(self, "_offer", None)
             self.card_title.configure(
-                text=("Paste the answer" if waiting
+                text=("Answer saved" if saved else
+                      "Paste the model answer, then save it" if waiting
                       else "Build a comment packet"))
             self.card_detail.configure(
-                text=("The packet is ready. Copy it, paste it into your "
-                      "model, then bring the answer back here. Accepted "
-                      "drafts are saved; nothing is posted."
+                text=("The final draft is shown below. Nothing was posted. "
+                      "Use Record as posted only after you post it yourself."
+                      if saved else
+                      "1. Paste the complete model answer into the box. "
+                      "2. Click Validate and save answer. The Hardened final "
+                      "will appear above after it is saved; nothing is posted."
                       if waiting else
                       "Builds from this video's transcript and comment "
                       "section. The packet lands on your clipboard.")
             )
             self.primary.configure(
-                text=(("Use pasted answer" if typed_answer
-                       else "Use the answer on the clipboard") if waiting
-                      else "Build packet"))
+                text=("Validate and save answer" if waiting else "Build")
+            )
             self.copy_button.configure(
-                text="Copy again" if self.last_packet else "Copy packet"
+                text=(
+                    "Copy packet again" if self.last_packet else "Copy packet"
+                )
             )
             self.progress_label.configure(text="")
             self._enable(self.back_button, False)
@@ -1372,7 +1619,7 @@ class PacketWindow:
             )
             offer = getattr(self, "_offer", None)
             self._enable(self.primary,
-                         bool(typed_answer or (
+                         not saved and bool(typed_answer or (
                              offer is not None and offer.offered
                          )))
             self._enable(self.copy_button, bool(self.last_packet))
@@ -1521,14 +1768,18 @@ class PacketWindow:
         """Take what the chip is offering. Only ever pressed by hand."""
 
         offer = getattr(self, "_offer", None)
-        if offer is None or not offer.offered:
+        if offer is None:
             return
         if offer.holding.name == "VIDEO":
+            if not offer.payload:
+                return
             self._suppressed_clipboard_video = ""
             self.video.set(offer.payload)
             self.video_url.set(watch_url(offer.payload))
-        else:
+        elif offer.offered:
             self.say(f"Took an answer of {len(offer.payload):,} characters.")
+        else:
+            return
         self.refresh()
 
     def _answer_text(self) -> str:
@@ -1540,6 +1791,13 @@ class PacketWindow:
         if hasattr(self, "answer_input"):
             self.answer_input.delete("1.0", "end")
 
+    def _show_saved_draft(self, text: str = "") -> None:
+        if hasattr(self, "said"):
+            self._set_text(
+                self.said,
+                text or "No answer has been saved yet.",
+            )
+
     def paste_answer(self) -> None:
         """Paste explicitly into the visible answer field."""
 
@@ -1549,7 +1807,10 @@ class PacketWindow:
             return
         self.answer_input.delete("1.0", "end")
         self.answer_input.insert("1.0", text)
-        self.say(f"Pasted {len(text):,} characters into the answer box.")
+        self.say(
+            f"Pasted {len(text):,} characters. "
+            "Click Validate and save answer."
+        )
         self.refresh()
 
     def paste_video(self) -> None:
@@ -1577,6 +1838,7 @@ class PacketWindow:
         )
         self.video.set("")
         self.video_url.set("")
+        self.clip_label.set("Clipboard: not read yet")
         self.comment_session = None
         self.session = None
         self.sequence = ReplySequence()
@@ -1676,6 +1938,7 @@ class PacketWindow:
             self.say("This packet already matches the current video and settings.")
             return
         snapshot = copy.deepcopy(options)
+        snapshot._activity_preset = self.preset_name.get()
         started = self.job.start(
             lambda job: self._build_packet(snapshot, mode, job)
         )
@@ -1732,6 +1995,10 @@ class PacketWindow:
             return
 
         self.sequence.accepted = len(session.accepted)
+        if session.accepted:
+            self._show_saved_draft(
+                str(getattr(session.accepted[-1], "draft", "") or "")
+            )
         self._clear_answer()
         self.say(f"Saved. {len(session.accepted)} so far.")
         self.sequence.next_person()
@@ -1764,6 +2031,13 @@ class PacketWindow:
             )
         self._show_evidence(getattr(packet, "evidence", {}) or {})
         self._show_transcript(transcript)
+        debug_packet = str(getattr(packet, "debug_packet", "") or "")
+        if debug_packet:
+            self._set_evidence_view("debug", debug_packet)
+        else:
+            self._set_evidence_view(
+                "debug", "Debug build was not selected for this packet."
+            )
         if self._comment_session_factory is None:
             return
         try:
@@ -1801,8 +2075,16 @@ class PacketWindow:
             return
 
         session.finish()
+        if session.accepted:
+            self._show_saved_draft(
+                str(getattr(session.accepted[-1], "draft", "") or "")
+            )
+        if getattr(session, "debug_build", False):
+            self._set_evidence_view("debug", session.debug_bundle())
         self._clear_answer()
-        self.say(f"Draft saved. {len(session.accepted)} so far.")
+        self.say(
+            f"Draft saved. {len(session.accepted)} so far. Nothing was posted."
+        )
         self.refresh()
 
     def _adopt_session(self, run: Any) -> None:
@@ -1943,7 +2225,7 @@ class PacketWindow:
 
         prefix = "Packet built and copied" if auto else "Copied again"
         self.say(f"{prefix}: {len(self.last_packet):,} characters.")
-        self.copy_button.configure(text="Copy again")
+        self.copy_button.configure(text="Copy packet again")
         self.refresh()
         return True
 
@@ -2059,8 +2341,60 @@ class PacketWindow:
         self._message = ""
         self.refresh()
 
+    def reset_all(self) -> None:
+        """Return the entire window to its safe opening state."""
+
+        if self.job.running:
+            self.job.cancel()
+            self._active_job_generation = -1
+        offer = read_clipboard(
+            self.read_clipboard(),
+            step=Step.BUILD,
+            packet=self.last_packet,
+        )
+        self._suppressed_clipboard_video = (
+            offer.payload if offer.holding.name == "VIDEO" else ""
+        )
+        self.options = self.options.apply_writing_preset(BUILT_IN_PRESETS[0])
+        self.options.video = ""
+        self.debug_build.set(False)
+        self.mode.set("comment")
+        self.video.set("")
+        self.video_url.set("")
+        self.length.set(self.options.length)
+        self.custom_length.set(self.options.custom_length)
+        self.approach_filter.set("")
+        for name, box in self.dial_boxes.items():
+            box.set(dial_choice_label(DIALS[name].default))
+        self._fill_approaches()
+        self.preset_name.set("Default")
+        self.comment_session = None
+        self.session = None
+        self.sequence = ReplySequence()
+        self.result = None
+        self.triage_packet = ""
+        self.current_packet = ""
+        self.last_packet = ""
+        self._pending_build_signature = ""
+        self._completed_build_signature = ""
+        self.run_receipt.set("")
+        self._set_transcript_status("unknown", "Transcript not checked yet.")
+        self._clear_evidence_views()
+        self._clear_answer()
+        self._show_saved_draft()
+        self._offer = None
+        self.progress_value.set(0.0)
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.configure(state="disabled")
+        self.output_tabs.select(self.activity_tab)
+        self._message = "Reset complete."
+        self.refresh()
+
     def reset_options(self) -> None:
-        self.options = self.options.reset_output_options()
+        self.options = self.options.apply_writing_preset(BUILT_IN_PRESETS[0])
+        self.length.set(self.options.length)
+        self.custom_length.set(self.options.custom_length)
         for name, box in self.dial_boxes.items():
             box.set(dial_choice_label(DIALS[name].default))
         self._fill_approaches()

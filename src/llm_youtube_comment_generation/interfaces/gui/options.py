@@ -29,6 +29,8 @@ the field names are its field names and not tidier ones.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from pathlib import Path
+import tempfile
 from typing import Any, Iterable, Mapping, Sequence
 
 from ...domain.packets import (
@@ -114,6 +116,31 @@ LENGTH_SUMMARIES = {
 }
 
 MIN_TARGET_WORDS = 2
+DEFAULT_OUTPUT_DIRECTORY = "output"
+
+
+def is_temporary_output_directory(value: str) -> bool:
+    """Whether a saved output path points into the disposable temp tree."""
+
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        path = Path(text).expanduser().resolve(strict=False)
+        temporary = Path(tempfile.gettempdir()).resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+    return path == temporary or temporary in path.parents
+
+
+def persistent_output_directory(value: str) -> str:
+    """Never carry a disposable test/temp output directory between launches."""
+
+    return (
+        DEFAULT_OUTPUT_DIRECTORY
+        if is_temporary_output_directory(value)
+        else str(value or "")
+    )
 
 # The default dial values intentionally render no extra prompt text, but the
 # interface still has to explain their real effect. This is the single source
@@ -179,6 +206,8 @@ class PacketOptionsModel:
     # One-run GUI override. It is deliberately not remembered: the regular
     # Build button always returns to the full fallback chain.
     transcript_route: str = "automatic"
+    # A deliberate one-run diagnostic mode. It must never be silently reused.
+    debug_build: bool = False
     whisper_model: str = "small.en"
     whisper_maximum_minutes: int = 60
     whisper_maximum_audio_mib: int = 200
@@ -370,6 +399,9 @@ class PacketOptionsModel:
 
         payload: dict[str, Any] = {name: getattr(self, name)
                                    for name in REMEMBERED}
+        payload["output_directory"] = persistent_output_directory(
+            self.output_directory
+        )
         payload["transcribe_locally"] = self.whisper_policy == "automatic"
         payload["comment_variations"] = list(self.comment_variations)
         payload["reply_variations"] = list(self.reply_variations)
@@ -407,6 +439,9 @@ class PacketOptionsModel:
                     setattr(model, name, str(value))
             except (TypeError, ValueError):
                 continue
+        model.output_directory = persistent_output_directory(
+            model.output_directory
+        )
 
         saved_policy = str(payload.get("whisper_policy") or "").strip().lower()
         if saved_policy in WHISPER_POLICIES:

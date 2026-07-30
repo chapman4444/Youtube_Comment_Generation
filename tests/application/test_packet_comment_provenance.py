@@ -107,3 +107,27 @@ def test_relevant_and_recent_sections_use_their_own_fetched_orderings(monkeypatc
     assert [item["comment_id"] for item in selection.recent] == [
         f"time{i:03}" for i in range(40)
     ]
+
+
+def test_debug_build_stages_a_diagnostic_packet_without_replacing_packet():
+    artifacts = FakeArtifactStore()
+
+    result = build_comment_packet.handle(
+        BuildCommentPacketCommand(
+            video=VIDEO,
+            debug=True,
+            debug_settings={"length": "medium", "whisper_policy": "ask"},
+        ),
+        youtube=DifferentlyOrderedYouTube(),
+        transcripts=FakeTranscriptPort(),
+        events=FakeEventSink(),
+        artifacts=artifacts,
+        templates=TEMPLATES,
+        prompt_version="test",
+    )
+
+    assert artifacts.read("packet.md") == result.value["packet"].text
+    debug_packet = artifacts.read("debug_packet.md")
+    assert "## Debug-build instructions" in debug_packet
+    assert "### Debug report" in debug_packet
+    assert result.value["debug_packet"] == debug_packet

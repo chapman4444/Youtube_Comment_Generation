@@ -145,6 +145,24 @@ def test_every_field_it_offers_is_a_real_setting(dialog):
         assert hasattr(model, name), f"{name} is not a setting"
 
 
+def test_every_advanced_control_has_help(dialog):
+    frame = dialog.top.winfo_children()[0]
+    interactive = {
+        child
+        for child in frame.winfo_children()
+        if child.winfo_class() in {
+            "TEntry",
+            "TSpinbox",
+            "TCheckbutton",
+            "TRadiobutton",
+            "TButton",
+        }
+    }
+    covered = {tooltip.widget for tooltip in dialog._tooltips}
+
+    assert interactive <= covered
+
+
 def test_a_number_field_that_will_not_parse_leaves_the_old_value(tk_root):
     """Tk raises rather than returning nonsense from an IntVar holding
     letters. Losing one field is acceptable; losing the dialog is not."""

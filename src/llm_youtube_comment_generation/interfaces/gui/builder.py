@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable
 
 from ...application import build_comment_packet
@@ -46,12 +47,14 @@ class CommentRun:
     run_record: dict[str, Any]
     transcript: Any = None
     evidence: dict[str, Any] | None = None
+    debug_packet: str = ""
+    debug_settings: dict[str, Any] | None = None
 
     @property
     def text(self) -> str:
         """Compatibility surface used by the window's packet preview."""
 
-        return str(getattr(self.packet, "text", "") or "")
+        return self.debug_packet or str(getattr(self.packet, "text", "") or "")
 
 
 class JobEvents:
@@ -73,8 +76,23 @@ class JobEvents:
         "packet": 0.92,
     }
 
-    def __init__(self, job: BackgroundJob) -> None:
+    def __init__(
+        self,
+        job: BackgroundJob,
+        *,
+        video_id: str = "",
+        preset: str = "",
+        started_at: str = "",
+    ) -> None:
         self.job = job
+        self.video_id = video_id
+        self.preset = preset
+        self.started_at = started_at
+        self._boundary_required = bool(video_id)
+        self._boundary_written = False
+        self._pending: list[
+            tuple[str, float | None, dict[str, Any]]
+        ] = []
 
     def emit(self, event: ProgressEvent) -> None:
         message = event.message
@@ -93,15 +111,59 @@ class JobEvents:
         fraction = self.FRACTIONS.get(event.step)
         if event.step == "transcribe" and event.fraction is not None:
             fraction = 0.72 + (0.2 * event.fraction)
-        self.job.say(
-            message,
-            fraction,
-            payload={"step": event.step, "data": dict(event.data)},
-        )
+        payload = {"step": event.step, "data": dict(event.data)}
+        if (
+            self._boundary_required
+            and not self._boundary_written
+            and event.step == "video_identity"
+        ):
+            self.ensure_boundary(
+                title=str(event.data.get("video_title") or "")
+            )
+        elif self._boundary_required and not self._boundary_written:
+            self._pending.append((message, fraction, payload))
+            if event.kind is EventKind.FINISHED:
+                self.ensure_boundary()
+        else:
+            self.job.say(message, fraction, payload=payload)
         # Between events is exactly where a cancel can be honoured: the
         # application is between two units of work whenever it reports one.
         if event.kind is not EventKind.FINISHED:
             self.job.check_cancelled()
+
+    def ensure_boundary(self, *, title: str = "") -> None:
+        """Write one run separator, then release its buffered opening events."""
+
+        if not self._boundary_required or self._boundary_written:
+            return
+        self.job.say(activity_run_separator(
+            video_id=self.video_id,
+            title=title or "Title unavailable",
+            started_at=self.started_at,
+            preset=self.preset,
+        ))
+        self._boundary_written = True
+        for message, fraction, payload in self._pending:
+            self.job.say(message, fraction, payload=payload)
+        self._pending.clear()
+
+
+def activity_run_separator(
+    *,
+    video_id: str,
+    title: str,
+    started_at: str,
+    preset: str,
+) -> str:
+    """A visible boundary that identifies one Activity-tab build."""
+
+    rule = "=" * 72
+    return "\n".join((
+        rule,
+        f"Build: {video_id} | {title}",
+        f"Started: {started_at} | Preset: {preset or 'Current settings'}",
+        rule,
+    ))
 
 
 def build_comment(
@@ -127,9 +189,6 @@ def build_comment(
     re-reads it off disk and the two cannot disagree about what was built.
     """
 
-    job.say("Starting.", 0.02)
-    job.check_cancelled()
-
     command = BuildCommentPacketCommand(
         video=options.video,
         variations=options.registers_for("comment"),
@@ -144,15 +203,46 @@ def build_comment(
         packet_characters=options.packet_characters,
         explicit_length=_length(options),
         allow_no_transcript=True,
+        debug=options.debug_build,
+        debug_settings={
+            "mode": "comment",
+            "selected_approaches": list(options.registers_for("comment")),
+            "dials": options.dial_values(),
+            "length": options.length,
+            "target_words": options.custom_length if options.length == "exact" else "",
+            "retrieval_limits": {
+                "relevance_comments": options.max_top,
+                "recent_comments": options.max_recent,
+                "reply_threads": options.max_threads,
+                "replies_per_thread": options.max_replies,
+            },
+            "transcript": {
+                "languages": list(options.transcript_languages),
+                "route": options.transcript_route,
+                "whisper_policy": options.whisper_policy,
+                "whisper_model": options.whisper_model,
+                "maximum_minutes": options.whisper_maximum_minutes,
+                "maximum_audio_mib": options.whisper_maximum_audio_mib,
+            },
+        },
     )
 
-    events = JobEvents(job)
-    ports = ports_factory(events)
-    job.check_cancelled()
-
-    artifacts = artifacts_for(command.video_id, options.output_directory)
+    events = JobEvents(
+        job,
+        video_id=command.video_id,
+        preset=str(getattr(options, "_activity_preset", "") or ""),
+        started_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+    )
 
     try:
+        events.emit(ProgressEvent(
+            EventKind.STARTED,
+            step="build",
+            message="Starting.",
+        ))
+        ports = ports_factory(events)
+        job.check_cancelled()
+        artifacts = artifacts_for(command.video_id, options.output_directory)
         result = build_comment_packet.handle(
             command,
             youtube=ports["youtube"],
@@ -164,13 +254,20 @@ def build_comment(
             stopwords=stopwords,
         )
     except OperationCancelled as failure:
+        events.ensure_boundary()
         # Infrastructure uses the application-level cancellation exception;
         # the GUI worker uses its own exception to emit a cancelled event
         # rather than presenting an intentional stop as a failure.
         raise Cancelled() from failure
+    except BaseException:
+        events.ensure_boundary()
+        raise
 
     packet = result.value["packet"]
     run_record = dict(result.value.get("run") or {})
+    events.ensure_boundary(
+        title=str(run_record.get("video_title") or "")
+    )
     root = getattr(artifacts, "root", "")
     packet_path = str(root / build_comment_packet.PACKET_FILENAME) if hasattr(
         root, "__truediv__"
@@ -195,6 +292,8 @@ def build_comment(
         run_record=run_record,
         transcript=result.value.get("transcript"),
         evidence=dict(result.value.get("evidence") or {}),
+        debug_packet=str(result.value.get("debug_packet") or ""),
+        debug_settings=dict(result.value.get("debug_settings") or {}),
     )
 
 

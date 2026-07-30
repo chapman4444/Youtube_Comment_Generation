@@ -11,6 +11,7 @@ import re
 
 from .sanitize import SOURCE_BOUNDARY_CLOSE, SOURCE_BOUNDARY_OPEN
 from .targeting import strip_invisible
+from .video import watch_url
 
 
 def parse_triage_selection(text: str) -> list[str]:
@@ -108,6 +109,40 @@ def extract_hardened_final(text: str) -> str:
         rest = rest[: following.start()]
 
     return clean_pasted_reply(rest)
+
+
+def comment_answer_identification_problem(
+    text: str,
+    *,
+    video_title: str,
+    video_id: str,
+) -> str:
+    """Explain an invalid required ``Video`` identification line."""
+
+    body = strip_invisible(str(text or "")).replace("\r\n", "\n")
+    expected_url = watch_url(video_id)
+    expected_line = f"**Video:** {video_title} {expected_url}"
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    if not lines:
+        return (
+            "The answer is empty. Its first line must identify the video as "
+            f"{expected_line}"
+        )
+
+    copies = body.count(expected_url)
+    if copies != 1:
+        return (
+            "The Video line must contain the YouTube URL exactly once as "
+            f"plain text; found {copies} copies. Do not wrap it in Markdown "
+            "brackets, parentheses, or link syntax."
+        )
+    if lines[0] != expected_line:
+        return (
+            "The first nonblank line must be exactly "
+            f"{expected_line}. Keep the URL as plain text with no Markdown "
+            "brackets, parentheses, or link syntax."
+        )
+    return ""
 
 
 def looks_like_packet_text(text: str, packet: str = "") -> bool:

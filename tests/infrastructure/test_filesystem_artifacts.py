@@ -277,3 +277,15 @@ def test_files_are_written_with_unix_newlines(tmp_path):
 
     raw = (tmp_path / "run" / "packet.md").read_bytes()
     assert b"\r\n" not in raw
+
+
+def test_unicode_punctuation_and_emoji_are_written_as_utf8(tmp_path):
+    text = "BAM’s response preserved the evidence. 😄\n"
+    store = FilesystemArtifactStore(tmp_path / "run")
+    store.stage("comment_drafts.md", text)
+
+    store.commit()
+
+    raw = (tmp_path / "run" / "comment_drafts.md").read_bytes()
+    assert raw == text.encode("utf-8")
+    assert raw.decode("utf-8") == text

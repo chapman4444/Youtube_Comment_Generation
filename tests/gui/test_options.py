@@ -28,6 +28,7 @@ from llm_youtube_comment_generation.interfaces.gui.options import (
     PacketOptionsModel,
     approach_choices,
     dial_help,
+    is_temporary_output_directory,
     register_choices,
 )
 from llm_youtube_comment_generation.domain.writing_presets import (
@@ -115,6 +116,13 @@ def test_every_dial_is_reported_including_the_untouched_ones():
 
     assert set(values) == set(DIALS)
     assert all(value for value in values.values())
+
+
+def test_debug_build_is_not_saved_as_a_future_default():
+    saved = model(debug_build=True).to_settings()
+
+    assert "debug_build" not in saved
+    assert PacketOptionsModel.from_settings(saved).debug_build is False
 
 
 def test_a_dial_set_to_something_it_does_not_offer_is_refused():
@@ -368,6 +376,36 @@ def test_preset_round_trip_preserves_writing_choices_only():
     assert restored.dials == before.dials
     assert restored.length == before.length
     assert restored.output_directory == "D:/personal"
+
+
+def test_a_saved_pytest_output_directory_returns_to_project_output(tmp_path):
+    saved = tmp_path / "pytest-of-Ryan" / "pytest-54" / "test_run"
+
+    restored = PacketOptionsModel.from_settings({
+        "output_directory": str(saved),
+    })
+
+    assert is_temporary_output_directory(str(saved))
+    assert restored.output_directory == "output"
+
+
+def test_a_temporary_output_directory_is_never_persisted(tmp_path):
+    model_with_temp = PacketOptionsModel(
+        output_directory=str(tmp_path / "one-run")
+    )
+
+    assert model_with_temp.to_settings()["output_directory"] == "output"
+
+
+def test_a_real_custom_output_directory_is_still_persisted():
+    model_with_custom = PacketOptionsModel(
+        output_directory="D:/YouTube runs"
+    )
+
+    assert (
+        model_with_custom.to_settings()["output_directory"]
+        == "D:/YouTube runs"
+    )
 
 
 def test_builtin_default_preset_really_resets_writing_choices():

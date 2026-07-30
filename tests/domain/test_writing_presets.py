@@ -15,10 +15,18 @@ from llm_youtube_comment_generation.interfaces.gui.options import (
 
 
 def test_built_in_presets_have_unique_valid_names():
-    assert len(BUILT_IN_PRESETS) >= 5
+    assert len(BUILT_IN_PRESETS) >= 11
     assert len({preset.key for preset in BUILT_IN_PRESETS}) == \
         len(BUILT_IN_PRESETS)
     assert all(preset.builtin for preset in BUILT_IN_PRESETS)
+    assert {
+        "Balanced",
+        "Skeptical",
+        "Questions and gaps",
+        "Direct rebuttal",
+        "Creative angles",
+        "Human impact",
+    } <= {preset.name for preset in BUILT_IN_PRESETS}
 
 
 def test_applying_a_preset_changes_only_writing_choices():

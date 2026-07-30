@@ -206,6 +206,93 @@ BUILT_IN_PRESETS: tuple[WritingPreset, ...] = (
         builtin=True,
     ),
     WritingPreset(
+        name="Balanced",
+        description="A varied short set: concrete, analytical, corrective, and dry.",
+        comment_variations=(
+            "one_concrete_thing", "dry_observation", "correction", "question",
+        ),
+        reply_variations=(
+            "one_concrete_detail", "dry_observation", "correction", "question",
+        ),
+        dials=(("final", "best_single"),),
+        length="medium",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Skeptical",
+        description="Test the claim, identify gaps, and surface the strongest doubt.",
+        comment_variations=(
+            "unanswered_gap", "devils_advocate", "cynical_read", "correction",
+        ),
+        reply_variations=(
+            "unanswered_gap", "devils_advocate", "cynical_read", "correction",
+        ),
+        dials=(
+            ("humor", "none"),
+            ("critique", "full"),
+            ("grounding", "summary"),
+        ),
+        length="medium",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Questions and gaps",
+        description="Focus on what the video leaves unanswered or unresolved.",
+        comment_variations=(
+            "question", "unanswered_gap", "devils_advocate", "prediction",
+        ),
+        reply_variations=(
+            "question", "unanswered_gap", "devils_advocate", "prediction",
+        ),
+        dials=(("humor", "none"), ("final", "best_single")),
+        length="medium",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Direct rebuttal",
+        description="Correct the central claim plainly and support the correction.",
+        comment_variations=(
+            "flat_claim", "blunt_correction", "numbers_only", "correction",
+        ),
+        reply_variations=(
+            "flat_contradiction", "blunt_correction", "numbers_only", "correction",
+        ),
+        dials=(
+            ("hedging", "none"),
+            ("ending", "flat"),
+            ("humor", "none"),
+            ("final", "best_single"),
+        ),
+        length="short",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Creative angles",
+        description="Try analogy, prediction, dry humor, and one unusual premise.",
+        comment_variations=(
+            "analogy", "prediction", "dry_joke", "off_the_wall",
+        ),
+        reply_variations=(
+            "analogy", "prediction", "dry_one_liner", "off_the_wall",
+        ),
+        dials=(("final", "best_single"),),
+        length="short",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Human impact",
+        description="Center the people affected while keeping the claim concrete.",
+        comment_variations=(
+            "humane", "sympathetic", "one_concrete_thing", "historical_parallel",
+        ),
+        reply_variations=(
+            "humane", "sympathetic", "one_concrete_detail", "historical_parallel",
+        ),
+        dials=(("humor", "none"), ("aggression", "never")),
+        length="medium",
+        builtin=True,
+    ),
+    WritingPreset(
         name="Full analysis",
         description="A developed, evidence-grounded argument with alternatives.",
         comment_variations=(

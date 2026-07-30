@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .options import PacketOptionsModel, WHISPER_POLICIES
+from .widgets import Tooltip
 
 PADDING = 8
 
@@ -25,6 +26,20 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
         ("max_replies", "Replies per thread", int),
         ("packet_characters", "Packet characters", int),
     )
+    FIELD_HELP = {
+        "output_directory": "Where completed run folders are saved.",
+        "languages": "Preferred transcript language codes, separated by commas.",
+        "proxy_url": "Optional proxy used for transcript and video retrieval.",
+        "whisper_model": "The local Whisper model used for audio transcription.",
+        "whisper_maximum_minutes": "Refuse Whisper above this video duration.",
+        "whisper_maximum_audio_mib": "Stop the audio download above this size.",
+        "my_handle": "Your YouTube @username, used to find replies to you.",
+        "max_top": "Maximum relevance-ranked comments to retain.",
+        "max_recent": "Maximum newest comments to retain.",
+        "max_threads": "Maximum comment threads whose replies are retrieved.",
+        "max_replies": "Maximum replies retained from each selected thread.",
+        "packet_characters": "Maximum total size of the generated model packet.",
+    }
 
     def __init__(self, parent, options: PacketOptionsModel, on_close=None):
         self.options = options
@@ -33,13 +48,15 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
         self.top.title("Advanced")
         self.top.transient(parent)
         self.variables: dict[str, tk.Variable] = {}
+        self._tooltips: list[Tooltip] = []
 
         frame = ttk.Frame(self.top, padding=PADDING)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
 
         for row, (name, label, kind) in enumerate(self.FIELDS):
-            ttk.Label(frame, text=f"{label}:").grid(
+            label_widget = ttk.Label(frame, text=f"{label}:")
+            label_widget.grid(
                 row=row, column=0, sticky="w", pady=2
             )
             variable: tk.Variable = (
@@ -63,12 +80,24 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
             widget.grid(
                 row=row, column=1, sticky="ew", padx=(6, 0), pady=2
             )
+            help_text = self.FIELD_HELP[name]
+            self._tooltips.extend((
+                Tooltip(label_widget, lambda value=help_text: value),
+                Tooltip(widget, lambda value=help_text: value),
+            ))
 
         row = len(self.FIELDS)
         self.include_replies = tk.BooleanVar(value=options.include_replies)
-        ttk.Checkbutton(
+        retrieve_replies = ttk.Checkbutton(
             frame, text="Retrieve replies", variable=self.include_replies
-        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        )
+        retrieve_replies.grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(6, 0)
+        )
+        self._tooltips.append(Tooltip(
+            retrieve_replies,
+            lambda: "Include replies beneath the selected top-level comments.",
+        ))
         ttk.Label(frame, text="When no transcript is available:").grid(
             row=row + 1, column=0, columnspan=2, sticky="w", pady=(8, 2)
         )
@@ -82,22 +111,35 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
             ("automatic", "Automatically use local Whisper"),
         )
         for offset, (value, label) in enumerate(choices, 2):
-            ttk.Radiobutton(
+            choice = ttk.Radiobutton(
                 frame,
                 text=label,
                 value=value,
                 variable=self.whisper_policy,
-            ).grid(
+            )
+            choice.grid(
                 row=row + offset,
                 column=0,
                 columnspan=2,
                 sticky="w",
                 padx=(12, 0),
             )
+            help_text = {
+                "ignore": "Continue without a transcript and do not ask.",
+                "ask": "Show a confirmation before starting local Whisper.",
+                "automatic": "Start local Whisper automatically within its limits.",
+            }[value]
+            self._tooltips.append(Tooltip(
+                choice, lambda text=help_text: text
+            ))
 
-        ttk.Button(frame, text="Done", command=self.close).grid(
+        done = ttk.Button(frame, text="Done", command=self.close)
+        done.grid(
             row=row + 5, column=1, sticky="e", pady=(10, 0)
         )
+        self._tooltips.append(Tooltip(
+            done, lambda: "Save these settings and close the Advanced window."
+        ))
 
     def close(self) -> None:
         for name, variable in self.variables.items():

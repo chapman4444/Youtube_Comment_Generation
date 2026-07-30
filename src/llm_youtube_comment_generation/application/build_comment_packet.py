@@ -34,6 +34,7 @@ from ..domain.writing_options import (
 from ..ports.events import EventKind, ProgressEvent
 from .commands import InspectVideoCommand
 from .inspect_video import handle as inspect_handle
+from .debug_build import DEBUG_PACKET_FILENAME, render_debug_packet
 
 PACKET_FILENAME = "packet.md"
 
@@ -53,6 +54,8 @@ class BuildCommentPacketCommand:
     packet_characters: int = 280_000
     explicit_length: tuple[int, int] | None = None
     allow_no_transcript: bool = False
+    debug: bool = False
+    debug_settings: dict[str, Any] = field(default_factory=dict)
     dry_run: bool = False
 
     video_id: str = field(init=False, default="")
@@ -195,7 +198,18 @@ def handle(
         ],
     }
 
+    debug_packet = ""
+    if command.debug:
+        run_record["debug_build"] = True
+        debug_packet = render_debug_packet(
+            packet.text,
+            settings=command.debug_settings,
+            run=run_record,
+        )
+
     artifacts.stage(PACKET_FILENAME, packet.text)
+    if debug_packet:
+        artifacts.stage(DEBUG_PACKET_FILENAME, debug_packet)
     artifacts.stage("transcript_timestamped.txt", timestamped or "")
     artifacts.stage("evidence.json", json.dumps({
         "schema_version": 2,
@@ -221,6 +235,8 @@ def handle(
 
     result.value = {
         "packet": packet,
+        "debug_packet": debug_packet,
+        "debug_settings": dict(command.debug_settings),
         "run": run_record,
         "transcript": transcript,
         "evidence": {

@@ -10,7 +10,14 @@ from llm_youtube_comment_generation.infrastructure.memory_artifacts import (
 )
 
 VIDEO = "gC-J7zwYMAM"
-ANSWER = "### Hardened final\nA finished comment ready to post."
+VIDEO_LINE = (
+    "**Video:** A video "
+    "https://www.youtube.com/watch?v=gC-J7zwYMAM"
+)
+ANSWER = (
+    f"{VIDEO_LINE}\n\n"
+    "### Hardened final\nA finished comment ready to post."
+)
 
 
 class RecordingHistory:
@@ -76,3 +83,71 @@ def test_posting_confirmation_is_not_written_twice():
     assert one.record_posted() == 1
     assert one.record_posted() == 0
     assert len(history.entries) == 1
+
+
+def test_a_markdown_link_in_the_video_line_is_refused_before_saving():
+    one = make_session()
+    one.start()
+    nested = (
+        "**Video:** A video "
+        "[[https://www.youtube.com/watch?v=gC-J7zwYMAM]"
+        "(https://www.youtube.com/watch?v=gC-J7zwYMAM)]"
+        "(https://www.youtube.com/watch?v=gC-J7zwYMAM)\n\n"
+        "### Hardened final\nA comment that must not be saved."
+    )
+
+    result = one.submit(nested)
+
+    assert result.status.value == "refused"
+    assert "exactly once as plain text" in one.state.last_error
+    assert "found 3 copies" in one.state.last_error
+    assert one.accepted == []
+    assert one.artifacts.committed_names() == ()
+
+
+def test_the_video_line_must_be_the_first_nonblank_line():
+    one = make_session()
+    one.start()
+    misplaced = (
+        "Here is the answer.\n"
+        f"{VIDEO_LINE}\n\n"
+        "### Hardened final\nA comment that must not be saved."
+    )
+
+    result = one.submit(misplaced)
+
+    assert result.status.value == "refused"
+    assert "first nonblank line" in one.state.last_error
+    assert one.accepted == []
+
+
+def test_curly_apostrophes_and_emoji_survive_answer_storage():
+    one = make_session()
+    one.start()
+    unicode_draft = "BAM’s response preserved the evidence. 😄"
+
+    one.submit(f"{VIDEO_LINE}\n\n### Hardened final\n{unicode_draft}")
+
+    saved = one.artifacts.read("comment_drafts.md")
+    assert unicode_draft in saved
+
+
+def test_debug_build_saves_the_complete_response_and_shareable_bundle():
+    one = make_session()
+    one.debug_build = True
+    one.debug_settings = {"length": "short", "whisper_policy": "ask"}
+    one.run_record = {"video_id": VIDEO, "video_title": "A video"}
+    one.start()
+    raw_answer = (
+        f"{VIDEO_LINE}\n\n### Debug report\n"
+        "The evidence is attributed and the variations are distinct.\n\n"
+        "### Hardened final\nA finished comment ready to post."
+    )
+
+    one.submit(raw_answer)
+
+    assert one.artifacts.read("debug_model_response.md") == raw_answer
+    bundle = one.artifacts.read("debug_bundle.md")
+    assert "## Safe build settings" in bundle
+    assert "## Complete model response" in bundle
+    assert raw_answer in bundle

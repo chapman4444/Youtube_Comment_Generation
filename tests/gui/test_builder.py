@@ -120,6 +120,62 @@ def test_the_last_event_of_a_run_is_never_cancelled_out_from_under_it():
     assert job.drain()[0].message == "done"
 
 
+def test_each_build_starts_with_an_identified_activity_separator():
+    job = BackgroundJob()
+    sink = JobEvents(
+        job,
+        video_id="gC-J7zwYMAM",
+        preset="Dry and sharp",
+        started_at="2026-07-30T12:34:56-06:00",
+    )
+    sink.emit(ProgressEvent(
+        EventKind.STARTED,
+        step="inspect",
+        message="Inspecting gC-J7zwYMAM",
+    ))
+
+    assert job.drain() == []
+
+    sink.emit(ProgressEvent(
+        EventKind.STEP,
+        step="video_identity",
+        data={
+            "video_id": "gC-J7zwYMAM",
+            "video_title": "A title with curly punctuation: Ryan’s",
+        },
+    ))
+
+    events = job.drain()
+    assert len(events) == 2
+    separator = events[0].message
+    assert "Build: gC-J7zwYMAM" in separator
+    assert "A title with curly punctuation: Ryan’s" in separator
+    assert "2026-07-30T12:34:56-06:00" in separator
+    assert "Preset: Dry and sharp" in separator
+    assert events[1].message == "Inspecting gC-J7zwYMAM"
+
+
+def test_a_metadata_failure_still_gets_a_run_boundary():
+    job = BackgroundJob()
+    sink = JobEvents(
+        job,
+        video_id="gC-J7zwYMAM",
+        preset="Current settings",
+        started_at="2026-07-30T12:34:56-06:00",
+    )
+    sink.emit(ProgressEvent(
+        EventKind.STARTED,
+        step="inspect",
+        message="Inspecting gC-J7zwYMAM",
+    ))
+
+    sink.ensure_boundary()
+
+    events = job.drain()
+    assert "Title unavailable" in events[0].message
+    assert events[1].message == "Inspecting gC-J7zwYMAM"
+
+
 # -- what the options become -----------------------------------------------
 
 

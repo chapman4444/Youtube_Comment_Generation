@@ -106,6 +106,14 @@ def handle(
     events.emit(ProgressEvent(EventKind.STEP, step="video",
                               message="Fetching video metadata"))
     video = youtube.video(command.video_id)
+    events.emit(ProgressEvent(
+        EventKind.STEP,
+        step="video_identity",
+        data={
+            "video_id": str(video.get("video_id") or command.video_id),
+            "video_title": str(video.get("title") or ""),
+        },
+    ))
 
     outcomes: list[RetrievalOutcome] = []
     pages = []

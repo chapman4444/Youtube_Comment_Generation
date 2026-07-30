@@ -92,6 +92,22 @@ def test_advanced_and_reset_are_in_the_always_visible_top_row(window):
     )
 
 
+def test_build_stop_and_reset_are_together_beside_the_video(window):
+    assert window.build_button.cget("text") == "Build"
+    assert window.stop_button.master == window.build_button.master
+    assert window.reset_button.master == window.build_button.master
+    assert window.build_button.master.master == window.video_url_label.master
+
+
+def test_debug_build_is_a_one_run_checkbox_beside_build(window):
+    assert window.debug_build_check.master == window.build_button.master
+    assert window.debug_build.get() is False
+    assert any(
+        window.output_tabs.tab(tab, "text") == "Debug bundle"
+        for tab in window.output_tabs.tabs()
+    )
+
+
 @pytest.mark.parametrize(
     ("initial", "identifier"),
     [
@@ -212,6 +228,21 @@ def test_a_different_clipboard_video_requires_explicit_replace(window):
     window.poll_clipboard()
 
     assert window.video.get() == "gC-J7zwYMAM"
+    assert str(window.use_button.cget("state")) == "normal"
+
+    window.use_clipboard()
+
+    assert window.video.get() == "FVG5m_NG5Ak"
+
+
+def test_replace_works_after_a_packet_has_already_been_built(window):
+    window.video.set("gC-J7zwYMAM")
+    window.comment_session = object()
+    window.last_packet = "the old packet"
+    window.clipboard.value = "https://youtu.be/FVG5m_NG5Ak"
+    window.poll_clipboard()
+
+    assert window.use_button.cget("text") == "Replace"
     assert str(window.use_button.cget("state")) == "normal"
 
     window.use_clipboard()
@@ -456,6 +487,51 @@ def test_dynamic_tooltips_stay_stable_across_mode_switches(window):
     assert len(window._approach_tooltips) == len(window.approach_checks)
 
 
+def test_every_main_workflow_control_has_a_tooltip(window):
+    covered = {tooltip.widget for tooltip in window._tooltips}
+    controls = {
+        window.paste_button,
+        window.clear_video_button,
+        window.use_button,
+        window.build_button,
+        window.stop_button,
+        window.reset_button,
+        window.advanced_button,
+        window.reset_options_button,
+        window.preset_box,
+        window.save_preset_button,
+        window.delete_preset_button,
+        window.approach_search,
+        window.clear_approaches_button,
+        window.transcript_api_button,
+        window.ytdlp_captions_button,
+        window.saved_transcript_button,
+        window.run_whisper_button,
+        window.packet_copy_button,
+        window.answer_input,
+        window.primary,
+        window.paste_answer_button,
+        window.copy_button,
+        window.record_button,
+        window.back_button,
+        window.skip_button,
+        window.progress_bar,
+    }
+
+    assert controls <= covered
+
+
+def test_preset_selection_is_immediate_and_has_no_ambiguous_apply_button(window):
+    button_text = {
+        child.cget("text")
+        for child in window.preset_box.master.winfo_children()
+        if child.winfo_class() == "TButton"
+    }
+
+    assert "Apply" not in button_text
+    assert "Save preset..." in button_text
+
+
 def test_every_approach_displays_its_backend_dimension(window):
     from llm_youtube_comment_generation.domain.writing_options import (
         VARIATION_LIBRARY,
@@ -487,7 +563,7 @@ def test_successful_build_copies_exact_packet_and_moves_to_answer(window):
     assert window.clipboard.value == packet
     assert window.last_packet == packet
     assert "built and copied" in window.status.get().lower()
-    assert window.copy_button.cget("text") == "Copy again"
+    assert window.copy_button.cget("text") == "Copy packet again"
     assert "20 characters" in window.packet_count.cget("text")
     assert window.packet_preview.get("1.0", "end-1c") == packet
     assert str(window.packet_preview.cget("state")) == "disabled"
@@ -640,7 +716,10 @@ def test_clipboard_copy_failure_does_not_turn_build_into_failure(tk_root):
 
         assert built.last_packet == "complete packet"
         assert "clipboard copy failed" in built.status.get().lower()
-        assert built.copy_button.cget("text") in ("Copy packet", "Copy again")
+        assert built.copy_button.cget("text") in (
+            "Copy packet",
+            "Copy packet again",
+        )
     finally:
         top.destroy()
 
@@ -708,7 +787,7 @@ def test_start_over_clears_a_comment_run(window):
     assert window.last_packet == ""
     assert window._offer is None
     assert window.progress_value.get() == 0.0
-    assert window.primary.cget("text") == "Build packet"
+    assert window.primary.cget("text") == "Build"
     assert window.status.get() != "stale status"
 
 
@@ -731,6 +810,36 @@ def test_start_over_clears_a_reply_run(window):
     assert window.last_packet == ""
     assert window.sequence.step is Step.BUILD
     assert window.primary.cget("text") == "Find who needs a reply"
+
+
+def test_reset_returns_the_whole_gui_to_its_opening_state(window):
+    window.video.set("gC-J7zwYMAM")
+    window.options.comment_variations = ("dry_joke",)
+    window.options.dials = {"ending": "flat"}
+    window.length.set("long")
+    window.last_packet = "old packet"
+    window.comment_session = object()
+    window._set_evidence_view("description", "old description")
+    window._set_text(window.said, "old saved draft")
+    window.answer_input.insert("1.0", "old answer")
+    window.say("old activity")
+    window.output_tabs.select(window.answer_tab)
+
+    window.reset_all()
+
+    assert window.video.get() == ""
+    assert window.last_packet == ""
+    assert window.comment_session is None
+    assert window.options.comment_variations == ()
+    assert window.options.dials == {}
+    assert window.length.get() == "auto"
+    assert window.preset_name.get() == "Default"
+    assert window.log.get("1.0", "end-1c") == ""
+    assert window._answer_text() == ""
+    assert window.said.get("1.0", "end-1c") == "No answer has been saved yet."
+    assert window.evidence_views["description"].get("1.0", "end-1c") == ""
+    assert window.output_tabs.select() == str(window.activity_tab)
+    assert window.status.get() == "Reset complete."
 
 
 def test_start_over_requests_safe_worker_cancellation(window):
@@ -911,6 +1020,20 @@ def test_mouse_wheel_is_bound_to_the_approach_children(window):
         check.bind("<MouseWheel>")
         for check in window.approach_checks.values()
     )
+
+
+def test_mouse_wheel_moves_the_approach_list(window):
+    window.root.update_idletasks()
+    window.approach_canvas.yview_moveto(0)
+    before = window.approach_canvas.yview()
+
+    result = window._scroll_approaches(
+        SimpleNamespace(delta=-120, num=0)
+    )
+
+    after = window.approach_canvas.yview()
+    assert result == "break"
+    assert after[0] > before[0]
 
 
 def test_retrieved_elements_have_separate_tabs_and_copy_buttons(window):
@@ -1095,7 +1218,9 @@ def test_a_visible_pasted_answer_works_without_clipboard_detection(window):
 
         def submit(self, text):
             submitted.append(text)
-            self.accepted.append(text)
+            self.accepted.append(
+                SimpleNamespace(draft="The reply I would send.")
+            )
             return SimpleNamespace(status=SimpleNamespace(value="ok"))
 
         def finish(self):
@@ -1107,12 +1232,18 @@ def test_a_visible_pasted_answer_works_without_clipboard_detection(window):
     window.refresh()
 
     assert str(window.primary.cget("state")) == "normal"
-    assert window.primary.cget("text") == "Use pasted answer"
+    assert window.primary.cget("text") == "Validate and save answer"
+    assert "Click Validate and save answer" in window.card_detail.cget("text")
 
     window.take_comment_answer()
 
     assert submitted == [ANSWER.strip()]
     assert window._answer_text() == ""
+    assert (
+        window.said.get("1.0", "end-1c")
+        == "The reply I would send."
+    )
+    assert "Nothing was posted" in window.status.get()
 
 
 def test_polling_an_unchanged_clipboard_does_not_redraw(window):
