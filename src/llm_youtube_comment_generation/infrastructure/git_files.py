@@ -6,13 +6,26 @@ import subprocess
 from pathlib import Path
 
 
-def tracked_files(root: Path) -> tuple[str, ...]:
-    root = root.resolve()
-    discovered = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess:
+    """Run Git with repository trust scoped to this one subprocess."""
+
+    return subprocess.run(
+        [
+            "git",
+            "-c",
+            f"safe.directory={root.as_posix()}",
+            "-C",
+            str(root),
+            *arguments,
+        ],
         check=False,
         capture_output=True,
     )
+
+
+def tracked_files(root: Path) -> tuple[str, ...]:
+    root = root.resolve()
+    discovered = _git(root, "rev-parse", "--show-toplevel")
     try:
         top_level = Path(discovered.stdout.decode("utf-8").strip()).resolve()
     except (OSError, UnicodeError):
@@ -20,11 +33,7 @@ def tracked_files(root: Path) -> tuple[str, ...]:
     if discovered.returncode != 0 or top_level != root:
         return _files_below(root)
 
-    completed = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "-z"],
-        check=False,
-        capture_output=True,
-    )
+    completed = _git(root, "ls-files", "-z")
     if completed.returncode != 0:
         return _files_below(root)
     return tuple(
