@@ -6,7 +6,7 @@ set "WINRAR_EXE=C:\Program Files\WinRAR\WinRAR.exe"
 set "PROJECT_ROOT=%~dp0"
 set "PROJECT_PY=%PROJECT_ROOT%.venv\Scripts\python.exe"
 set "REVIEW_DIR=%PROJECT_ROOT%review_packages"
-set "STAGE=%REVIEW_DIR%\_review_stage"
+set "STAGE=%REVIEW_DIR%\_review_stage_%RANDOM%_%RANDOM%"
 set "ARCHIVE=%REVIEW_DIR%\Youtube_Comment_Generation_review.zip"
 set "TEMP_ARCHIVE=%REVIEW_DIR%\Youtube_Comment_Generation_review.new.zip"
 
@@ -16,10 +16,17 @@ if not exist "%WINRAR_EXE%" (
     exit /b 2
 )
 
-call "%PROJECT_ROOT%setup_venv.bat"
+call "%PROJECT_ROOT%setup_venv.bat" review
 if errorlevel 1 (
     echo The project Python environment could not be prepared.
     exit /b 9
+)
+
+"%PROJECT_PY%" -c "import build, faster_whisper, pytest, requests, ruff, youtube_transcript_api, yt_dlp" >nul 2>&1
+if errorlevel 1 (
+    echo The review environment is missing one or more required verification modules.
+    echo Run setup_venv.bat review to repair it.
+    exit /b 10
 )
 
 if not exist "%REVIEW_DIR%" mkdir "%REVIEW_DIR%"
@@ -30,7 +37,11 @@ if errorlevel 1 (
 )
 
 rem Work on a disposable copy so WinRAR never archives the live project directly.
-if exist "%STAGE%" rmdir /s /q "%STAGE%"
+if exist "%STAGE%" (
+    echo Could not select a unique staging folder:
+    echo   %STAGE%
+    exit /b 4
+)
 mkdir "%STAGE%"
 if errorlevel 1 (
     echo Could not create the staging folder:

@@ -54,11 +54,29 @@ On Windows, `gui.bat` opens comment mode and `gui.bat --replies` opens reply
 mode. The supplied `comment.bat`, `reply.bat`, `doctor.bat`, and
 `scoreboard.bat` launch the same installed application. Every launcher calls
 `setup_venv.bat`: on the first run it creates the project-local `.venv` with
-Python 3.10 and installs both caption sources (`youtube-transcript-api` and
-`yt-dlp`) plus the optional local Whisper transcriber. The launchers never
-fall back to an unrelated system-wide `python` command. Whisper remains off
-until **Advanced → Use local Whisper when captions are unavailable** is
-selected, because it downloads audio and takes substantially longer.
+Python 3.10 and installs only the core application. This keeps `doctor.bat`,
+`scoreboard.bat`, GUI preview, and non-transcript commands available even when
+an optional provider cannot be installed. Install the lightweight caption
+providers explicitly with `setup_venv.bat transcripts`, local Whisper with
+`setup_venv.bat local-transcription`, or both with `setup_venv.bat all`. The
+review archive builder uses `setup_venv.bat review`, which installs and
+preflights its complete declared verification toolset before staging begins.
+The launchers never fall back to an unrelated system-wide `python` command.
+Choose the no-caption behavior under **Advanced → Local Whisper**:
+
+- **Ignore** continues without a transcript and does not ask.
+- **Ask** explains why captions were unavailable and requests confirmation
+  before downloading audio. This is the default.
+- **Automatic** starts local transcription without asking.
+
+The persistent **Stop** button cancels caption retrieval or local
+transcription at the next safe point. The status bar shows transcript state,
+and the **Transcript** tab displays completed Whisper segments as they are
+created, with an estimated remaining time when enough progress is available.
+Normal Build tries the transcript API, `yt-dlp` captions, a saved transcript,
+and then the configured Whisper behavior. Four buttons in the Transcript tab
+can rerun a build using exactly one of those sources for diagnosis or manual
+recovery.
 
 ## Workflows
 
@@ -98,7 +116,11 @@ shows a compact receipt with evidence counts, transcript provenance, logical
 YouTube API operation count, packet size, and output location. One logical
 operation is one Data API call made by the application. Automatic HTTP
 transport retries do not increase this count, so it is not a physical network
-attempt counter.
+attempt counter. The **Activity** tab shows retrieval and processing messages.
+Changing the video or a packet-affecting setting re-enables Build while
+leaving the previous packet available for reference. Metadata, description,
+transcript, comments, and replies each have a separate tab and Copy button.
+Selected text in every text view can also be copied from its right-click menu.
 
 The CLI exposes the same core workflows:
 

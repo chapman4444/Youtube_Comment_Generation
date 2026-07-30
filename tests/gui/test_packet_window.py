@@ -15,6 +15,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from llm_youtube_comment_generation.domain.statuses import (
+    TranscriptAvailability,
+    TranscriptResult,
+)
 from llm_youtube_comment_generation.interfaces.gui.packet_window import (
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
@@ -25,7 +29,10 @@ from llm_youtube_comment_generation.interfaces.gui.options import (
     PacketOptionsModel,
 )
 from llm_youtube_comment_generation.interfaces.gui.sequence import Step
-from llm_youtube_comment_generation.interfaces.gui.worker import WorkerEvent
+from llm_youtube_comment_generation.interfaces.gui.worker import (
+    ConfirmationRequest,
+    WorkerEvent,
+)
 from llm_youtube_comment_generation.infrastructure.json_preset_store import (
     JsonPresetStore,
 )
@@ -743,6 +750,38 @@ def test_start_over_requests_safe_worker_cancellation(window):
     assert window._discard_job_result
 
 
+def test_stop_button_is_visible_only_during_a_running_build(window):
+    class RunningJob:
+        running = True
+        cancelled = False
+
+        def cancel(self):
+            self.cancelled = True
+
+    job = RunningJob()
+    window.job = job
+    window.video.set("gC-J7zwYMAM")
+    window.refresh()
+
+    assert window.stop_button.winfo_manager() == "pack"
+    assert str(window.stop_button.cget("state")) == "normal"
+
+    window.stop_button.invoke()
+
+    assert job.cancelled
+    assert str(window.stop_button.cget("state")) == "disabled"
+    assert "Stopping" in window.status.get()
+
+
+def test_cancelled_build_clears_progress_and_reports_stopped(window):
+    window.progress_value.set(0.8)
+
+    window._on_event(WorkerEvent("cancelled"))
+
+    assert window.progress_value.get() == 0.0
+    assert window.status.get() == "Stopped."
+
+
 # -- it fits on a screen ---------------------------------------------------
 
 
@@ -760,11 +799,182 @@ def test_the_window_is_not_taller_than_a_laptop(window):
     assert window.root.winfo_reqheight() <= 700
 
 
-def test_the_log_starts_closed(window):
-    """The status line is always there; the log is a disclosure."""
+def test_activity_is_the_default_output_tab(window):
+    selected = window.output_tabs.select()
 
-    assert not window.log_open.get()
-    assert not window.log_frame.winfo_ismapped()
+    assert window.output_tabs.tab(selected, "text") == "Activity"
+    assert window.log.winfo_manager() == "grid"
+
+
+def test_tab_text_views_have_a_right_click_copy_menu(window):
+    views = (
+        window.log,
+        window.packet_preview,
+        window.transcript_preview,
+        window.answer_input,
+        *window.evidence_views.values(),
+    )
+
+    assert all(view.bind("<Button-3>") for view in views)
+
+
+def test_mouse_wheel_is_bound_to_the_approach_children(window):
+    assert window.approach_checks
+    assert all(
+        check.bind("<MouseWheel>")
+        for check in window.approach_checks.values()
+    )
+
+
+def test_retrieved_elements_have_separate_tabs_and_copy_buttons(window):
+    window._show_evidence({
+        "video": {
+            "video_id": "gC-J7zwYMAM",
+            "title": "A video",
+            "description": "Description text",
+        },
+        "comments": [{"comment_id": "c1", "text": "A comment"}],
+        "replies": [{
+            "comment_id": "r1",
+            "parent_comment_id": "c1",
+            "text": "A reply",
+        }],
+    })
+
+    assert "Title: A video" in window.evidence_views["metadata"].get(
+        "1.0", "end"
+    )
+    assert "Description text" in window.evidence_views["description"].get(
+        "1.0", "end"
+    )
+    assert "A comment" in window.evidence_views["comments"].get("1.0", "end")
+    assert "A reply" in window.evidence_views["replies"].get("1.0", "end")
+
+    window.copy_evidence("description")
+
+    assert window.clipboard.value == "Description text"
+
+
+def test_manual_transcript_buttons_force_one_source_only(window):
+    requested = []
+    window.video.set("gC-J7zwYMAM")
+    window._start_packet_build = (
+        lambda options, force=False: requested.append((options, force))
+    )
+
+    for button in (
+        window.transcript_api_button,
+        window.ytdlp_captions_button,
+        window.saved_transcript_button,
+        window.run_whisper_button,
+    ):
+        button.configure(state="normal")
+        button.invoke()
+
+    assert [options.transcript_route for options, _force in requested] == [
+        "api",
+        "ytdlp",
+        "saved",
+        "whisper",
+    ]
+    assert all(force for _options, force in requested)
+    assert window.options.transcript_route == "automatic"
+
+
+def test_progress_is_a_label_not_a_log_checkbox(window):
+    bottom = window.root.winfo_children()[-1]
+    bottom_text = [
+        str(child.cget("text"))
+        for child in bottom.winfo_children()
+        if "text" in child.keys()
+    ]
+
+    assert "Progress:" in bottom_text
+    assert not hasattr(window, "log_open")
+
+
+def test_transcript_confirmation_shows_reason_and_records_answer(window):
+    shown = []
+    window._confirm_whisper = lambda reason: shown.append(reason) or True
+    request = ConfirmationRequest(TranscriptResult(
+        availability=TranscriptAvailability.NOT_PUBLISHED,
+        detail="no caption tracks were published",
+    ))
+
+    window._on_event(WorkerEvent("confirmation", value=request))
+
+    assert request.answered.is_set()
+    assert request.accepted
+    assert shown and "No transcript was published" in shown[0]
+    assert "Whisper was approved" in window.transcript_notice.get()
+
+
+def test_live_whisper_segments_appear_in_the_transcript_tab(window):
+    window._on_event(WorkerEvent(
+        "progress",
+        value={
+            "step": "transcribe",
+            "data": {
+                "transcript_entry": {
+                    "text": "the first completed segment",
+                    "start": 12.0,
+                    "end": 16.0,
+                },
+                "eta_seconds": 75.0,
+            },
+        },
+        fraction=0.8,
+    ))
+
+    assert "the first completed segment" in window.transcript_preview.get(
+        "1.0", "end"
+    )
+    assert "1:15 remaining" in window.transcript_notice.get()
+    assert window.output_tabs.select() == str(window.transcript_tab)
+
+
+def test_missing_transcript_uses_the_red_status_indicator(window):
+    window._show_transcript(TranscriptResult(
+        availability=TranscriptAvailability.FETCH_FAILED,
+        detail="IpBlocked",
+    ))
+
+    assert "blocked or failed" in window.transcript_notice.get()
+    assert str(window.transcript_indicator.cget("foreground")) == "#b42318"
+
+
+def test_changing_video_reenables_build_without_discarding_old_packet(window):
+    window.video.set("gC-J7zwYMAM")
+    window.comment_session = SimpleNamespace(accepted=[])
+    window.last_packet = "old packet"
+    window._completed_build_signature = window._build_signature(
+        window.gather(),
+        "comment",
+    )
+    window.refresh()
+
+    assert str(window.build_button.cget("state")) == "disabled"
+
+    window.video.set("FVG5m_NG5Ak")
+    window.refresh()
+
+    assert str(window.build_button.cget("state")) == "normal"
+    assert window.last_packet == "old packet"
+    assert "settings changed" in window.status.get()
+
+
+def test_changing_advanced_settings_reenables_build(window):
+    window.video.set("gC-J7zwYMAM")
+    window.comment_session = SimpleNamespace(accepted=[])
+    window._completed_build_signature = window._build_signature(
+        window.gather(),
+        "comment",
+    )
+
+    window.options.max_recent += 1
+    window.refresh()
+
+    assert str(window.build_button.cget("state")) == "normal"
 
 
 # -- the worker ------------------------------------------------------------

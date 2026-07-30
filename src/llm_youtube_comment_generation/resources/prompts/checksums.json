@@ -1,21 +1,21 @@
 {
   "comment_final_check.md": {
-    "changed": "2026-07-28, at the operator's request: replaced late check amendments with placeholders rendered directly from the resolved prompt specification.",
-    "characters": 787,
-    "lines": 20,
+    "changed": "2026-07-30, after a measured packet response: added explicit diversity and plain-URL checks.",
+    "characters": 1076,
+    "lines": 25,
     "migrated_characters": 1027,
     "migrated_sha256": "203267bb036bbae8f7dc638326f74ae471b4dec1b53e6bf477ec520890fa3cf5",
-    "sha256": "e5c70739141b2a47fc35553ac4a5077e337ec179bc96e60297254fed11845289",
+    "sha256": "53476d89ee99282f0a78419550859e8c501f552d71d0bcf811f442e4bfd4e3d5",
     "source_constant": "FINAL_OUTPUT_CHECK_TEMPLATE",
     "source_module": "youtube_video_comment"
   },
   "comment_workflow.md": {
-    "changed": "2026-07-28, at the operator's request: structural prompt sections now come from one resolved option specification; added top-level comment-ID deduplication guidance.",
-    "characters": 6691,
-    "lines": 154,
+    "changed": "2026-07-30, after a measured packet response: required distinct inferences across variations and one unwrapped metadata URL.",
+    "characters": 7203,
+    "lines": 164,
     "migrated_characters": 10369,
     "migrated_sha256": "a686a38153fe0e02eddbc52f50314d568ecd5c879b4063c4c766f0c4c4b5fd2b",
-    "sha256": "97f361e2b8c12bc8eab1bf6174a091f8b7257ebf262a4e8feb44dcb060d2f9ee",
+    "sha256": "06a0e1443a12b3e4c1888066e675847651f0f37f19e4a32bac782a39fde7d4d6",
     "source_constant": "COMMENT_WORKFLOW_TEMPLATE",
     "source_module": "youtube_video_comment"
   },

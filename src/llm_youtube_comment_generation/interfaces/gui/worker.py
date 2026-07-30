@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 LOGGER = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ LOGGER = logging.getLogger(__name__)
 class WorkerEvent:
     """One thing that happened, on its way back to the window."""
 
-    kind: str                    # "progress" | "done" | "failed" | "cancelled"
+    kind: str  # progress | confirmation | done | failed | cancelled
     message: str = ""
     value: Any = None
     fraction: float | None = None
@@ -41,6 +41,22 @@ class WorkerEvent:
 
 class Cancelled(Exception):
     """Raised inside the worker when the operator asked it to stop."""
+
+
+@dataclass
+class ConfirmationRequest:
+    """A worker question that only the Tk thread may put on screen."""
+
+    payload: Any
+    accepted: bool = False
+    answered: threading.Event = field(
+        default_factory=threading.Event,
+        repr=False,
+    )
+
+    def resolve(self, accepted: bool) -> None:
+        self.accepted = bool(accepted)
+        self.answered.set()
 
 
 class BackgroundJob:
@@ -107,8 +123,28 @@ class BackgroundJob:
         if self._cancel.is_set():
             raise Cancelled()
 
-    def say(self, message: str, fraction: float | None = None) -> None:
-        self.events.put(WorkerEvent("progress", message, fraction=fraction))
+    def say(
+        self,
+        message: str,
+        fraction: float | None = None,
+        payload: Any = None,
+    ) -> None:
+        self.events.put(WorkerEvent(
+            "progress",
+            message,
+            value=payload,
+            fraction=fraction,
+        ))
+
+    def confirm(self, payload: Any) -> bool:
+        """Ask the Tk thread a question and wait without touching Tk here."""
+
+        request = ConfirmationRequest(payload)
+        self.events.put(WorkerEvent("confirmation", value=request))
+        while not request.answered.wait(0.1):
+            self.check_cancelled()
+        self.check_cancelled()
+        return request.accepted
 
     # -- internals ---------------------------------------------------------
 

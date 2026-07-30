@@ -46,12 +46,15 @@ def ports(**flags):
 
 
 def sources(port):
-    """The chain inside the saved-transcript fallback."""
+    """Caption sources followed by the optional local fallback."""
 
     assert isinstance(port, SavedTranscriptFallback)
     inner = port._inner
     assert isinstance(inner, ChainedTranscripts)
-    return list(inner._sources)
+    inventory = list(inner._sources)
+    if port._local_fallback is not None:
+        inventory.append(port._local_fallback)
+    return inventory
 
 
 # -- the order -------------------------------------------------------------
@@ -134,6 +137,89 @@ def test_window_options_can_enable_whisper_without_mutating_configuration():
 
     assert isinstance(chain[-1], WhisperTranscriptAdapter)
     assert chain[-1]._model_name == "tiny.en"
+
+
+def test_window_cancellation_reaches_the_local_transcriber():
+    requested = lambda: True
+    configuration = resolve(flags={"output_directory": "output"})
+    wired = CLI.default_ports(
+        configuration,
+        "a-key",
+        events=None,
+        cancelled=requested,
+        transcribe_locally=True,
+    )
+    whisper = sources(wired["transcripts"])[-1]
+
+    assert isinstance(whisper, WhisperTranscriptAdapter)
+    assert whisper._cancelled is requested
+
+
+def test_ask_policy_wires_confirmation_before_local_whisper():
+    asked = lambda result: False
+    configuration = resolve(flags={"output_directory": "output"})
+    wired = CLI.default_ports(
+        configuration,
+        "a-key",
+        events=None,
+        whisper_policy="ask",
+        confirm_transcription=asked,
+    )
+
+    assert isinstance(
+        wired["transcripts"]._local_fallback,
+        WhisperTranscriptAdapter,
+    )
+    assert wired["transcripts"]._approve_local_fallback is asked
+
+
+def test_ignore_policy_does_not_construct_local_whisper():
+    configuration = resolve(flags={"output_directory": "output"})
+    wired = CLI.default_ports(
+        configuration,
+        "a-key",
+        events=None,
+        whisper_policy="ignore",
+    )
+
+    assert wired["transcripts"]._local_fallback is None
+
+
+@pytest.mark.parametrize(
+    ("route", "adapter"),
+    [
+        ("api", TranscriptAdapter),
+        ("ytdlp", YtDlpTranscriptAdapter),
+        ("whisper", WhisperTranscriptAdapter),
+    ],
+)
+def test_manual_routes_construct_exactly_the_requested_live_source(
+    route, adapter,
+):
+    configuration = resolve(flags={"output_directory": "output"})
+
+    wired = CLI.default_ports(
+        configuration,
+        "a-key",
+        events=None,
+        transcript_route=route,
+    )
+
+    assert isinstance(wired["transcripts"], adapter)
+
+
+def test_manual_saved_route_does_not_try_a_live_source():
+    configuration = resolve(flags={"output_directory": "output"})
+
+    wired = CLI.default_ports(
+        configuration,
+        "a-key",
+        events=None,
+        transcript_route="saved",
+    )
+
+    assert isinstance(wired["transcripts"], SavedTranscriptFallback)
+    assert wired["transcripts"]._inner is None
 
 
 # -- the proxy reaches what actually gets banned ---------------------------

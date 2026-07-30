@@ -15,6 +15,7 @@ from ..domain.packet_builder import (
     PacketEvidence,
     PacketOptions,
     build,
+    summarized_retrieval_notes,
 )
 from ..domain.packets import select_packet_sections
 from ..domain.statuses import (
@@ -105,7 +106,7 @@ def handle(
                               message="Assembling the packet"))
 
     selection = select_packet_sections(
-        inspection.comments, inspection.comments,
+        inspection.relevance_comments, inspection.recent_comments,
         inspection.comments, inspection.replies,
     )
     evidence = PacketEvidence(
@@ -149,6 +150,9 @@ def handle(
         )
 
     run_record = {
+        "kind": "comment",
+        "artifact_contract_version": 2,
+        "evidence_schema_version": 2,
         "video_id": inspection.video.get("video_id", ""),
         "video_title": inspection.video.get("title", ""),
         "prompt_version": prompt_version,
@@ -193,9 +197,12 @@ def handle(
     artifacts.stage(PACKET_FILENAME, packet.text)
     artifacts.stage("transcript_timestamped.txt", timestamped or "")
     artifacts.stage("evidence.json", json.dumps({
+        "schema_version": 2,
         "video": inspection.video,
         "comments": inspection.comments,
         "replies": inspection.replies,
+        "relevance_comments": inspection.relevance_comments,
+        "recent_comments": inspection.recent_comments,
     }, indent=2, ensure_ascii=False))
     artifacts.stage("report.md", render_report(run_record, packet))
     artifacts.stage("run.json", json.dumps(run_record, indent=2,
@@ -211,7 +218,19 @@ def handle(
         message=f"Wrote {len(published)} files, {len(packet):,} characters",
     ))
 
-    result.value = {"packet": packet, "run": run_record}
+    result.value = {
+        "packet": packet,
+        "run": run_record,
+        "transcript": transcript,
+        "evidence": {
+            "schema_version": 2,
+            "video": inspection.video,
+            "comments": inspection.comments,
+            "replies": inspection.replies,
+            "relevance_comments": inspection.relevance_comments,
+            "recent_comments": inspection.recent_comments,
+        },
+    }
     result.artifacts = list(published)
     result.metrics = {
         "characters": len(packet),
@@ -251,15 +270,25 @@ def render_report(run: dict[str, Any], packet) -> str:
     )
 
     retrieval = run["retrieval"]
-    lines.extend(["", "## What this evidence covers", "",
-                  f"- retrieval: {retrieval['status']}",
-                  f"- items retrieved: {retrieval['retrieved']:,}"])
+    lines.extend([
+        "",
+        "## What this evidence covers",
+        "",
+        f"- retrieval status: {retrieval['status']}",
+        f"- top-level comments retained: {run['counts']['comments']:,}",
+        f"- replies retained: {run['counts']['replies']:,}",
+    ])
+    if retrieval.get("reported_total") is not None:
+        lines.append(
+            f"- comments reported by YouTube: "
+            f"{retrieval['reported_total']:,}"
+        )
     if not retrieval["may_conclude_absence"]:
         lines.append(
             "- **this sample is incomplete.** It cannot be used to conclude "
             "that a view is absent from the comment section."
         )
-    for note in retrieval["notes"]:
+    for note in summarized_retrieval_notes(retrieval["notes"]):
         lines.append(f"- {note}")
 
     transcript = run["transcript"]

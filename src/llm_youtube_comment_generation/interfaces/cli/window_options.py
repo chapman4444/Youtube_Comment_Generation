@@ -41,8 +41,14 @@ def apply_window_options(
         options.transcribe_locally = bool(
             configuration.get("transcribe_locally", False)
         )
+        options.whisper_policy = (
+            "automatic" if options.transcribe_locally else "ignore"
+        )
     if getattr(arguments, "transcribe_locally", None) is not None:
         options.transcribe_locally = bool(arguments.transcribe_locally)
+        options.whisper_policy = (
+            "automatic" if options.transcribe_locally else "ignore"
+        )
     if configured("whisper_model"):
         options.whisper_model = str(
             configuration.get("whisper_model", "small.en")

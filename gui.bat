@@ -64,31 +64,8 @@ echo !ALLARGS! | findstr /i /c:"--replies" >nul
 if not errorlevel 1 goto :replies
 
 :run
-start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.cli.main comment build !VIDEOARG! --window --no-copy !EXTRA!
-set "RC=!ERRORLEVEL!"
-if "!RC!"=="0" goto :done
-
-REM Exit 5 is "this video has no captions", which the video argument cannot
-REM fix. Exit 3 is a configuration failure, which is where "no video on the
-REM clipboard" lands and where asking is the useful thing to do.
-if "!RC!"=="5" goto :notranscript
-if not "!RC!"=="3" goto :failed
-if defined VIDEOARG goto :failed
-if defined ASKED goto :failed
-set "ASKED=1"
-echo.
-set /p "TYPED=YouTube URL or video ID: "
-if "!TYPED!"=="" goto :nothing
-set "VIDEOARG="!TYPED!""
-goto :run
-
-:notranscript
-echo.
-set /p "ANYWAY=No captions for this video. Build from the comments alone? [y/N] "
-if /i not "!ANYWAY!"=="y" goto :done
-set "EXTRA=!EXTRA! --allow-no-transcript"
-echo.
-goto :run
+start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.gui.launcher comment build !VIDEOARG! --window --no-copy !EXTRA!
+goto :done
 
 :replies
 REM The same window, opened on the reply side. It opens with nothing: the
@@ -106,14 +83,14 @@ if not defined HANDLE (
 echo.
 echo Opening the window on the reply side, as @!HANDLE! ...
 echo.
-start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.cli.main gui !VIDEOARG! --my-handle "!HANDLE!" !EXTRA!
+start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.gui.launcher gui !VIDEOARG! --my-handle "!HANDLE!" !EXTRA!
 goto :done
 
 :preview
 echo.
 echo Opening a preview window. Nothing is fetched and nothing is saved.
 echo.
-start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.cli.main gui --preview
+start "" "!YTCOMMENT_PYTHONW!" -m llm_youtube_comment_generation.interfaces.gui.launcher gui --preview
 goto :done
 
 :nothing

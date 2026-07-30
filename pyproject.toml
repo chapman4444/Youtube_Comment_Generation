@@ -17,6 +17,14 @@ dependencies = ["requests>=2.31"]
 test = ["pytest>=7.4"]
 verify = ["pytest>=7.4", "build>=1.2"]
 quality = ["ruff>=0.16,<0.17"]
+review = [
+    "pytest>=7.4",
+    "ruff>=0.16,<0.17",
+    "build>=1.2",
+    "youtube-transcript-api>=1.0",
+    "yt-dlp",
+    "faster-whisper",
+]
 # The caption library is optional on purpose: a missing transcript is an
 # ordinary outcome and must not stop the application running. `doctor`
 # reports its absence as a fact.

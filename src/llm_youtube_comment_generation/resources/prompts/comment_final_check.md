@@ -15,6 +15,10 @@ sections above, then send.
    forced line breaks inside a finished comment.
 7. {critique_check}
 8. {final_check}{check_waiver}
+9. Diversity: the variations meet the distinct-inference rule; changing only
+   length, tone, evidence example, or wording does not count as diversity.
+10. Identification: the Video line contains the title and exactly one plain
+    URL copied from metadata, with no Markdown link wrapper.
 {option_checks}
 
 If any check fails, fix the answer rather than explaining the failure.

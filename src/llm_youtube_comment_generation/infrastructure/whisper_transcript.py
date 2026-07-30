@@ -27,9 +27,11 @@ from __future__ import annotations
 
 import logging
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
 
+from ..domain.errors import OperationCancelled
 from ..domain.statuses import TranscriptAvailability, TranscriptResult
 
 LOGGER = logging.getLogger(__name__)
@@ -57,10 +59,22 @@ def library_available() -> bool:
     return True
 
 
-def download_audio(video_id: str, into: Path, proxy_url: str = "") -> Path:
+def download_audio(
+    video_id: str,
+    into: Path,
+    proxy_url: str = "",
+    *,
+    cancelled: Callable[[], bool] | None = None,
+) -> Path:
     """Fetch the audio track alone. Returns the file written."""
 
     import yt_dlp
+
+    cancelled = cancelled or (lambda: False)
+
+    def stop_if_requested(_status: dict[str, Any]) -> None:
+        if cancelled():
+            raise OperationCancelled("Stopped while downloading the audio.")
 
     template = str(into / "%(id)s.%(ext)s")
     options: dict[str, Any] = {
@@ -72,14 +86,17 @@ def download_audio(video_id: str, into: Path, proxy_url: str = "") -> Path:
         "no_warnings": True,
         "noprogress": True,
         "logger": _Silent(),
+        "progress_hooks": [stop_if_requested],
     }
     if proxy_url:
         options["proxy"] = proxy_url
 
     with yt_dlp.YoutubeDL(options) as ydl:
+        stop_if_requested({})
         info = ydl.extract_info(
             f"https://www.youtube.com/watch?v={video_id}", download=True
         )
+        stop_if_requested({})
 
     written = list(into.glob(f"{info.get('id', video_id)}.*"))
     if not written:
@@ -108,14 +125,25 @@ def transcribe(
     model_name: str = DEFAULT_MODEL,
     language: str = "",
     maximum_seconds: int | None = None,
+    cancelled: Callable[[], bool] | None = None,
+    progress: Callable[
+        [dict[str, Any], float, float | None],
+        None,
+    ] | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """Run the model over one audio file. Returns (entries, language)."""
+
+    cancelled = cancelled or (lambda: False)
+    if cancelled():
+        raise OperationCancelled("Stopped before local transcription began.")
 
     from faster_whisper import WhisperModel
 
     # int8 on CPU: several times faster than float32 and, on speech, not
     # audibly worse. A machine without a GPU is the case here.
     model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    if cancelled():
+        raise OperationCancelled("Stopped before local transcription began.")
     options: dict[str, Any] = {
         "language": language or None,
         # Skips silence rather than hallucinating words into it, which is
@@ -126,11 +154,42 @@ def transcribe(
     if maximum_seconds is not None:
         options["clip_timestamps"] = f"0,{max(1, int(maximum_seconds))}"
     segments, info = model.transcribe(str(audio), **options)
-    return list(_entries(segments)), str(getattr(info, "language", "") or "")
+    duration = float(getattr(info, "duration", 0.0) or 0.0)
+    started = time.monotonic()
+
+    def report(entry: dict[str, Any]) -> None:
+        if progress is None:
+            return
+        audio_done = float(entry.get("end", 0.0) or 0.0)
+        elapsed = max(0.0, time.monotonic() - started)
+        eta = (
+            max(0.0, duration - audio_done) * elapsed / audio_done
+            if duration > audio_done > 0
+            else None
+        )
+        progress(entry, duration, eta)
+
+    return (
+        list(
+            _entries(
+                segments,
+                cancelled=cancelled,
+                on_entry=report,
+            )
+        ),
+        str(getattr(info, "language", "") or ""),
+    )
 
 
-def _entries(segments: Iterable[Any]) -> Iterable[dict[str, Any]]:
+def _entries(
+    segments: Iterable[Any],
+    *,
+    cancelled: Callable[[], bool] | None = None,
+    on_entry: Callable[[dict[str, Any]], None] | None = None,
+) -> Iterable[dict[str, Any]]:
     for segment in segments:
+        if cancelled is not None and cancelled():
+            raise OperationCancelled("Stopped during local transcription.")
         text = " ".join(str(getattr(segment, "text", "")).split())
         if not text:
             continue
@@ -140,12 +199,15 @@ def _entries(segments: Iterable[Any]) -> Iterable[dict[str, Any]]:
             continue
         start = float(getattr(segment, "start", 0.0) or 0.0)
         end = float(getattr(segment, "end", 0.0) or 0.0)
-        yield {
+        entry = {
             "text": text,
             "start": start,
             "duration": max(0.0, end - start),
             "end": end,
         }
+        if on_entry is not None:
+            on_entry(entry)
+        yield entry
 
 
 class WhisperTranscriptAdapter:
@@ -159,6 +221,7 @@ class WhisperTranscriptAdapter:
         downloader: Callable[..., Path] | None = None,
         transcriber: Callable[..., tuple[list[dict[str, Any]], str]] | None = None,
         events=None,
+        cancelled: Callable[[], bool] | None = None,
     ) -> None:
         self._languages = tuple(languages)
         self._proxy_url = proxy_url or ""
@@ -166,7 +229,12 @@ class WhisperTranscriptAdapter:
         self._download = downloader or download_audio
         self._transcribe = transcriber or transcribe
         self._events = events
+        self._cancelled = cancelled or (lambda: False)
         self._done: dict[str, TranscriptResult] = {}
+
+    def _stop_if_requested(self, message: str) -> None:
+        if self._cancelled():
+            raise OperationCancelled(message)
 
     def fetch(
         self,
@@ -178,6 +246,8 @@ class WhisperTranscriptAdapter:
         cached = self._done.get(video_id)
         if cached is not None:
             return cached
+
+        self._stop_if_requested("Stopped before local transcription began.")
 
         if self._download is download_audio and not library_available():
             return TranscriptResult(
@@ -196,8 +266,27 @@ class WhisperTranscriptAdapter:
         # gigabyte of stray audio in the operator's output would be our mess.
         with tempfile.TemporaryDirectory(prefix="ytcomment-audio-") as scratch:
             try:
-                audio = self._download(video_id, Path(scratch), self._proxy_url)
+                if self._download is download_audio:
+                    audio = self._download(
+                        video_id,
+                        Path(scratch),
+                        self._proxy_url,
+                        cancelled=self._cancelled,
+                    )
+                else:
+                    audio = self._download(
+                        video_id, Path(scratch), self._proxy_url
+                    )
+            except OperationCancelled:
+                raise
             except Exception as exc:        # noqa: BLE001 - library raises broadly
+                # yt-dlp may wrap an exception raised by a progress hook.
+                # Preserve the operator's Stop request rather than reporting
+                # that wrapped cancellation as a failed download.
+                if self._cancelled():
+                    raise OperationCancelled(
+                        "Stopped while downloading the audio."
+                    ) from exc
                 return TranscriptResult(
                     availability=TranscriptAvailability.FETCH_FAILED,
                     source=SOURCE,
@@ -206,13 +295,25 @@ class WhisperTranscriptAdapter:
                             f"{str(exc).splitlines()[0][:120]})"),
                 )
 
+            self._stop_if_requested(
+                "Stopped before local transcription began."
+            )
             try:
-                entries, detected = self._transcribe(
-                    audio,
-                    model_name=self._model_name,
-                    language=wanted[0].split("-")[0] if wanted else "",
-                )
+                arguments: dict[str, Any] = {
+                    "model_name": self._model_name,
+                    "language": wanted[0].split("-")[0] if wanted else "",
+                }
+                if self._transcribe is transcribe:
+                    arguments["cancelled"] = self._cancelled
+                    arguments["progress"] = self._report_progress
+                entries, detected = self._transcribe(audio, **arguments)
+            except OperationCancelled:
+                raise
             except Exception as exc:        # noqa: BLE001
+                if self._cancelled():
+                    raise OperationCancelled(
+                        "Stopped during local transcription."
+                    ) from exc
                 return TranscriptResult(
                     availability=TranscriptAvailability.FETCH_FAILED,
                     source=SOURCE,
@@ -245,6 +346,28 @@ class WhisperTranscriptAdapter:
         self._done[video_id] = result
         self._say(f"Transcribed {len(entries):,} segments.")
         return result
+
+    def _report_progress(
+        self,
+        entry: dict[str, Any],
+        duration: float,
+        eta_seconds: float | None,
+    ) -> None:
+        if self._events is None:
+            return
+        from ..ports.events import EventKind, ProgressEvent
+
+        self._events.emit(ProgressEvent(
+            EventKind.PROGRESS,
+            step="transcribe",
+            current=int(float(entry.get("end", 0.0) or 0.0)),
+            total=int(duration) if duration > 0 else None,
+            data={
+                "transcript_entry": dict(entry),
+                "eta_seconds": eta_seconds,
+                "duration_seconds": duration,
+            },
+        ))
 
     def _say(self, message: str) -> None:
         """Tell the operator, because this is the slow one."""

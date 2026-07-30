@@ -14,13 +14,14 @@ mode stops being padded out to the reply mode's height.
 **Advanced is a dialog.** The API key, output folder, editor, proxy, languages
 and the four count spinboxes are set once and then never touched. Ten rows.
 
-**Progress collapses.** The status line is always there; the log is a
-disclosure the operator opens when he wants it.
+**Activity is visible.** Retrieval and processing messages live in the
+default Activity tab. Transcript evidence has its own tab, while the bottom
+bar remains a compact summary of transcript state, progress, and status.
 
 Two rules this window is built around, both of them the operator's:
 
 **It opens without a video.** The old one, and the first rebuilt one, resolved
-a video before a window existed — so a window could not be opened to look at,
+a video before a window existed—so a window could not be opened to look at,
 and "nothing is on the clipboard" was a reason to refuse rather than a state to
 show. The read-only selection starts empty, the clipboard is inspected on open
 and focus, and a valid video can arrive whenever.
@@ -32,6 +33,8 @@ without an explicit action.
 
 from __future__ import annotations
 
+import copy
+import json
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Callable
@@ -40,7 +43,7 @@ from ...domain.writing_options import DIALS, dial_choice_label
 from ...domain.writing_presets import BUILT_IN_PRESETS, WritingPreset
 from ...domain.errors import ConfigurationError
 from ...domain.ids import extract_video_id
-from ...domain.video import watch_url
+from ...domain.video import format_timestamp, watch_url
 from .options import (
     LENGTH_CHOICES,
     LENGTH_HINTS,
@@ -53,8 +56,18 @@ from .options import (
 from .sequence import ReplySequence, Step, read_clipboard
 from .worker import BackgroundJob
 from .layout import initial_size, valid_saved_geometry
-from .run_receipt import comment_receipt, reply_receipt
-from .widgets import Tooltip
+from .run_receipt import (
+    comment_receipt,
+    reply_receipt,
+    transcript_notification,
+)
+from .evidence_views import (
+    comments_text,
+    description_text,
+    metadata_text,
+    replies_text,
+)
+from .widgets import TextContextMenu, Tooltip
 from .advanced_dialog import AdvancedDialog
 
 PADDING = 8
@@ -84,6 +97,7 @@ class PacketWindow:
         ask_preset_name: Callable[[], str | None] | None = None,
         confirm_delete_preset: Callable[[str], bool] | None = None,
         confirm_record_posted: Callable[[str], bool] | None = None,
+        confirm_whisper: Callable[[str], bool] | None = None,
         notify: Callable[[str, str], None] | None = None,
         poll: bool = True,
         mode: str = "comment",
@@ -114,6 +128,9 @@ class PacketWindow:
         )
         self._confirm_record_posted = (
             confirm_record_posted or self._default_confirm_record_posted
+        )
+        self._confirm_whisper = (
+            confirm_whisper or self._default_confirm_whisper
         )
         self._presets: dict[str, WritingPreset] = {}
         self._reload_presets()
@@ -154,13 +171,21 @@ class PacketWindow:
         self.resolution_summary = tk.StringVar(value="")
         self.help_text = tk.StringVar(value="")
         self.progress_value = tk.DoubleVar(value=0.0)
-        self.log_open = tk.BooleanVar(value=False)
+        self.transcript_notice = tk.StringVar(
+            value="Not checked yet."
+        )
         self._tooltips: list[Tooltip] = []
         self._approach_tooltips: list[Tooltip] = []
         self._display_mode = self.mode.get()
         self._suppressed_clipboard_video = ""
         self._discard_job_result = False
+        self._live_transcript_started = False
+        self._pending_build_signature = ""
+        self._completed_build_signature = ""
         self._message = initial_video_error
+        self._text_context_menus: list[TextContextMenu] = []
+        self.evidence_views: dict[str, tk.Text] = {}
+        self.evidence_copy_buttons: dict[str, ttk.Button] = {}
 
         self.root.title("YouTube packet builder")
         self.root.minsize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -339,9 +364,10 @@ class PacketWindow:
         )
         self.approach_canvas.configure(yscrollcommand=approach_scroll.set)
         self.approach_canvas.grid(row=0, column=0, sticky="ew")
-        self.approach_canvas.bind("<MouseWheel>", self._scroll_approaches)
+        self._bind_approach_wheel(self.approach_canvas)
         approach_scroll.grid(row=0, column=1, sticky="ns")
         self.approach_frame = ttk.Frame(self.approach_canvas)
+        self._bind_approach_wheel(self.approach_frame)
         self.approach_window = self.approach_canvas.create_window(
             (0, 0), window=self.approach_frame, anchor="nw"
         )
@@ -452,15 +478,153 @@ class PacketWindow:
     def _build_right(self, parent: ttk.Frame) -> ttk.Frame:
         right = ttk.Frame(parent)
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+
+        toolbar = ttk.Frame(right)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.build_button = ttk.Button(
+            toolbar, text="Build and copy packet",
+            command=self.build_packet,
+        )
+        self.build_button.pack(side="left")
+        self.stop_button = ttk.Button(
+            toolbar, text="Stop", command=self.stop_build,
+            state="disabled",
+        )
+        self.stop_button.pack(side="left", padx=(6, 0))
 
         self.output_tabs = ttk.Notebook(right)
-        self.output_tabs.grid(row=0, column=0, sticky="nsew")
+        self.output_tabs.grid(row=1, column=0, sticky="nsew")
+
+        activity_tab = ttk.Frame(self.output_tabs, padding=PADDING)
+        activity_tab.columnconfigure(0, weight=1)
+        activity_tab.rowconfigure(1, weight=1)
+        self.output_tabs.add(activity_tab, text="Activity")
+        self.activity_tab = activity_tab
+        ttk.Label(
+            activity_tab,
+            text=(
+                "Retrieval and processing activity appears here, including "
+                "comments, replies, transcript checks, and packet assembly."
+            ),
+            foreground="#444444",
+            wraplength=700,
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.log = tk.Text(
+            activity_tab,
+            wrap="word",
+            state="disabled",
+            background="#f6f6f6",
+        )
+        self.log.grid(row=1, column=0, sticky="nsew")
+        log_scroll = ttk.Scrollbar(
+            activity_tab,
+            orient="vertical",
+            command=self.log.yview,
+        )
+        log_scroll.grid(row=1, column=1, sticky="ns")
+        self.log.configure(yscrollcommand=log_scroll.set)
+        self._add_text_context_menu(self.log)
+
+        self._add_evidence_tab(
+            "metadata",
+            "Metadata",
+            "Video title, URL, channel, date, duration, and public counts.",
+        )
+        self._add_evidence_tab(
+            "description",
+            "Description",
+            "The description published beneath the video.",
+        )
+
+        transcript_tab = ttk.Frame(self.output_tabs, padding=PADDING)
+        transcript_tab.columnconfigure(0, weight=1)
+        transcript_tab.rowconfigure(1, weight=1)
+        self.output_tabs.add(transcript_tab, text="Transcript")
+        self.transcript_tab = transcript_tab
+        ttk.Label(
+            transcript_tab,
+            text=(
+                "Published captions appear here after retrieval. During "
+                "local Whisper transcription, completed segments appear "
+                "here as they are created."
+            ),
+            foreground="#444444",
+            wraplength=700,
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self.transcript_preview = tk.Text(
+            transcript_tab,
+            wrap="word",
+            state="disabled",
+            background="#f6f6f6",
+        )
+        self.transcript_preview.grid(row=1, column=0, sticky="nsew")
+        transcript_scroll = ttk.Scrollbar(
+            transcript_tab,
+            orient="vertical",
+            command=self.transcript_preview.yview,
+        )
+        transcript_scroll.grid(row=1, column=1, sticky="ns")
+        self.transcript_preview.configure(
+            yscrollcommand=transcript_scroll.set
+        )
+        self._add_text_context_menu(self.transcript_preview)
+        self.evidence_views["transcript"] = self.transcript_preview
+        transcript_actions = ttk.Frame(transcript_tab)
+        transcript_actions.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        transcript_copy = ttk.Button(
+            transcript_actions,
+            text="Copy transcript",
+            command=lambda: self.copy_evidence("transcript"),
+            state="disabled",
+        )
+        transcript_copy.pack(side="left")
+        self.evidence_copy_buttons["transcript"] = transcript_copy
+        self.transcript_api_button = ttk.Button(
+            transcript_actions,
+            text="1. Transcript API",
+            command=lambda: self.build_from_transcript_route("api"),
+            state="disabled",
+        )
+        self.transcript_api_button.pack(side="left", padx=(6, 0))
+        self.ytdlp_captions_button = ttk.Button(
+            transcript_actions,
+            text="2. yt-dlp captions",
+            command=lambda: self.build_from_transcript_route("ytdlp"),
+            state="disabled",
+        )
+        self.ytdlp_captions_button.pack(side="left", padx=(6, 0))
+        self.saved_transcript_button = ttk.Button(
+            transcript_actions,
+            text="3. Saved transcript",
+            command=lambda: self.build_from_transcript_route("saved"),
+            state="disabled",
+        )
+        self.saved_transcript_button.pack(side="left", padx=(6, 0))
+        self.run_whisper_button = ttk.Button(
+            transcript_actions,
+            text="4. Whisper",
+            command=lambda: self.build_from_transcript_route("whisper"),
+            state="disabled",
+        )
+        self.run_whisper_button.pack(side="left", padx=(6, 0))
+
+        self._add_evidence_tab(
+            "comments",
+            "Comments",
+            "All top-level comments retained by this retrieval.",
+        )
+        self._add_evidence_tab(
+            "replies",
+            "Replies",
+            "All replies retained from the selected comment threads.",
+        )
 
         packet_tab = ttk.Frame(self.output_tabs, padding=PADDING)
         packet_tab.columnconfigure(0, weight=1)
         packet_tab.rowconfigure(2, weight=1)
         self.output_tabs.add(packet_tab, text="Generated packet")
+        self.packet_tab = packet_tab
         ttk.Label(
             packet_tab, text="The complete packet appears here after Build.",
             foreground="#444444",
@@ -470,25 +634,21 @@ class PacketWindow:
             textvariable=self.run_receipt,
             foreground="#444444",
             justify="left",
-            wraplength=760,
+            wraplength=700,
         )
         self.run_receipt_label.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         self.packet_preview = tk.Text(
             packet_tab, wrap="word", state="disabled", background="#f6f6f6"
         )
         self.packet_preview.grid(row=2, column=0, sticky="nsew")
+        self._add_text_context_menu(self.packet_preview)
         packet_actions = ttk.Frame(packet_tab)
         packet_actions.grid(row=3, column=0, sticky="ew", pady=(6, 0))
-        self.build_button = ttk.Button(
-            packet_actions, text="Build and copy packet",
-            command=self.do_primary,
-        )
-        self.build_button.pack(side="left")
         self.packet_copy_button = ttk.Button(
             packet_actions, text="Copy again", command=self.do_copy,
             state="disabled",
         )
-        self.packet_copy_button.pack(side="left", padx=(6, 0))
+        self.packet_copy_button.pack(side="left")
         self.packet_count = ttk.Label(packet_actions, text="")
         self.packet_count.pack(side="right")
 
@@ -501,6 +661,7 @@ class PacketWindow:
 
         card = ttk.LabelFrame(right, text="", padding=PADDING)
         self.output_tabs.add(card, text="Paste answer")
+        self.answer_tab = card
         card.columnconfigure(0, weight=1)
         card.rowconfigure(3, weight=1)
 
@@ -513,6 +674,7 @@ class PacketWindow:
         self.said = tk.Text(card, height=4, width=35, wrap="word", state="disabled",
                             relief="flat", background="#f6f6f6")
         self.said.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        self._add_text_context_menu(self.said)
 
         answer = ttk.LabelFrame(card, text="Model answer")
         answer.grid(row=3, column=0, sticky="nsew", pady=(0, 6))
@@ -527,6 +689,7 @@ class PacketWindow:
         )
         answer_scroll.grid(row=0, column=1, sticky="ns")
         self.answer_input.configure(yscrollcommand=answer_scroll.set)
+        self._add_text_context_menu(self.answer_input)
         self.answer_input.bind("<KeyRelease>", lambda _event: self.refresh())
         self.answer_input.bind(
             "<Control-Return>", lambda _event: self.do_primary()
@@ -550,9 +713,9 @@ class PacketWindow:
             state="disabled",
         )
         self.record_button.pack(side="left", padx=(6, 0))
-        self.cancel_button = ttk.Button(actions, text="Cancel",
-                                        command=self.job.cancel,
-                                        state="disabled")
+        self.cancel_button = ttk.Button(
+            actions, text="Stop", command=self.stop_build, state="disabled"
+        )
         self.cancel_button.pack(side="right")
 
         footer = ttk.Frame(card)
@@ -571,34 +734,194 @@ class PacketWindow:
         self.packet_size_label.pack(side="right", padx=(0, 12))
         return right
 
+    def _add_text_context_menu(self, widget: tk.Text) -> None:
+        self._text_context_menus.append(
+            TextContextMenu(widget, self._write_selected_text)
+        )
+
+    def _write_selected_text(self, text: str) -> None:
+        if self.clipboard is None:
+            self.say("No clipboard service is available.")
+            return
+        self.clipboard.write(text)
+
+    def _add_evidence_tab(
+        self,
+        key: str,
+        title: str,
+        description: str,
+    ) -> None:
+        tab = ttk.Frame(self.output_tabs, padding=PADDING)
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(1, weight=1)
+        self.output_tabs.add(tab, text=title)
+        ttk.Label(
+            tab,
+            text=description,
+            foreground="#444444",
+            wraplength=700,
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        view = tk.Text(
+            tab,
+            wrap="word",
+            state="disabled",
+            background="#f6f6f6",
+        )
+        view.grid(row=1, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(tab, orient="vertical", command=view.yview)
+        scroll.grid(row=1, column=1, sticky="ns")
+        view.configure(yscrollcommand=scroll.set)
+        self._add_text_context_menu(view)
+        actions = ttk.Frame(tab)
+        actions.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        button = ttk.Button(
+            actions,
+            text=f"Copy {title.lower()}",
+            command=lambda name=key: self.copy_evidence(name),
+            state="disabled",
+        )
+        button.pack(side="left")
+        self.evidence_views[key] = view
+        self.evidence_copy_buttons[key] = button
+
     def _build_bottom(self) -> None:
         bottom = ttk.Frame(self.root, padding=(PADDING, 4, PADDING, PADDING))
         bottom.grid(row=2, column=0, sticky="ew")
         bottom.columnconfigure(1, weight=1)
+        bottom.columnconfigure(3, weight=2)
 
-        ttk.Checkbutton(bottom, text="Progress", variable=self.log_open,
-                        command=self._toggle_log).grid(row=0, column=0,
-                                                       sticky="w")
+        self.transcript_indicator = ttk.Label(
+            bottom,
+            text="●",
+            foreground="#777777",
+            font=("TkDefaultFont", 11, "bold"),
+        )
+        self.transcript_indicator.grid(row=0, column=0, sticky="w")
+        self.transcript_notice_label = ttk.Label(
+            bottom,
+            textvariable=self.transcript_notice,
+            justify="left",
+            wraplength=400,
+        )
+        self.transcript_notice_label.grid(
+            row=0, column=1, sticky="ew", padx=(3, 10)
+        )
+
+        ttk.Label(bottom, text="Progress:").grid(
+            row=0, column=2, sticky="w"
+        )
         ttk.Progressbar(bottom, orient="horizontal", mode="determinate",
                         maximum=1.0, variable=self.progress_value).grid(
-            row=0, column=1, sticky="ew", padx=(8, 8))
-        ttk.Label(bottom, textvariable=self.status).grid(row=0, column=2,
+            row=0, column=3, sticky="ew", padx=(8, 8))
+        ttk.Label(bottom, textvariable=self.status).grid(row=0, column=4,
                                                          sticky="e")
 
-        self.log_frame = ttk.Frame(bottom)
-        self.log_frame.grid(row=1, column=0, columnspan=3, sticky="ew",
-                            pady=(4, 0))
-        self.log_frame.columnconfigure(0, weight=1)
-        self.log = tk.Text(self.log_frame, height=5, wrap="word",
-                           state="disabled")
-        self.log.grid(row=0, column=0, sticky="ew")
-        log_scroll = ttk.Scrollbar(self.log_frame, orient="vertical",
-                                   command=self.log.yview)
-        log_scroll.grid(row=0, column=1, sticky="ns")
-        self.log.configure(yscrollcommand=log_scroll.set)
-        self.log_frame.grid_remove()
-
     # -- state -------------------------------------------------------------
+
+    def _set_transcript_status(self, state: str, message: str) -> None:
+        colors = {
+            "ready": "#16833b",
+            "missing": "#b42318",
+            "working": "#b77900",
+            "unknown": "#777777",
+        }
+        self.transcript_indicator.configure(
+            foreground=colors.get(state, colors["unknown"])
+        )
+        self.transcript_notice.set(message)
+
+    def _clear_transcript_preview(self) -> None:
+        self._set_evidence_view("transcript", "")
+
+    def _set_evidence_view(self, key: str, text: str) -> None:
+        view = self.evidence_views.get(key)
+        if view is None:
+            return
+        view.configure(state="normal")
+        view.delete("1.0", "end")
+        if text:
+            view.insert("1.0", text)
+        view.configure(state="disabled")
+        button = self.evidence_copy_buttons.get(key)
+        if button is not None:
+            button.configure(state=("normal" if text else "disabled"))
+
+    def _clear_evidence_views(self) -> None:
+        for key in tuple(self.evidence_views):
+            self._set_evidence_view(key, "")
+
+    def _show_evidence(self, evidence: Any) -> None:
+        evidence = evidence if isinstance(evidence, dict) else {}
+        video = evidence.get("video")
+        video = video if isinstance(video, dict) else {}
+        comments = evidence.get("comments")
+        comments = comments if isinstance(comments, (list, tuple)) else ()
+        replies = evidence.get("replies")
+        replies = replies if isinstance(replies, (list, tuple)) else ()
+        self._set_evidence_view("metadata", metadata_text(video))
+        self._set_evidence_view("description", description_text(video))
+        self._set_evidence_view("comments", comments_text(comments))
+        self._set_evidence_view("replies", replies_text(replies))
+
+    def copy_evidence(self, key: str) -> None:
+        view = self.evidence_views.get(key)
+        if view is None:
+            return
+        text = view.get("1.0", "end-1c")
+        if not text:
+            self.say(f"No {key} is available to copy.")
+            return
+        try:
+            if self.clipboard is None:
+                raise RuntimeError("no clipboard service is available")
+            self.clipboard.write(text)
+        except Exception as failure:        # noqa: BLE001 - visible copy error
+            self.say(f"Could not copy {key}: {failure}")
+            return
+        self.say(f"Copied {key}: {len(text):,} characters.")
+
+    def _append_transcript_entry(self, entry: dict[str, Any]) -> None:
+        text = " ".join(str(entry.get("text") or "").split())
+        if not text:
+            return
+        line = f"[{format_timestamp(entry.get('start'))}] {text}\n"
+        self.transcript_preview.configure(state="normal")
+        self.transcript_preview.insert("end", line)
+        self.transcript_preview.see("end")
+        self.transcript_preview.configure(state="disabled")
+        self.evidence_copy_buttons["transcript"].configure(state="normal")
+
+    def _show_transcript(self, transcript: Any) -> None:
+        self._clear_transcript_preview()
+        if isinstance(transcript, dict):
+            entries = tuple(transcript.get("entries_data", ()) or ())
+            available = transcript.get("availability") == "available"
+        else:
+            entries = tuple(getattr(transcript, "entries", ()) or ())
+            available = bool(getattr(transcript, "available", False))
+        for entry in entries:
+            self._append_transcript_entry(dict(entry))
+        notice = transcript_notification(transcript)
+        self._set_transcript_status(
+            "ready" if available else "missing",
+            notice,
+        )
+        if not entries:
+            self.transcript_preview.configure(state="normal")
+            self.transcript_preview.insert("1.0", notice)
+            self.transcript_preview.configure(state="disabled")
+
+    @staticmethod
+    def _eta_text(seconds: Any) -> str:
+        try:
+            remaining = max(0, int(float(seconds)))
+        except (TypeError, ValueError):
+            return "estimating time remaining"
+        hours, remainder = divmod(remaining, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f"about {hours:d}:{minutes:02d}:{secs:02d} remaining"
+        return f"about {minutes:d}:{secs:02d} remaining"
 
     def _reload_presets(self) -> None:
         presets = (
@@ -719,11 +1042,15 @@ class PacketWindow:
             if wanted and wanted not in searchable:
                 continue
             if dimension != last_dimension:
-                ttk.Label(
+                dimension_label = ttk.Label(
                     self.approach_frame,
                     text=dimension.title(),
                     foreground="#555555",
-                ).grid(row=row, column=0, sticky="w", padx=2, pady=(5, 1))
+                )
+                dimension_label.grid(
+                    row=row, column=0, sticky="w", padx=2, pady=(5, 1)
+                )
+                self._bind_approach_wheel(dimension_label)
                 row += 1
                 last_dimension = dimension
             variable = self.approach_vars[key]
@@ -746,22 +1073,36 @@ class PacketWindow:
                 lambda _e, value=help_text: self._show_help(value),
                 add="+",
             )
+            self._bind_approach_wheel(check)
             self._approach_tooltips.append(
                 Tooltip(check, lambda value=help_text: value))
             self.approach_checks[key] = check
             row += 1
         if not self.approach_checks:
-            ttk.Label(
+            empty_label = ttk.Label(
                 self.approach_frame,
                 text="No approaches match that search.",
                 foreground="#666666",
-            ).grid(row=0, column=0, sticky="w", padx=2, pady=6)
+            )
+            empty_label.grid(row=0, column=0, sticky="w", padx=2, pady=6)
+            self._bind_approach_wheel(empty_label)
         self.approach_canvas.yview_moveto(0)
 
+    def _bind_approach_wheel(self, widget: tk.Misc) -> None:
+        widget.bind("<MouseWheel>", self._scroll_approaches, add="+")
+        widget.bind("<Button-4>", self._scroll_approaches, add="+")
+        widget.bind("<Button-5>", self._scroll_approaches, add="+")
+
     def _scroll_approaches(self, event) -> str:
-        self.approach_canvas.yview_scroll(
-            -1 if event.delta > 0 else 1, "units"
-        )
+        delta = int(getattr(event, "delta", 0) or 0)
+        number = int(getattr(event, "num", 0) or 0)
+        if delta > 0 or number == 4:
+            direction = -1
+        elif delta < 0 or number == 5:
+            direction = 1
+        else:
+            return "break"
+        self.approach_canvas.yview_scroll(direction, "units")
         return "break"
         self._apply_resolved_approaches()
         self._update_approach_state()
@@ -883,8 +1224,20 @@ class PacketWindow:
         self._store_approaches()
         return self.options
 
+    @staticmethod
+    def _build_signature(options: PacketOptionsModel, mode: str) -> str:
+        """The inputs that make one packet distinct from another."""
+
+        return json.dumps(
+            {"mode": mode, "options": vars(options)},
+            sort_keys=True,
+            default=str,
+        )
+
     def refresh(self) -> None:
         options = self.gather()
+        signature = self._build_signature(options, self.mode.get())
+        blockers = options.problems(mode=self.mode.get())
         typed_answer = self._answer_text()
         if hasattr(self, "delete_preset_button"):
             selected_preset = self._presets.get(self.preset_name.get())
@@ -923,7 +1276,8 @@ class PacketWindow:
         )
         self._enable(self.packet_copy_button, bool(self.last_packet))
         self.output_tabs.tab(
-            1, state=("normal" if self.last_packet else "disabled")
+            self.answer_tab,
+            state=("normal" if self.last_packet else "disabled"),
         )
 
         view = self.sequence.view(
@@ -986,10 +1340,24 @@ class PacketWindow:
                     label.configure(text="")
 
         has_video = bool(options.video)
+        can_retry_transcript = (
+            has_video and not self.job.running and not blockers
+        )
+        for button in (
+            self.transcript_api_button,
+            self.ytdlp_captions_button,
+            self.saved_transcript_button,
+            self.run_whisper_button,
+        ):
+            self._enable(button, can_retry_transcript)
         # Once a packet exists the button means "take the answer", and that
         # is dead until the clipboard actually holds one.
         if self.mode.get() == "comment" and \
                 getattr(self, "comment_session", None) is not None:
+            inputs_changed = bool(
+                self._completed_build_signature
+                and signature != self._completed_build_signature
+            )
             offer = getattr(self, "_offer", None)
             self._enable(self.primary,
                          bool(typed_answer or (
@@ -1001,12 +1369,20 @@ class PacketWindow:
                 self._record_available(self.comment_session),
             )
             self._update_record_button(self.comment_session)
-            self._enable(self.cancel_button, self.job.running)
-            self._enable(self.build_button, False)
-            self.status.set(self._message or "Packet built and copied.")
+            can_stop = self.job.running and not self.job.cancelled
+            self._enable(self.cancel_button, can_stop)
+            self._enable(self.stop_button, can_stop)
+            self._enable(
+                self.build_button,
+                inputs_changed and not self.job.running and not blockers,
+            )
+            self.status.set(
+                "Video or settings changed. Build a new packet when ready."
+                if inputs_changed
+                else (self._message or "Packet built and copied.")
+            )
             return
 
-        blockers = options.problems(mode=self.mode.get())
         self._enable(
             self.primary,
             has_video and not self.job.running and not blockers,
@@ -1035,7 +1411,9 @@ class PacketWindow:
             self._record_available(active_session),
         )
         self._update_record_button(active_session)
-        self._enable(self.cancel_button, self.job.running)
+        can_stop = self.job.running and not self.job.cancelled
+        self._enable(self.cancel_button, can_stop)
+        self._enable(self.stop_button, can_stop)
 
         # The last thing said wins. refresh() runs after every action, so
         # setting the status unconditionally here wiped every message a
@@ -1049,12 +1427,6 @@ class PacketWindow:
 
     def _enable(self, widget: Any, on: bool) -> None:
         widget.configure(state=("normal" if on else "disabled"))
-
-    def _toggle_log(self) -> None:
-        if self.log_open.get():
-            self.log_frame.grid()
-        else:
-            self.log_frame.grid_remove()
 
     # -- clipboard ---------------------------------------------------------
 
@@ -1200,7 +1572,11 @@ class PacketWindow:
         self.triage_packet = ""
         self.current_packet = ""
         self.last_packet = ""
+        self._pending_build_signature = ""
+        self._completed_build_signature = ""
         self.run_receipt.set("")
+        self._set_transcript_status("unknown", "Transcript not checked yet.")
+        self._clear_evidence_views()
         self._clear_answer()
         self._offer = None
         self.progress_value.set(0.0)
@@ -1237,7 +1613,30 @@ class PacketWindow:
             self.take_comment_answer()
             return
 
-        options = self.gather()
+        self.build_packet()
+
+    def build_packet(self) -> None:
+        """Build from the current video/settings, even if an older packet exists."""
+
+        self._start_packet_build(copy.deepcopy(self.gather()))
+
+    def build_from_transcript_route(self, route: str) -> None:
+        """Build using exactly one manually selected transcript source."""
+
+        options = copy.deepcopy(self.gather())
+        options.transcript_route = route
+        options.whisper_policy = (
+            "automatic" if route == "whisper" else "ignore"
+        )
+        options.transcribe_locally = route == "whisper"
+        self._start_packet_build(options, force=True)
+
+    def _start_packet_build(
+        self,
+        options: PacketOptionsModel,
+        *,
+        force: bool = False,
+    ) -> None:
         problems = options.problems(mode=self.mode.get())
         if problems:
             for problem in problems:
@@ -1255,12 +1654,31 @@ class PacketWindow:
         # starts. The options object is likewise a snapshot, so editing a
         # field mid-build cannot change what is being built.
         mode = self.mode.get()
+        signature = self._build_signature(options, mode)
+        if (
+            not force
+            and
+            getattr(self, "comment_session", None) is not None
+            and signature == self._completed_build_signature
+        ):
+            self.say("This packet already matches the current video and settings.")
+            return
+        snapshot = copy.deepcopy(options)
         self._discard_job_result = False
         started = self.job.start(
-            lambda job: self._build_packet(options, mode, job)
+            lambda job: self._build_packet(snapshot, mode, job)
         )
         if not started:
             self.say("A build is already running.")
+        else:
+            self._pending_build_signature = signature
+            self._live_transcript_started = False
+            self._clear_evidence_views()
+            self._set_transcript_status(
+                "working",
+                "Checking available transcript sources.",
+            )
+            self.output_tabs.select(self.activity_tab)
         self.refresh()
 
     def take_answer(self) -> None:
@@ -1324,6 +1742,16 @@ class PacketWindow:
             getattr(packet, "run_record", {}) or {},
             str(getattr(getattr(packet, "artifacts", None), "root", "") or ""),
         ))
+        run_record = getattr(packet, "run_record", {}) or {}
+        transcript = getattr(packet, "transcript", None)
+        if transcript is None:
+            transcript = (
+                run_record.get("transcript", {})
+                if isinstance(run_record, dict)
+                else {}
+            )
+        self._show_evidence(getattr(packet, "evidence", {}) or {})
+        self._show_transcript(transcript)
         if self._comment_session_factory is None:
             return
         try:
@@ -1372,6 +1800,16 @@ class PacketWindow:
         self.run_receipt.set(reply_receipt(
             getattr(run, "receipt", {}) or {}
         ))
+        receipt = getattr(run, "receipt", {}) or {}
+        transcript = getattr(run, "transcript", None)
+        if transcript is None:
+            transcript = (
+                receipt.get("transcript", {})
+                if isinstance(receipt, dict)
+                else {}
+            )
+        self._show_evidence({"video": receipt.get("video", {})})
+        self._show_transcript(transcript)
         self.triage_packet = run.triage_packet
         people = [getattr(t, "author", "") for t in run.session.targets]
         self.sequence = ReplySequence(people=tuple(people))
@@ -1500,6 +1938,15 @@ class PacketWindow:
     def do_copy(self) -> None:
         self._copy_current_packet(auto=False)
 
+    def stop_build(self) -> None:
+        """Request cancellation from either visible Stop button."""
+
+        if not self.job.running:
+            return
+        self.job.cancel()
+        self.say("Stopping at the next safe point...")
+        self.refresh()
+
     def record_posted(self) -> None:
         """Explicitly mark the latest accepted draft as manually posted."""
 
@@ -1589,7 +2036,11 @@ class PacketWindow:
         self.triage_packet = ""
         self.current_packet = ""
         self.last_packet = ""
+        self._pending_build_signature = ""
+        self._completed_build_signature = ""
         self.run_receipt.set("")
+        self._set_transcript_status("unknown", "Transcript not checked yet.")
+        self._clear_evidence_views()
         self._clear_answer()
         self._offer = None
         self.progress_value.set(0.0)
@@ -1624,7 +2075,54 @@ class PacketWindow:
                 self.say(event.message)
             if event.fraction is not None:
                 self.progress_value.set(event.fraction)
+            payload = event.value if isinstance(event.value, dict) else {}
+            step = str(payload.get("step") or "")
+            data = payload.get("data")
+            data = data if isinstance(data, dict) else {}
+            entry = data.get("transcript_entry")
+            if step == "transcribe" and isinstance(entry, dict):
+                if not self._live_transcript_started:
+                    self._live_transcript_started = True
+                    self.output_tabs.select(self.transcript_tab)
+                self._append_transcript_entry(entry)
+                self._set_transcript_status(
+                    "working",
+                    "Local Whisper is transcribing — "
+                    f"{self._eta_text(data.get('eta_seconds'))}.",
+                )
+            elif step == "transcribe":
+                self._set_transcript_status(
+                    "working",
+                    "Local Whisper is starting.",
+                )
+        elif event.kind == "confirmation":
+            request = event.value
+            reason = transcript_notification(
+                getattr(request, "payload", {})
+            )
+            self._set_transcript_status("missing", reason)
+            accepted = False
+            try:
+                accepted = bool(self._confirm_whisper(reason))
+            except Exception as failure:    # noqa: BLE001 - refuse safely
+                self.say(f"Whisper confirmation could not open: {failure}")
+            finally:
+                request.resolve(accepted)
+            if accepted:
+                self._set_transcript_status(
+                    "working",
+                    "Local Whisper was approved and is starting.",
+                )
+                self.say("Starting local Whisper transcription.")
+            else:
+                self._set_transcript_status(
+                    "missing",
+                    f"{reason} Local Whisper was not started.",
+                )
+                self.say("Continuing without local Whisper.")
         elif event.kind == "done":
+            self._completed_build_signature = self._pending_build_signature
+            self._pending_build_signature = ""
             self.result = event.value
             if hasattr(event.value, "session"):
                 # A reply run hands back a guided session rather than a
@@ -1636,14 +2134,23 @@ class PacketWindow:
                 self.last_packet = str(getattr(event.value, "text", "") or "")
                 self._adopt_comment(event.value)
                 self._copy_current_packet(auto=True)
+            self.output_tabs.select(self.packet_tab)
             # Completion is already stated in the status line. Leaving a
             # permanently full bar makes an idle window look busy.
             self.progress_value.set(0.0)
             if not self.last_packet:
                 self.say(event.message)
         elif event.kind == "cancelled":
-            self.say("Stopped at the next safe point.")
+            self._pending_build_signature = ""
+            self.progress_value.set(0.0)
+            self._set_transcript_status(
+                "missing",
+                "The transcript check or local transcription was stopped.",
+            )
+            self.say("Stopped.")
         else:
+            self._pending_build_signature = ""
+            self.progress_value.set(0.0)
             self.say(event.message)
             self._notify("That did not work", event.message)
         self.refresh()
@@ -1691,6 +2198,21 @@ class PacketWindow:
         return bool(messagebox.askyesno(
             "Record as posted",
             message,
+            parent=self.root,
+        ))
+
+    def _default_confirm_whisper(self, reason: str) -> bool:  # pragma: no cover
+        from tkinter import messagebox
+
+        return bool(messagebox.askyesno(
+            "Use local Whisper?",
+            (
+                f"{reason}\n\n"
+                "Use local Whisper to download the audio and create a "
+                "machine transcript?\n\n"
+                "Long videos can take a long time. You can stop the work "
+                "from the main window."
+            ),
             parent=self.root,
         ))
 

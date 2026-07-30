@@ -36,24 +36,77 @@ if errorlevel 1 (
     exit /b 12
 )
 
-REM A quick import check makes normal launches instant. If the environment is
-REM new or incomplete, install the application plus both caption providers.
-"%VENV_PY%" -c "import importlib.metadata as m, faster_whisper, requests, youtube_transcript_api, yt_dlp; m.version('llm-youtube-comment-generation')" >nul 2>&1
-if not errorlevel 1 exit /b 0
+REM Normal launchers require only the core application. Transcript providers
+REM are optional capabilities: doctor must be able to start and report their
+REM absence instead of bootstrap failing before doctor can run.
+"%VENV_PY%" -c "import importlib.metadata as m, requests; m.version('llm-youtube-comment-generation')" >nul 2>&1
+if not errorlevel 1 goto :core_ready
 
-echo Installing the application and transcript providers ...
-"%VENV_PY%" -m pip install --disable-pip-version-check -e ".[transcripts,local-transcription]"
+echo Installing the core application ...
+"%VENV_PY%" -m pip install --disable-pip-version-check -e "."
 if errorlevel 1 (
     echo.
-    echo The project dependencies could not be installed.
+    echo The core project dependencies could not be installed.
     exit /b 13
 )
 
-"%VENV_PY%" -c "import importlib.metadata as m, faster_whisper, requests, youtube_transcript_api, yt_dlp; m.version('llm-youtube-comment-generation')" >nul 2>&1
+"%VENV_PY%" -c "import importlib.metadata as m, requests; m.version('llm-youtube-comment-generation')" >nul 2>&1
 if errorlevel 1 (
     echo.
-    echo The environment was created, but its transcript providers are incomplete.
+    echo The environment was created, but the core application is incomplete.
     exit /b 14
+)
+
+:core_ready
+if "%~1"=="" exit /b 0
+if /i "%~1"=="transcripts" (
+    set "OPTIONAL_EXTRAS=transcripts"
+    goto :install_optional
+)
+if /i "%~1"=="local-transcription" (
+    set "OPTIONAL_EXTRAS=local-transcription"
+    goto :install_optional
+)
+if /i "%~1"=="all" (
+    set "OPTIONAL_EXTRAS=transcripts,local-transcription"
+    goto :install_optional
+)
+if /i "%~1"=="review" (
+    set "OPTIONAL_EXTRAS=review"
+    goto :install_optional
+)
+
+echo.
+echo Unknown optional setup path: %~1
+echo Use setup_venv.bat transcripts, local-transcription, all, or review.
+exit /b 15
+
+:install_optional
+echo Installing optional support: %OPTIONAL_EXTRAS% ...
+"%VENV_PY%" -m pip install --disable-pip-version-check -e ".[%OPTIONAL_EXTRAS%]"
+if errorlevel 1 (
+    echo.
+    echo Optional support could not be installed. The core application remains usable.
+    exit /b 16
+)
+
+if /i "%~1"=="transcripts" (
+    "%VENV_PY%" -c "import youtube_transcript_api, yt_dlp" >nul 2>&1
+)
+if /i "%~1"=="local-transcription" (
+    "%VENV_PY%" -c "import faster_whisper" >nul 2>&1
+)
+if /i "%~1"=="all" (
+    "%VENV_PY%" -c "import faster_whisper, youtube_transcript_api, yt_dlp" >nul 2>&1
+)
+if /i "%~1"=="review" (
+    "%VENV_PY%" -c "import build, faster_whisper, pytest, requests, ruff, youtube_transcript_api, yt_dlp" >nul 2>&1
+)
+if errorlevel 1 (
+    echo.
+    echo Optional support was installed, but its provider imports are incomplete.
+    echo The core application remains usable; run doctor.bat for details.
+    exit /b 17
 )
 
 exit /b 0

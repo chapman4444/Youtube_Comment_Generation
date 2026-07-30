@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from ..domain.statuses import TranscriptAvailability, TranscriptResult
 
@@ -83,40 +83,71 @@ def find_saved(output_directory: Path, video_id: str) -> Path | None:
 
 
 class SavedTranscriptFallback:
-    """Implements TranscriptPort by trying live first, then the disk."""
+    """Try published captions, then disk, then an approved local transcript."""
 
-    def __init__(self, inner, output_directory) -> None:
+    def __init__(
+        self,
+        inner,
+        output_directory,
+        *,
+        local_fallback=None,
+        approve_local_fallback: Callable[[TranscriptResult], bool] | None = None,
+    ) -> None:
         self._inner = inner
         self._output = Path(output_directory)
+        self._local_fallback = local_fallback
+        self._approve_local_fallback = approve_local_fallback
 
     def fetch(
         self, video_id: str, languages: Sequence[str] = (),
     ) -> TranscriptResult:
-        live = self._inner.fetch(video_id, languages)
+        live = (
+            self._inner.fetch(video_id, languages)
+            if self._inner is not None
+            else TranscriptResult(
+                availability=TranscriptAvailability.FETCH_FAILED,
+                source="saved-transcript",
+                detail="manual saved-transcript lookup",
+            )
+        )
         if live.entries:
+            return live
+        if live.availability is TranscriptAvailability.NOT_PUBLIC:
+            # A private video is terminal. Reusing an older public transcript
+            # would turn the current access state into AVAILABLE and make a
+            # new packet look supportable from evidence that is no longer
+            # publicly reachable.
             return live
 
         saved = find_saved(self._output, video_id)
-        if saved is None:
-            return live
+        if saved is not None:
+            entries = parse_timestamped(saved.read_text(encoding="utf-8"))
+            if entries:
+                when = saved.parent.name.split("_", 1)[-1]
+                LOGGER.info(
+                    "using the transcript saved in %s: %s",
+                    saved.parent,
+                    live.detail,
+                )
+                return TranscriptResult(
+                    availability=TranscriptAvailability.AVAILABLE,
+                    entries=entries,
+                    source=SOURCE,
+                    detail=(
+                        f"the live fetch failed ({_reason(live)}), so this is "
+                        f"the transcript saved with run {when}. It is reused "
+                        "unchanged and was not fetched again."
+                    ),
+                )
 
-        entries = parse_timestamped(saved.read_text(encoding="utf-8"))
-        if not entries:
+        if self._local_fallback is None:
             return live
-
-        when = saved.parent.name.split("_", 1)[-1]
-        LOGGER.info("using the transcript saved in %s: %s", saved.parent,
-                    live.detail)
-        return TranscriptResult(
-            availability=TranscriptAvailability.AVAILABLE,
-            entries=entries,
-            source=SOURCE,
-            detail=(
-                f"the live fetch failed ({_reason(live)}), so this is the "
-                f"transcript saved with run {when}. It is reused unchanged "
-                "and was not fetched again."
-            ),
-        )
+        if (
+            self._approve_local_fallback is not None
+            and not self._approve_local_fallback(live)
+        ):
+            return live
+        return self._local_fallback.fetch(video_id, languages)
 
 
 def _reason(live: TranscriptResult) -> str:

@@ -37,6 +37,8 @@ class VideoInspection:
     """What `video inspect` found."""
 
     video: dict[str, Any] = field(default_factory=dict)
+    relevance_comments: list[dict[str, Any]] = field(default_factory=list)
+    recent_comments: list[dict[str, Any]] = field(default_factory=list)
     comments: list[dict[str, Any]] = field(default_factory=list)
     replies: list[dict[str, Any]] = field(default_factory=list)
     register: CommentRegister = field(default_factory=CommentRegister)
@@ -202,6 +204,8 @@ def handle(
 
     result.value = VideoInspection(
         video=video,
+        relevance_comments=list(pages[0].comments),
+        recent_comments=list(pages[1].comments),
         comments=comments,
         replies=replies,
         register=measure_comment_register(comments, replies),

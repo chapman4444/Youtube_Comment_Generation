@@ -116,11 +116,12 @@ class YouTubeAdapter:
         started = self._api_operations
 
         def page(token: str) -> dict[str, Any]:
+            remaining = max(1, maximum - len(collected))
             return self.get("commentThreads", {
                 "part": "snippet",
                 "videoId": video_id,
                 "order": order,
-                "maxResults": 100,
+                "maxResults": min(100, remaining),
                 "textFormat": "plainText",
                 **({"pageToken": token} if token else {}),
             })
@@ -152,10 +153,11 @@ class YouTubeAdapter:
         started = self._api_operations
 
         def page(token: str) -> dict[str, Any]:
+            remaining = max(1, maximum - len(collected))
             return self.get("comments", {
                 "part": "snippet",
                 "parentId": parent_comment_id,
-                "maxResults": 100,
+                "maxResults": min(100, remaining),
                 "textFormat": "plainText",
                 **({"pageToken": token} if token else {}),
             })
@@ -230,9 +232,24 @@ class YouTubeAdapter:
                 return RetrievalStatus.CANCELLED
 
             payload = fetch_page(token)
+            before = have()
             absorb(payload)
+            retained = have()
 
-            if have() >= maximum:
+            # maxResults is a request, not permission to trust the response.
+            # If the API returns more than the remaining allowance, the public
+            # method must trim the excess to honour its contract. That local
+            # trim is itself proof that the scan is incomplete, even when the
+            # response has no continuation token.
+            if retained > maximum:
+                notes.append(
+                    f"the API returned {retained - before:,} items when only "
+                    f"{maximum - before:,} remained within the requested "
+                    f"limit of {maximum:,}; excess items were not retained"
+                )
+                return truncation
+
+            if retained >= maximum:
                 # Only truncation if there was more to come.
                 if payload.get("nextPageToken"):
                     notes.append(

@@ -478,10 +478,10 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
     Rebuilding the seven option variants of one video is what got this
     machine IP-blocked from the transcript endpoint.
 
-    It also makes the comparison exact rather than nearly exact. Two packets
-    built minutes apart can differ by a comment that arrived in between; two
-    rebuilt from one saved evidence file cannot differ by anything except the
-    options.
+    It also keeps the source evidence exact rather than nearly exact. Two
+    packets built minutes apart can differ by a comment that arrived in
+    between; rebuild uses the original relevance ordering, recency ordering,
+    merged comments, replies, transcript and retrieval outcome.
     """
 
     from ...domain.errors import ConfigurationError
@@ -520,19 +520,37 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
         notes=tuple(retrieval.get("notes", ())),
     )
 
+    schema_version = saved.get("schema_version")
+    relevance_comments = saved.get("relevance_comments")
+    recent_comments = saved.get("recent_comments")
+    if schema_version != 2 or not isinstance(relevance_comments, list) or \
+            not isinstance(recent_comments, list):
+        raise ConfigurationError(
+            "This run predates the versioned rebuild evidence contract. "
+            "Its relevance and recency orderings were not saved, so an exact "
+            "offline rebuild is impossible. Build the video once with the "
+            "current version before using comment rebuild."
+        )
+
     comments = saved.get("comments", [])
+    replies = saved.get("replies", [])
+    if not isinstance(comments, list) or not isinstance(replies, list):
+        raise ConfigurationError(
+            "evidence.json does not contain valid comment and reply lists."
+        )
     evidence = PacketEvidence(
         video=saved.get("video", {}),
         comments=comments,
-        replies=saved.get("replies", []),
+        replies=replies,
         transcript_text=transcript_text,
         transcript_available=bool(transcript_text.strip()),
         register=measure_comment_register(comments),
         retrieval=outcome,
         stopwords=word_resources.stopwords(),
     )
-    selection = select_packet_sections(comments, comments, comments,
-                                       evidence.replies)
+    selection = select_packet_sections(
+        relevance_comments, recent_comments, comments, evidence.replies,
+    )
     options = PacketOptions(
         variations=(parse_registers(arguments.registers)
                     if arguments.registers else ()),
@@ -554,16 +572,45 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
     artifacts.stage("packet.md", packet.text)
     artifacts.stage("evidence.json",
                     json.dumps(saved, indent=2, ensure_ascii=False))
-    if transcript_text:
-        artifacts.stage("transcript_timestamped.txt", transcript_text)
-    _stage_run_record(
-        artifacts, kind="rebuild", video=saved.get("video", {}),
-        extra={"rebuilt_from": str(source),
-               "variations": list(packet.variations),
-               "dials": {name: dial_choice(name, options.dials)
-                         for name in DIALS},
-               "packet_characters": len(packet.text),
-               "retrieval": retrieval},
+    artifacts.stage("transcript_timestamped.txt", transcript_text)
+    rebuilt_record = dict(record)
+    rebuilt_record.update({
+        "kind": "rebuild",
+        "artifact_contract_version": 2,
+        "evidence_schema_version": 2,
+        "prompt_version": prompt_resources.prompt_version(),
+        "rebuilt_from": str(source),
+        "variations": list(packet.variations),
+        "variation_headings": list(packet.headings),
+        "dials": {
+            name: dial_choice(name, options.dials) for name in DIALS
+        },
+        "packet_characters": len(packet.text),
+        "budget": options.maximum_characters,
+        "allocation": {
+            "comment_body": packet.allocation.comment_body,
+            "reply_body": packet.allocation.reply_body,
+            "transcript": packet.allocation.transcript,
+            "transcript_reduced": packet.allocation.transcript_reduced,
+        },
+        "retrieval": retrieval,
+        "transcript": dict(record.get("transcript") or {
+            "availability": (
+                "available" if transcript_text.strip() else "not_published"
+            ),
+            "language": "",
+            "entries": len(transcript_text.splitlines()),
+            "source": "saved-rebuild-evidence",
+            "detail": "",
+        }),
+    })
+    artifacts.stage(
+        "report.md",
+        build_comment_packet.render_report(rebuilt_record, packet),
+    )
+    artifacts.stage(
+        "run.json",
+        json.dumps(rebuilt_record, indent=2, ensure_ascii=False),
     )
     published = artifacts.commit()
 
@@ -1120,7 +1167,8 @@ def run_packet_window(
         _private_state_directory(configuration) / "writing_presets.json"
     )
 
-    def ports_for(events):
+    def ports_for(events, model=None):
+        selected_options = model or options
         if build_ports is not None:
             return factory(configuration, api_key, events)
         job = getattr(events, "job", None)
@@ -1129,8 +1177,15 @@ def run_packet_window(
             api_key,
             events,
             cancelled=(lambda: bool(job and job.cancelled)),
-            transcribe_locally=options.transcribe_locally,
-            whisper_model=options.whisper_model,
+            transcribe_locally=selected_options.transcribe_locally,
+            whisper_policy=selected_options.whisper_policy,
+            transcript_route=selected_options.transcript_route,
+            whisper_model=selected_options.whisper_model,
+            confirm_transcription=(
+                (lambda reason: bool(job and job.confirm(reason)))
+                if selected_options.whisper_policy == "ask"
+                else None
+            ),
         )
 
     def store_for(video_id, directory):
@@ -1140,7 +1195,7 @@ def run_packet_window(
         if mode == "reply":
             return builder.prepare_replies(
                 model, job,
-                ports_factory=ports_for,
+                ports_factory=lambda events: ports_for(events, model),
                 templates=reply_templates,
                 artifacts_for=store_for,
                 session_factory=lambda **kwargs: _guided_session_for(
@@ -1160,7 +1215,7 @@ def run_packet_window(
             )
         return builder.build_comment(
             model, job,
-            ports_factory=ports_for,
+            ports_factory=lambda events: ports_for(events, model),
             templates=templates,
             artifacts_for=store_for,
             stopwords=word_resources.stopwords(),
@@ -1715,6 +1770,7 @@ def _stage_run_record(artifacts, *, kind: str, video: dict, extra: dict) -> None
 
     artifacts.stage("run.json", json.dumps({
         "kind": kind,
+        "artifact_contract_version": 2,
         "video_id": str(video.get("video_id", "")),
         "video_title": str(video.get("title", "")),
         "prompt_version": prompt_resources.prompt_version(),

@@ -5,6 +5,53 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+def transcript_notification(transcript: Mapping[str, Any] | Any) -> str:
+    """One plain-language line for the persistent transcript status bar."""
+
+    if isinstance(transcript, Mapping):
+        get = transcript.get
+    else:
+        get = lambda name, default="": getattr(transcript, name, default)
+
+    availability = getattr(
+        get("availability", ""),
+        "value",
+        get("availability", ""),
+    )
+    availability = str(availability or "")
+    source = str(get("source", "") or "")
+    detail = " ".join(str(get("detail", "") or "").split())
+
+    if availability == "available":
+        if source == "whisper":
+            return "Using a local Whisper transcript."
+        if source == "saved-transcript":
+            return (
+                f"Using a previously saved transcript. {detail}".strip()
+            )
+        return f"Transcript found{f' via {source}' if source else ''}."
+
+    labels = {
+        "not_published": "No transcript was published for this video.",
+        "not_public": (
+            "The transcript is unavailable because the video or captions "
+            "are not public."
+        ),
+        "language_unavailable": (
+            "No transcript matched the requested language."
+        ),
+        "empty": "A caption track exists, but it contains no usable text.",
+        "fetch_failed": "Transcript retrieval was blocked or failed.",
+    }
+    summary = labels.get(
+        availability,
+        "No usable transcript is available.",
+    )
+    if detail and detail.casefold() not in summary.casefold():
+        return f"{summary} Reason: {detail}"
+    return summary
+
+
 def _transcript_note(transcript: Mapping[str, Any]) -> str:
     availability = str(transcript.get("availability") or "")
     detail = " ".join(str(transcript.get("detail") or "").split())

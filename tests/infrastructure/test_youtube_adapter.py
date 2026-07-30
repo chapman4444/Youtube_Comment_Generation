@@ -95,6 +95,24 @@ def thread_page(ids, next_token=None, reply_counts=None):
     return RecordedResponse(payload)
 
 
+def reply_page(ids, next_token=None):
+    payload = {
+        "items": [
+            {"id": rid, "snippet": {
+                "authorDisplayName": "@a",
+                "textOriginal": f"reply {rid}",
+                "likeCount": 0,
+                "publishedAt": "2026-07-01T00:00:00Z",
+                "updatedAt": "2026-07-01T00:00:00Z",
+            }}
+            for rid in ids
+        ],
+    }
+    if next_token:
+        payload["nextPageToken"] = next_token
+    return RecordedResponse(payload)
+
+
 def adapter(responses, **kwargs):
     return YouTubeAdapter("test-key", RecordedSession(responses), **kwargs)
 
@@ -160,6 +178,60 @@ def test_reaching_the_limit_with_nothing_left_is_still_complete():
     page = port.comment_threads("v", maximum=2)
 
     assert page.outcome.status is RetrievalStatus.COMPLETE
+
+
+def test_a_first_comment_page_cannot_overrun_a_non_aligned_limit_as_complete():
+    port = adapter([thread_page([f"c{i}" for i in range(80)])])
+
+    page = port.comment_threads("v", maximum=50)
+
+    assert len(page.comments) == 50
+    assert page.outcome.status is RetrievalStatus.TOP_LEVEL_TRUNCATED
+    assert page.outcome.may_conclude_absence is False
+    assert port._session.calls[0]["params"]["maxResults"] == 50
+
+
+def test_a_later_comment_page_requests_only_the_remaining_allowance():
+    port = adapter([
+        thread_page([f"c{i}" for i in range(100)], next_token="t2"),
+        thread_page([f"c{i}" for i in range(100, 180)]),
+    ])
+
+    page = port.comment_threads("v", maximum=150)
+
+    assert len(page.comments) == 150
+    assert page.outcome.status is RetrievalStatus.TOP_LEVEL_TRUNCATED
+    assert page.outcome.may_conclude_absence is False
+    assert [call["params"]["maxResults"] for call in port._session.calls] == [
+        100, 50,
+    ]
+
+
+def test_a_first_reply_page_cannot_overrun_a_non_aligned_limit_as_complete():
+    port = adapter([reply_page([f"r{i}" for i in range(80)])])
+
+    page = port.replies("c1", maximum=50)
+
+    assert len(page.comments) == 50
+    assert page.outcome.status is RetrievalStatus.REPLY_THREAD_TRUNCATED
+    assert page.outcome.may_conclude_absence is False
+    assert port._session.calls[0]["params"]["maxResults"] == 50
+
+
+def test_a_later_reply_page_requests_only_the_remaining_allowance():
+    port = adapter([
+        reply_page([f"r{i}" for i in range(100)], next_token="t2"),
+        reply_page([f"r{i}" for i in range(100, 180)]),
+    ])
+
+    page = port.replies("c1", maximum=150)
+
+    assert len(page.comments) == 150
+    assert page.outcome.status is RetrievalStatus.REPLY_THREAD_TRUNCATED
+    assert page.outcome.may_conclude_absence is False
+    assert [call["params"]["maxResults"] for call in port._session.calls] == [
+        100, 50,
+    ]
 
 
 def test_pagination_walks_until_the_tokens_run_out():

@@ -89,6 +89,22 @@ def test_a_working_fetch_always_wins(tmp_path):
     assert live.calls == 1
 
 
+def test_a_private_video_never_reuses_a_saved_transcript(tmp_path):
+    run_directory(tmp_path)
+    private = TranscriptResult(
+        availability=TranscriptAvailability.NOT_PUBLIC,
+        source="youtube-transcript-api",
+        detail="the video is private",
+    )
+    port = SavedTranscriptFallback(FakeLive(private), tmp_path)
+
+    result = port.fetch(VIDEO)
+
+    assert result is private
+    assert result.availability is TranscriptAvailability.NOT_PUBLIC
+    assert result.entries == ()
+
+
 def test_the_newest_saved_run_is_the_one_reused(tmp_path):
     run_directory(tmp_path, stamp="20260101-000000", text="[00:00:00] old")
     run_directory(tmp_path, stamp="20260728-080321")
@@ -120,6 +136,67 @@ def test_an_empty_saved_file_is_not_a_transcript(tmp_path):
     port = SavedTranscriptFallback(FakeLive(blocked()), tmp_path)
 
     assert port.fetch(VIDEO).availability is TranscriptAvailability.FETCH_FAILED
+
+
+def test_local_fallback_runs_only_after_live_and_saved_sources_fail(tmp_path):
+    local = FakeLive(working())
+    asked = []
+    port = SavedTranscriptFallback(
+        FakeLive(blocked()),
+        tmp_path,
+        local_fallback=local,
+        approve_local_fallback=lambda reason: asked.append(reason) or True,
+    )
+
+    result = port.fetch(VIDEO)
+
+    assert result.available
+    assert local.calls == 1
+    assert asked and asked[0].availability is TranscriptAvailability.FETCH_FAILED
+
+
+def test_declining_local_fallback_preserves_the_reason(tmp_path):
+    failure = blocked()
+    local = FakeLive(working())
+    port = SavedTranscriptFallback(
+        FakeLive(failure),
+        tmp_path,
+        local_fallback=local,
+        approve_local_fallback=lambda _reason: False,
+    )
+
+    result = port.fetch(VIDEO)
+
+    assert result is failure
+    assert local.calls == 0
+
+
+def test_a_saved_transcript_prevents_an_unnecessary_whisper_prompt(tmp_path):
+    run_directory(tmp_path)
+    asked = []
+    local = FakeLive(working())
+    port = SavedTranscriptFallback(
+        FakeLive(blocked()),
+        tmp_path,
+        local_fallback=local,
+        approve_local_fallback=lambda reason: asked.append(reason) or True,
+    )
+
+    result = port.fetch(VIDEO)
+
+    assert result.source == "saved-transcript"
+    assert asked == []
+    assert local.calls == 0
+
+
+def test_saved_transcript_can_be_requested_without_a_live_attempt(tmp_path):
+    run_directory(tmp_path)
+    port = SavedTranscriptFallback(None, tmp_path)
+
+    result = port.fetch(VIDEO)
+
+    assert result.available
+    assert result.source == "saved-transcript"
 
 
 # -- and it says so --------------------------------------------------------

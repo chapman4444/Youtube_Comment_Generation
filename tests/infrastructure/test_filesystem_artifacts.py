@@ -6,10 +6,13 @@ half is stale.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from llm_youtube_comment_generation.domain.errors import ConfigurationError
 from llm_youtube_comment_generation.infrastructure.filesystem_artifacts import (
+    COMPLETION_MARKER,
     FilesystemArtifactStore,
     atomic_write,
     unique_run_root,
@@ -24,6 +27,7 @@ def test_nothing_is_visible_until_commit(tmp_path):
 
     assert store.commit() == ("packet.md",)
     assert store.read("packet.md") == "content"
+    assert (tmp_path / "run" / COMPLETION_MARKER).is_file()
 
 
 def test_rollback_leaves_the_previous_output_intact(tmp_path):
@@ -70,6 +74,78 @@ def test_a_failed_commit_restores_what_was_there_before(tmp_path, monkeypatch):
 
     assert (root / "packet.md").read_text(encoding="utf-8") == "first run"
     assert (root / "report.md").read_text(encoding="utf-8") == "first report"
+    assert (root / COMPLETION_MARKER).is_file()
+
+
+def test_a_new_run_is_promoted_only_after_every_file_is_ready(
+    tmp_path, monkeypatch,
+):
+    root = tmp_path / "run"
+    store = FilesystemArtifactStore(root)
+    store.stage("packet.md", "packet")
+    store.stage("report.md", "report")
+
+    real_write = atomic_write
+
+    def failing_write(path, text):
+        if path.name == "report.md":
+            raise OSError("interrupted")
+        return real_write(path, text)
+
+    monkeypatch.setattr(
+        "llm_youtube_comment_generation.infrastructure."
+        "filesystem_artifacts.atomic_write",
+        failing_write,
+    )
+
+    with pytest.raises(OSError, match="interrupted"):
+        store.commit()
+
+    assert not root.exists()
+    assert list(tmp_path.glob(".run.publishing.*")) == []
+
+
+def test_a_failed_restore_preserves_and_reports_the_backup(
+    tmp_path, monkeypatch,
+):
+    root = tmp_path / "run"
+    first = FilesystemArtifactStore(root)
+    first.stage("packet.md", "first")
+    first.stage("report.md", "first report")
+    first.commit()
+
+    second = FilesystemArtifactStore(root)
+    second.stage("packet.md", "second")
+    second.stage("report.md", "second report")
+    real_write = atomic_write
+    calls = {"count": 0}
+
+    def failing_write(path, text):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("publication failed")
+        return real_write(path, text)
+
+    monkeypatch.setattr(
+        "llm_youtube_comment_generation.infrastructure."
+        "filesystem_artifacts.atomic_write",
+        failing_write,
+    )
+    monkeypatch.setattr(
+        FilesystemArtifactStore,
+        "_restore",
+        lambda self, backup: (_ for _ in ()).throw(
+            OSError("restoration failed")
+        ),
+    )
+
+    with pytest.raises(ConfigurationError, match="backup was preserved") as exc:
+        second.commit()
+
+    backup_path = str(exc.value).split("preserved at ", 1)[1].split(
+        ". Publication error", 1
+    )[0]
+    assert Path(backup_path).is_dir()
 
 
 def test_atomic_write_leaves_no_partial_file_on_failure(tmp_path, monkeypatch):

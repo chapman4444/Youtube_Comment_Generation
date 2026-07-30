@@ -5,7 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from .options import PacketOptionsModel
+from .options import PacketOptionsModel, WHISPER_POLICIES
 
 PADDING = 8
 
@@ -74,17 +74,34 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
             text="Overwrite a previous output folder",
             variable=self.overwrite,
         ).grid(row=row + 1, column=0, columnspan=2, sticky="w")
-        self.transcribe_locally = tk.BooleanVar(
-            value=options.transcribe_locally
+        ttk.Label(frame, text="When no transcript is available:").grid(
+            row=row + 2, column=0, columnspan=2, sticky="w", pady=(8, 2)
         )
-        ttk.Checkbutton(
-            frame,
-            text="Use local Whisper when captions are unavailable",
-            variable=self.transcribe_locally,
-        ).grid(row=row + 2, column=0, columnspan=2, sticky="w")
+        policy = str(getattr(options, "whisper_policy", "") or "").lower()
+        if policy not in WHISPER_POLICIES:
+            policy = "automatic" if options.transcribe_locally else "ask"
+        self.whisper_policy = tk.StringVar(value=policy)
+        choices = (
+            ("ignore", "Ignore — build without a transcript and do not ask"),
+            ("ask", "Ask before using local Whisper"),
+            ("automatic", "Automatically use local Whisper"),
+        )
+        for offset, (value, label) in enumerate(choices, 3):
+            ttk.Radiobutton(
+                frame,
+                text=label,
+                value=value,
+                variable=self.whisper_policy,
+            ).grid(
+                row=row + offset,
+                column=0,
+                columnspan=2,
+                sticky="w",
+                padx=(12, 0),
+            )
 
         ttk.Button(frame, text="Done", command=self.close).grid(
-            row=row + 3, column=1, sticky="e", pady=(10, 0)
+            row=row + 6, column=1, sticky="e", pady=(10, 0)
         )
 
     def close(self) -> None:
@@ -95,6 +112,9 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
                 continue
         self.options.include_replies = self.include_replies.get()
         self.options.overwrite = self.overwrite.get()
-        self.options.transcribe_locally = self.transcribe_locally.get()
+        self.options.whisper_policy = self.whisper_policy.get()
+        self.options.transcribe_locally = (
+            self.options.whisper_policy == "automatic"
+        )
         self.top.destroy()
         self.on_close()

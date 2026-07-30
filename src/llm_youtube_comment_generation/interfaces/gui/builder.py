@@ -25,10 +25,11 @@ from typing import Any, Callable
 
 from ...application import build_comment_packet
 from ...application.build_comment_packet import BuildCommentPacketCommand
+from ...domain.errors import OperationCancelled
 from ...domain.section_profile import parse_length
 from ...ports.events import EventKind, ProgressEvent
 from .options import PacketOptionsModel
-from .worker import BackgroundJob
+from .worker import BackgroundJob, Cancelled
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +43,8 @@ class CommentRun:
     artifacts: Any
     packet_path: str
     run_record: dict[str, Any]
+    transcript: Any = None
+    evidence: dict[str, Any] | None = None
 
     @property
     def text(self) -> str:
@@ -73,7 +76,27 @@ class JobEvents:
         self.job = job
 
     def emit(self, event: ProgressEvent) -> None:
-        self.job.say(event.message, self.FRACTIONS.get(event.step))
+        message = event.message
+        if (
+            not message.strip()
+            and event.current is not None
+            and event.total is not None
+            and event.step in ("comments", "replies", "threads")
+        ):
+            label = {
+                "comments": "Comments",
+                "replies": "Reply threads",
+                "threads": "Your threads",
+            }.get(event.step, event.step.replace("_", " ").title())
+            message = f"{label}: {event.current:,} of {event.total:,}"
+        fraction = self.FRACTIONS.get(event.step)
+        if event.step == "transcribe" and event.fraction is not None:
+            fraction = 0.72 + (0.2 * event.fraction)
+        self.job.say(
+            message,
+            fraction,
+            payload={"step": event.step, "data": dict(event.data)},
+        )
         # Between events is exactly where a cancel can be honoured: the
         # application is between two units of work whenever it reports one.
         if event.kind is not EventKind.FINISHED:
@@ -123,16 +146,22 @@ def build_comment(
 
     artifacts = artifacts_for(command.video_id, options.output_directory)
 
-    result = build_comment_packet.handle(
-        command,
-        youtube=ports["youtube"],
-        transcripts=ports["transcripts"],
-        events=events,
-        artifacts=artifacts,
-        templates=templates,
-        prompt_version=prompt_version,
-        stopwords=stopwords,
-    )
+    try:
+        result = build_comment_packet.handle(
+            command,
+            youtube=ports["youtube"],
+            transcripts=ports["transcripts"],
+            events=events,
+            artifacts=artifacts,
+            templates=templates,
+            prompt_version=prompt_version,
+            stopwords=stopwords,
+        )
+    except OperationCancelled as failure:
+        # Infrastructure uses the application-level cancellation exception;
+        # the GUI worker uses its own exception to emit a cancelled event
+        # rather than presenting an intentional stop as a failure.
+        raise Cancelled() from failure
 
     packet = result.value["packet"]
     run_record = dict(result.value.get("run") or {})
@@ -158,6 +187,8 @@ def build_comment(
         artifacts=artifacts,
         packet_path=packet_path,
         run_record=run_record,
+        transcript=result.value.get("transcript"),
+        evidence=dict(result.value.get("evidence") or {}),
     )
 
 
@@ -175,6 +206,7 @@ class ReplyRun:
     triage_packet: str = ""
     people: tuple[str, ...] = ()
     receipt: dict[str, Any] | None = None
+    transcript: Any = None
 
 
 def prepare_replies(
@@ -247,6 +279,7 @@ def prepare_replies(
         session=session,
         triage_packet=triage,
         people=tuple(getattr(c, "author", "") for c in found.waiting),
+        transcript=transcript,
         receipt={
             "video": dict(found.video),
             "total": found.total,

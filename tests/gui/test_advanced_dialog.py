@@ -66,6 +66,35 @@ def test_the_checkboxes_reach_the_options_too(dialog):
     assert dialog.options.overwrite is True
 
 
+def test_whisper_behavior_is_a_three_way_choice(dialog):
+    frame = dialog.top.winfo_children()[0]
+    values = {
+        child.cget("value")
+        for child in frame.winfo_children()
+        if child.winfo_class() == "TRadiobutton"
+    }
+
+    assert values == {"ignore", "ask", "automatic"}
+
+
+def test_whisper_choice_reaches_the_options(dialog):
+    dialog.whisper_policy.set("ignore")
+
+    dialog.close()
+
+    assert dialog.options.whisper_policy == "ignore"
+    assert dialog.options.transcribe_locally is False
+
+
+def test_automatic_whisper_keeps_the_legacy_setting_in_sync(dialog):
+    dialog.whisper_policy.set("automatic")
+
+    dialog.close()
+
+    assert dialog.options.whisper_policy == "automatic"
+    assert dialog.options.transcribe_locally is True
+
+
 def test_closing_tells_whoever_opened_it(tk_root):
     """The window has to redraw: a packet-character change moves what the
     status line says, and a handle change decides whether reply mode can

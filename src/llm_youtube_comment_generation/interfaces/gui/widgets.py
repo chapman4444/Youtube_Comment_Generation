@@ -7,6 +7,55 @@ from tkinter import ttk
 from typing import Callable
 
 
+class TextContextMenu:
+    """A small right-click menu for Tk text widgets.
+
+    Tk provides keyboard copy shortcuts but no Windows-style context menu.
+    Read-only packet, transcript, and activity views therefore looked as if
+    selected text could not be copied.
+    """
+
+    def __init__(
+        self,
+        widget: tk.Text,
+        write: Callable[[str], None],
+    ) -> None:
+        self.widget = widget
+        self.write = write
+        self.menu = tk.Menu(widget, tearoff=False)
+        self.menu.add_command(label="Copy", command=self.copy)
+        self.menu.add_command(label="Select all", command=self.select_all)
+        widget.bind("<Button-3>", self.show, add="+")
+
+    def selected_text(self) -> str:
+        try:
+            return self.widget.get("sel.first", "sel.last")
+        except tk.TclError:
+            return ""
+
+    def copy(self) -> None:
+        text = self.selected_text()
+        if not text:
+            return
+        self.write(text)
+
+    def select_all(self) -> None:
+        self.widget.tag_add("sel", "1.0", "end-1c")
+        self.widget.mark_set("insert", "1.0")
+        self.widget.see("1.0")
+
+    def show(self, event) -> str:
+        self.menu.entryconfigure(
+            "Copy",
+            state=("normal" if self.selected_text() else "disabled"),
+        )
+        try:
+            self.menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.menu.grab_release()
+        return "break"
+
+
 class Tooltip:
     """Small delayed help popup with keyboard-focus support."""
 

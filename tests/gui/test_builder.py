@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 
+from llm_youtube_comment_generation.domain.errors import OperationCancelled
 from llm_youtube_comment_generation.interfaces.gui.builder import (
     JobEvents,
     build_comment,
@@ -81,6 +82,19 @@ def test_an_unknown_step_still_reports_without_inventing_a_fraction():
     assert job.drain()[0].fraction is None
 
 
+def test_numbered_work_is_named_in_the_activity_log():
+    job = BackgroundJob()
+
+    JobEvents(job).emit(ProgressEvent(
+        EventKind.PROGRESS,
+        step="replies",
+        current=3,
+        total=8,
+    ))
+
+    assert job.drain()[0].message == "Reply threads: 3 of 8"
+
+
 def test_a_cancel_is_honoured_between_reported_units_of_work():
     """The application is between two units whenever it reports one, which is
     exactly where stopping is safe."""
@@ -141,6 +155,14 @@ def test_no_register_chosen_still_sends_the_defaults():
         _run(BackgroundJob(), options(), handle)
 
     assert seen["command"].variations == tuple(DEFAULT_VARIATIONS)
+
+
+def test_infrastructure_cancellation_becomes_a_cancelled_worker_run():
+    def handle(command, **kwargs):
+        raise OperationCancelled("Stopped during local transcription.")
+
+    with pytest.raises(Cancelled):
+        _run(BackgroundJob(), options(), handle)
 
 
 def test_a_typed_word_count_reaches_the_command_as_a_range():

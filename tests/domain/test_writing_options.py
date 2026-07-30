@@ -32,6 +32,7 @@ from llm_youtube_comment_generation.domain.writing_options import (
     parse_dials,
     parse_registers,
     reply_variation_specs,
+    resolve_prompt_spec,
     variation_keys,
     variation_specs,
 )
@@ -291,6 +292,16 @@ def test_the_named_approaches_survive_a_single_narrow_length_band():
     assert "still sit inside it" in specs
     assert "same selected angle" not in specs
     assert "differ by register alone" not in specs
+
+
+def test_critique_and_final_reject_unsupported_repeated_analysis():
+    spec = resolve_prompt_spec()
+
+    assert "unstated premise about motive, control" in spec.critique_contract
+    assert "silently convert it into fact" in spec.critique_contract
+    assert "call the later one a duplicate" in spec.critique_contract
+    assert "Redundancy test:" in spec.final_contract
+    assert "inside the preferred band" in spec.final_contract
 
 
 def test_reply_specs_use_the_same_dimension_semantics_as_comments():

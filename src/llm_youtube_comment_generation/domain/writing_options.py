@@ -863,7 +863,10 @@ Speaker changes are not attribution by themselves.
 
 Do not put interpretation, argument, or comment drafts in this section. Every
 later claim about the video or the people in it must be traceable to this
-section. If a draft outruns it, fix the draft rather than the section."""
+section. Attribution must survive the move into a draft: writing "the speaker
+says" here does not license a later variation to present that disputed claim
+as established fact. If a draft outruns this section,
+fix the draft rather than the section."""
 
 FULL_CRITIQUE_CONTRACT = """Then include:
 
@@ -878,6 +881,11 @@ For each variation, first answer:
   video?
 - What exact new inference does it contribute?
 - Which transcript facts support that inference?
+- Which part is direct evidence and which part is inference?
+- Does the inference require an unstated premise about motive, control,
+  investor belief, causation, or responsibility?
+- Did the draft strip "the speaker says" or "according to the report" from a
+  disputed claim and silently convert it into fact?
 - Could the comment survive if the viewer already watched the full video?
 
 Discard any variation whose main value is compression, emphasis, tone, humor,
@@ -887,6 +895,12 @@ Do not excuse repetition merely because the supplied comment section has not
 mentioned the point. The comment's central conclusion must be unstated in the
 video unless its named approach is deliberately a summary or other waived
 mode.
+
+Compare the variations with one another. If two make substantially the same
+inference, call the later one a duplicate and discard or rebuild it around a
+different supported conclusion. Different length, tone, imagery, or examples
+do not rescue a duplicated inference. Do not approve an inference merely
+because the drafts all depend on it.
 
 Then, for each, identify its main writing weakness and whether it should be
 repaired or discarded. Check stance, repetition, attribution, qualification,
@@ -924,7 +938,14 @@ FINAL_COMMON_TESTS = """Before writing the final, apply both tests internally:
 - Like test: would a stranger scrolling this section stop and press like?
 
 A draft that merely repeats the video without a deliberate waiver has failed.
-A draft that adds analysis but sounds like an essay has also failed."""
+A draft that adds analysis but sounds like an essay has also failed.
+
+- Redundancy test: does each sentence contribute a different fact, inference,
+  or consequence? Delete any sentence that restates another.
+- Register test: would the wording sound natural beside the supplied comments?
+  Replace abstract labels and professional jargon with the concrete point.
+- Length test: the final must stay inside the preferred band for this run, not
+  merely under the absolute maximum."""
 
 
 def resolved_variation_keys(

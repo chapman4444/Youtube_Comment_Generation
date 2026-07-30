@@ -11,9 +11,11 @@ from fakes import FakeEventSink, FakeHistoryStore, FakeYouTubePort
 from llm_youtube_comment_generation.application import scoreboard
 from llm_youtube_comment_generation.domain.statuses import (
     HistoryMatchStatus,
+    RetrievalOutcome,
     RetrievalStatus,
     WarningCode,
 )
+from llm_youtube_comment_generation.ports.youtube import CommentPage
 
 VIDEO = "gC-J7zwYMAM"
 OWNER = "UC" + "o" * 22
@@ -87,6 +89,37 @@ def test_an_incomplete_scan_never_reports_a_draft_as_unposted():
     assert board.ambiguous[0]["unmatched_because_scan_incomplete"] is True
     assert any(w.code is WarningCode.RETRIEVAL_INCOMPLETE
                for w in result.warnings)
+
+
+def test_locally_truncated_adapter_results_never_render_as_not_found():
+    class LocallyTruncatedYouTube:
+        api_operations_used = 1
+
+        def comment_threads(self, video_id, *, order, maximum):
+            return CommentPage(
+                comments=[posted("one retained comment")],
+                outcome=RetrievalOutcome(
+                    status=RetrievalStatus.TOP_LEVEL_TRUNCATED,
+                    retrieved=1,
+                    notes=("the response exceeded the requested allowance",),
+                ),
+            )
+
+    result = scoreboard.handle(
+        VIDEO,
+        history=FakeHistoryStore([{
+            "video_id": VIDEO,
+            "draft": "the discarded response item may be this draft",
+        }]),
+        youtube=LocallyTruncatedYouTube(),
+        events=FakeEventSink(),
+        operator_channel_id=OWNER,
+        max_comments=1,
+    )
+
+    assert result.value.unmatched == []
+    assert len(result.value.ambiguous) == 1
+    assert "## Not found on YouTube" not in scoreboard.render(result.value)
 
 
 def test_the_incompleteness_is_stated_in_the_rendered_scoreboard():

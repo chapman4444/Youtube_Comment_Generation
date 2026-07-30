@@ -14,12 +14,14 @@ from pathlib import Path
 
 import pytest
 
+from llm_youtube_comment_generation.domain.errors import OperationCancelled
 from llm_youtube_comment_generation.domain.statuses import TranscriptAvailability
 from llm_youtube_comment_generation.infrastructure.whisper_transcript import (
     DEFAULT_MODEL,
     MINIMUM_CONFIDENCE,
     WhisperTranscriptAdapter,
     _entries,
+    transcribe,
 )
 
 VIDEO = "pshdWXte-hM"
@@ -197,6 +199,97 @@ def test_the_operator_is_told_before_the_slow_part():
 
     assert any("transcribed here" in message for message in said)
     assert any("minutes, not seconds" in message for message in said)
+
+
+def test_completed_segments_are_reported_for_a_live_transcript_view():
+    reported = []
+
+    class Events:
+        def emit(self, event):
+            reported.append(event)
+
+    port = WhisperTranscriptAdapter(events=Events())
+    port._report_progress(
+        {"text": "a completed line", "start": 10.0, "end": 14.0},
+        duration=120.0,
+        eta_seconds=45.0,
+    )
+
+    event = reported[0]
+    assert event.step == "transcribe"
+    assert event.current == 14
+    assert event.total == 120
+    assert event.data["transcript_entry"]["text"] == "a completed line"
+    assert event.data["eta_seconds"] == 45.0
+
+
+# -- it can be stopped -----------------------------------------------------
+
+
+def test_stop_before_download_does_not_start_expensive_work():
+    downloaded = []
+    port = WhisperTranscriptAdapter(
+        downloader=lambda *args, **kwargs: downloaded.append(args),
+        cancelled=lambda: True,
+    )
+
+    with pytest.raises(OperationCancelled):
+        port.fetch(VIDEO)
+
+    assert downloaded == []
+
+
+def test_direct_transcription_checks_stop_before_loading_the_model():
+    with pytest.raises(OperationCancelled):
+        transcribe(Path("unused.m4a"), cancelled=lambda: True)
+
+
+def test_stop_after_download_does_not_start_the_model():
+    state = {"stop": False}
+    transcribed = []
+
+    def download(video_id, into, proxy=""):
+        path = Path(into) / "audio.m4a"
+        path.write_bytes(b"x")
+        state["stop"] = True
+        return path
+
+    port = WhisperTranscriptAdapter(
+        downloader=download,
+        transcriber=lambda *args, **kwargs: transcribed.append(args),
+        cancelled=lambda: state["stop"],
+    )
+
+    with pytest.raises(OperationCancelled):
+        port.fetch(VIDEO)
+
+    assert transcribed == []
+
+
+def test_stop_is_checked_between_whisper_segments():
+    checks = iter((False, True))
+
+    with pytest.raises(OperationCancelled):
+        list(_entries(
+            [Segment(0.0, 1.0, "first"), Segment(1.0, 2.0, "second")],
+            cancelled=lambda: next(checks),
+        ))
+
+
+def test_wrapped_download_cancellation_still_counts_as_a_stop():
+    state = {"stop": False}
+
+    def wrapped_stop(video_id, into, proxy=""):
+        state["stop"] = True
+        raise RuntimeError("yt-dlp wrapped the progress-hook exception")
+
+    port = WhisperTranscriptAdapter(
+        downloader=wrapped_stop,
+        cancelled=lambda: state["stop"],
+    )
+
+    with pytest.raises(OperationCancelled):
+        port.fetch(VIDEO)
 
 
 # -- segment handling -------------------------------------------------------

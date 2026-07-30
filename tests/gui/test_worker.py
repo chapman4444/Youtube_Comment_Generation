@@ -156,6 +156,43 @@ def test_cancelled_is_visible_to_the_work_itself():
     assert kinds(job) == ["done"]
 
 
+# -- worker-to-window questions -------------------------------------------
+
+
+def test_a_confirmation_is_answered_by_the_event_consumer():
+    job = BackgroundJob()
+    job.start(lambda running: running.confirm("no captions"))
+
+    deadline = time.time() + 2
+    while job.events.empty() and time.time() < deadline:
+        time.sleep(0.01)
+    event = job.events.get_nowait()
+
+    assert event.kind == "confirmation"
+    assert event.value.payload == "no captions"
+    event.value.resolve(True)
+    finished(job)
+
+    completed = job.drain()
+    assert completed[-1].kind == "done"
+    assert completed[-1].value is True
+
+
+def test_cancelling_while_a_confirmation_waits_stops_the_job():
+    job = BackgroundJob()
+    job.start(lambda running: running.confirm("no captions"))
+
+    deadline = time.time() + 2
+    while job.events.empty() and time.time() < deadline:
+        time.sleep(0.01)
+    assert job.events.get_nowait().kind == "confirmation"
+
+    job.cancel()
+    finished(job)
+
+    assert kinds(job)[-1] == "cancelled"
+
+
 # -- one at a time ---------------------------------------------------------
 
 

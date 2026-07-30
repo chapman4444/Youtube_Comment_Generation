@@ -59,8 +59,12 @@ REMEMBERED = (
     "max_replies", "top_repliers", "include_replies", "per_thread",
     "include_answered", "use_triage", "length", "custom_length",
     "auto_run", "auto_watch", "editor_path", "reply_scan_comments",
-    "guided_limit", "window_geometry", "transcribe_locally", "whisper_model",
+    "guided_limit", "window_geometry", "transcribe_locally",
+    "whisper_policy", "whisper_model",
 )
+
+WHISPER_POLICIES = ("ignore", "ask", "automatic")
+TRANSCRIPT_ROUTES = ("automatic", "api", "ytdlp", "saved", "whisper")
 
 #: The four length choices, and what the old window calls them.
 LENGTH_CHOICES = (
@@ -168,7 +172,14 @@ class PacketOptionsModel:
     overwrite: bool = False
     languages: str = "en"
     proxy_url: str = ""
+    # `transcribe_locally` remains in saved settings and on the command line
+    # for backward compatibility. The GUI's authoritative choice is the
+    # three-state policy.
     transcribe_locally: bool = False
+    whisper_policy: str = "ask"
+    # One-run GUI override. It is deliberately not remembered: the regular
+    # Build button always returns to the full fallback chain.
+    transcript_route: str = "automatic"
     whisper_model: str = "small.en"
 
     # -- the packet -------------------------------------------------------
@@ -325,6 +336,14 @@ class PacketOptionsModel:
                 )
         if self.length not in dict(LENGTH_CHOICES):
             found.append(f"Length cannot be {self.length!r}.")
+        if self.whisper_policy not in WHISPER_POLICIES:
+            found.append(
+                f"Whisper behavior cannot be {self.whisper_policy!r}."
+            )
+        if self.transcript_route not in TRANSCRIPT_ROUTES:
+            found.append(
+                f"Transcript source cannot be {self.transcript_route!r}."
+            )
         if self.length == "exact":
             text = (self.custom_length or "").strip()
             if not text:
@@ -344,6 +363,7 @@ class PacketOptionsModel:
 
         payload: dict[str, Any] = {name: getattr(self, name)
                                    for name in REMEMBERED}
+        payload["transcribe_locally"] = self.whisper_policy == "automatic"
         payload["comment_variations"] = list(self.comment_variations)
         payload["reply_variations"] = list(self.reply_variations)
         payload["comment_approach_mode"] = self.comment_approach_mode
@@ -380,6 +400,18 @@ class PacketOptionsModel:
                     setattr(model, name, str(value))
             except (TypeError, ValueError):
                 continue
+
+        saved_policy = str(payload.get("whisper_policy") or "").strip().lower()
+        if saved_policy in WHISPER_POLICIES:
+            model.whisper_policy = saved_policy
+        elif bool(payload.get("transcribe_locally")):
+            # The old checked box meant "run it without asking."
+            model.whisper_policy = "automatic"
+        else:
+            # The old unchecked box had no "ask" state. Migrate it to the
+            # safer interactive default instead of silently running Whisper.
+            model.whisper_policy = "ask"
+        model.transcribe_locally = model.whisper_policy == "automatic"
 
         model.comment_variations = _known(payload.get("comment_variations"))
         model.reply_variations = _known(payload.get("reply_variations"))

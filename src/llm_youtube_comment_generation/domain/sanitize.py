@@ -82,3 +82,22 @@ def truncate(text: str, maximum: int, *, label: str) -> str:
     if maximum <= len(marker) + 40:
         return value[:maximum].rstrip()
     return value[: maximum - len(marker)].rstrip() + marker
+
+
+def truncate_middle(text: str, maximum: int, *, label: str) -> str:
+    """Keep both the opening and conclusion when long evidence must shrink."""
+
+    value = text.strip()
+    if len(value) <= maximum:
+        return value
+    if maximum <= 0:
+        return ""
+    marker = f"\n\n[{label} middle omitted to fit the packet budget]\n\n"
+    if maximum <= len(marker) + 80:
+        return truncate(value, maximum, label=label)
+    available = maximum - len(marker)
+    head_size = (available * 3) // 5
+    tail_size = available - head_size
+    head = value[:head_size].rsplit("\n", 1)[0].rstrip()
+    tail = value[-tail_size:].split("\n", 1)[-1].lstrip()
+    return (head + marker + tail)[:maximum]

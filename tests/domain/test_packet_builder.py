@@ -517,8 +517,8 @@ def test_a_packet_never_exceeds_its_budget(templates):
     assert len(packet) <= DEFAULT_PACKET_CHARACTERS
 
 
-def test_the_transcript_absorbs_the_pressure_before_comments_do(templates):
-    """Comment coverage is what the packet is for; the transcript is context."""
+def test_comment_coverage_counts_survive_budget_pressure(templates):
+    """Bodies may shrink, but the selected comment slots are not dropped."""
 
     comments = [comment(i, text="x" * 1500) for i in range(100)]
     roomy = assemble(templates, evidence=make(comments, transcript="y" * 400_000))
@@ -529,6 +529,31 @@ def test_the_transcript_absorbs_the_pressure_before_comments_do(templates):
 
     assert tight.allocation.transcript < roomy.allocation.transcript
     assert tight.text.count("id c") == roomy.text.count("id c")
+
+
+def test_an_ordinary_video_keeps_its_complete_transcript(templates):
+    comments = [comment(i, text="x" * 1500) for i in range(100)]
+    transcript = "opening\n" + ("evidence line\n" * 2500) + "final conclusion"
+
+    packet = assemble(
+        templates,
+        evidence=make(comments, transcript=transcript),
+        options=PacketOptions(maximum_characters=200_000),
+    )
+
+    assert "final conclusion" in packet.evidence
+    assert "transcript middle omitted" not in packet.evidence
+    assert not packet.allocation.transcript_reduced
+
+
+def test_a_very_long_transcript_keeps_its_opening_and_conclusion(templates):
+    transcript = "opening claim\n" + ("middle evidence\n" * 30_000) + "final conclusion"
+
+    packet = assemble(templates, evidence=make(transcript=transcript))
+
+    assert "opening claim" in packet.evidence
+    assert "final conclusion" in packet.evidence
+    assert "transcript middle omitted to fit the packet budget" in packet.evidence
 
 
 def test_an_impossible_budget_is_refused_with_exit_code_four(templates):
@@ -587,12 +612,26 @@ def test_an_incomplete_retrieval_is_stated_inside_the_packet(templates):
         reported_total=110, notes=("stopped at the requested limit",),
     )))
 
-    assert "top_level_truncated" in packet.evidence
+    assert "top-level comment scan reached its limit" in packet.evidence
     assert "do not treat the absence of a view here" in packet.evidence
     assert "stopped at the requested limit" in packet.evidence
+
+
+def test_repeated_retrieval_limit_notes_are_counted_once(templates):
+    repeated = "stopped at the requested limit of 20; more were available"
+    packet = assemble(templates, evidence=make(retrieval=RetrievalOutcome(
+        status=RetrievalStatus.REPLY_THREAD_TRUNCATED,
+        retrieved=40,
+        notes=(repeated,) * 20,
+    )))
+
+    assert packet.evidence.count(repeated) == 1
+    assert f"20 retrievals: {repeated}" in packet.evidence
+    assert "top-level comments retained:" in packet.evidence
+    assert "replies retained:" in packet.evidence
 
 
 def test_completeness_is_stated_even_when_it_is_good_news(templates):
     packet = assemble(templates)
 
-    assert "retrieval: complete" in packet.evidence
+    assert "retrieval status: complete" in packet.evidence

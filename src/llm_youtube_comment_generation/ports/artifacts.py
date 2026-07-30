@@ -3,8 +3,8 @@
 The staging-and-commit shape is not incidental. A run writes several files
 that only make sense together — the packet, the report, the CSV, the replies
 — and a half-written set is worse than none, because the operator cannot tell
-which half is stale. So a run stages everything and commits atomically, and a
-failure restores what was there before.
+which half is stale. So a run stages everything and publishes a verifiable
+completion record only after the set is ready.
 """
 
 from __future__ import annotations
@@ -19,10 +19,11 @@ class ArtifactStore(Protocol):
         ...
 
     def commit(self) -> tuple[str, ...]:
-        """Publish every staged file at once; return the published paths.
+        """Publish the staged set and its completion record.
 
-        Must be all-or-nothing. On failure the previous output set is
-        restored and nothing staged is visible.
+        A reader must not treat the set as completed until its completion
+        record exists and validates. On a caught failure, restore the previous
+        output set or preserve and report the recovery backup.
         """
         ...
 

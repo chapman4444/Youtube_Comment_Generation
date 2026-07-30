@@ -140,6 +140,7 @@ def test_the_logic_layer_imports_no_tkinter(module):
 #: rules testable on a machine where Tk interpreter creation is flaky.
 WINDOW_MODULES = {
     "advanced_dialog.py",
+    "launcher.py",
     "main_window.py",
     "packet_window.py",
     "widgets.py",

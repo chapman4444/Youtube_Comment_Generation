@@ -7,6 +7,9 @@ the questions an operator asks when something went wrong.
 from __future__ import annotations
 
 import json
+import hashlib
+
+import pytest
 
 from llm_youtube_comment_generation.application.runs import (
     list_runs,
@@ -59,6 +62,42 @@ def test_a_healthy_run_reports_no_problems(tmp_path):
     assert summary.prompt_version == "e8a7d359ad50"
 
 
+def test_recorded_rebuild_kind_wins_over_packet_filename(tmp_path):
+    summary = validate_run(make_run(tmp_path, run={"kind": "rebuild"}))
+
+    assert summary.kind == "rebuild"
+    assert summary.ok
+
+
+def test_version_two_run_requires_a_completion_record(tmp_path):
+    summary = validate_run(make_run(
+        tmp_path, run={"artifact_contract_version": 2},
+    ))
+
+    assert any("not fully published" in problem
+               for problem in summary.problems)
+
+
+def test_version_two_run_validates_completion_hashes(tmp_path):
+    directory = make_run(tmp_path, run={"artifact_contract_version": 2})
+    files = {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in directory.iterdir()
+        if path.is_file()
+    }
+    (directory / ".artifacts-complete.json").write_text(
+        json.dumps({"version": 1, "files": files}),
+        encoding="utf-8",
+    )
+
+    assert validate_run(directory).ok
+
+    (directory / "packet.md").write_text("changed", encoding="utf-8")
+    summary = validate_run(directory)
+
+    assert any("does not match" in problem for problem in summary.problems)
+
+
 def test_a_missing_artifact_is_named(tmp_path):
     summary = validate_run(make_run(tmp_path, omit=("report.md",)))
 
@@ -72,6 +111,68 @@ def test_an_empty_artifact_is_a_problem(tmp_path):
     summary = validate_run(make_run(tmp_path, empty=("packet.md",)))
 
     assert "packet.md is empty" in summary.problems
+
+
+def test_a_supported_no_transcript_run_accepts_its_empty_transcript(tmp_path):
+    summary = validate_run(make_run(
+        tmp_path,
+        run={"transcript": {"availability": "not_published", "entries": 0}},
+        empty=("transcript_timestamped.txt",),
+    ))
+
+    assert summary.ok
+    assert "transcript_timestamped.txt is empty" not in summary.problems
+
+
+def test_an_available_transcript_may_not_have_an_empty_artifact(tmp_path):
+    summary = validate_run(make_run(
+        tmp_path,
+        run={"transcript": {"availability": "available", "entries": 3}},
+        empty=("transcript_timestamped.txt",),
+    ))
+
+    assert "transcript_timestamped.txt is empty" in summary.problems
+
+
+@pytest.mark.parametrize("field", ("packet_characters", "budget"))
+@pytest.mark.parametrize("value", ("unknown", "++1", "1" * 5000, None, [], {}))
+def test_malformed_numeric_fields_are_named_instead_of_raised(
+    tmp_path, field, value,
+):
+    summary = validate_run(make_run(tmp_path, run={field: value}))
+
+    assert any(field in problem for problem in summary.problems)
+
+
+def test_malformed_transcript_availability_is_reported_as_empty_not_raised(
+    tmp_path,
+):
+    summary = validate_run(make_run(
+        tmp_path,
+        run={"transcript": {"availability": []}},
+        empty=("transcript_timestamped.txt",),
+    ))
+
+    assert "transcript_timestamped.txt is empty" in summary.problems
+
+
+def test_one_malformed_record_does_not_suppress_healthy_runs(tmp_path):
+    make_run(tmp_path, "healthy_20260727-120000")
+    make_run(
+        tmp_path,
+        "malformed_20260727-110000",
+        run={"packet_characters": {"not": "a number"}},
+    )
+
+    summaries = list_runs(tmp_path)
+    text = render_list(summaries)
+
+    assert len(summaries) == 2
+    assert any(summary.ok for summary in summaries)
+    assert any("packet_characters" in problem
+               for summary in summaries for problem in summary.problems)
+    assert "ok healthy" in text
+    assert "!! malformed" in text
 
 
 def test_a_packet_that_does_not_match_its_record_is_caught(tmp_path):

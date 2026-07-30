@@ -188,6 +188,18 @@ def test_the_comment_template_declares_resolved_structural_contracts():
     assert "### Harsh critique" not in workflow
 
 
+def test_comment_templates_reject_duplicate_angles_and_wrapped_urls():
+    workflow = load("comment_workflow.md").text
+    final_check = load("comment_final_check.md").text
+    compact = " ".join(workflow.split())
+
+    assert "No more than two variations may make substantially the same" in compact
+    assert "does not create a new inference" in compact
+    assert "Do not wrap it in Markdown link syntax" in workflow
+    assert "Diversity:" in final_check
+    assert "exactly one plain" in final_check
+
+
 def _temporary_prompt_set(monkeypatch, tmp_path, raw: bytes, *, checksum=True):
     prompts = tmp_path / "prompts"
     prompts.mkdir()

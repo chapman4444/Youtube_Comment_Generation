@@ -33,12 +33,12 @@ LAUNCHERS = {
         "pause",
     ),
     "gui.bat": (
-        "interfaces.cli.main gui",
+        "interfaces.gui.launcher gui",
         'set "ALLARGS=%*"',
         "set \"HANDLE=",
         # The window needs a queue that rarely exists. Without a way in that
         # does not, it cannot be looked at before it is needed.
-        "interfaces.cli.main gui --preview",
+        "interfaces.gui.launcher gui --preview",
     ),
     "doctor.bat": ("interfaces.cli.main doctor", "pause"),
     "scoreboard.bat": ("interfaces.cli.main scoreboard", "pause"),
@@ -71,7 +71,10 @@ def test_every_launcher_uses_the_source_beside_it(name):
 
     assert 'set "PYTHONPATH=%~dp0src;%PYTHONPATH%"' in text
     assert r".venv\Scripts\python.exe" in text
-    assert "-m llm_youtube_comment_generation.interfaces.cli.main" in text
+    if name == "gui.bat":
+        assert "-m llm_youtube_comment_generation.interfaces.gui.launcher" in text
+    else:
+        assert "-m llm_youtube_comment_generation.interfaces.cli.main" in text
 
 
 @pytest.mark.parametrize("name", sorted(LAUNCHERS))
@@ -82,12 +85,21 @@ def test_every_launcher_bootstraps_and_requires_the_project_venv(name):
     assert "set \"YTCOMMENT_PYTHON=python\"" not in text
 
 
-def test_venv_bootstrap_selects_python_310_and_installs_both_caption_sources():
+def test_venv_bootstrap_keeps_optional_providers_out_of_the_core_path():
     text = (ROOT / "setup_venv.bat").read_text(encoding="utf-8")
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    core_path = text.split("\n:core_ready", 1)[0]
 
     assert 'py -3.10 -m venv ".venv"' in text
-    assert '".[transcripts,local-transcription]"' in text
+    assert '-e "."' in core_path
+    assert "youtube_transcript_api" not in core_path
+    assert "yt_dlp" not in core_path
+    assert "faster_whisper" not in core_path
+    assert 'if "%~1"=="" exit /b 0' in text
+    assert '"OPTIONAL_EXTRAS=transcripts"' in text
+    assert '"OPTIONAL_EXTRAS=local-transcription"' in text
+    assert '"OPTIONAL_EXTRAS=transcripts,local-transcription"' in text
+    assert '".[%OPTIONAL_EXTRAS%]"' in text
     assert "youtube_transcript_api" in text
     assert "yt_dlp" in text
     assert "faster_whisper" in text
@@ -115,8 +127,11 @@ def test_gui_launcher_closes_without_startup_or_shutdown_chatter():
     assert r".venv\Scripts\pythonw.exe" in text
     assert (
         'start "" "!YTCOMMENT_PYTHONW!" '
-        "-m llm_youtube_comment_generation.interfaces.cli.main comment build"
+        "-m llm_youtube_comment_generation.interfaces.gui.launcher "
+        "comment build"
     ) in text
+    assert 'set "RC=!ERRORLEVEL!"' not in text
+    assert 'if "!RC!"=="5"' not in text
 
 
 def test_a_dry_run_does_not_claim_a_packet_was_built():
@@ -193,7 +208,8 @@ def test_review_zip_records_snapshot_verification_evidence():
     text = (ROOT / "make_review_zip.bat").read_text(encoding="utf-8")
 
     assert "tools\\create_review_evidence.py" in text
-    assert 'call "%PROJECT_ROOT%setup_venv.bat"' in text
+    assert 'call "%PROJECT_ROOT%setup_venv.bat" review' in text
+    assert "import build, faster_whisper, pytest, requests, ruff" in text
     assert '"%PROJECT_PY%" tools\\create_review_evidence.py' in text
     assert '"REVIEW_PROMPT.md"' in text
     assert "REVIEW_VERIFICATION.md" in text
@@ -204,6 +220,28 @@ def test_review_zip_records_snapshot_verification_evidence():
     evidence = text.index('tools\\create_review_evidence.py')
     replacement = text.index('move /y "%TEMP_ARCHIVE%" "%ARCHIVE%"')
     assert evidence < replacement
+
+
+def test_review_setup_declares_and_checks_every_gate_dependency():
+    setup = (ROOT / "setup_venv.bat").read_text(encoding="utf-8")
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert "review = [" in project
+    for requirement in (
+        "pytest",
+        "ruff",
+        "build",
+        "youtube-transcript-api",
+        "yt-dlp",
+        "faster-whisper",
+    ):
+        assert requirement in project
+    assert 'if /i "%~1"=="review"' in setup
+    assert '"OPTIONAL_EXTRAS=review"' in setup
+    assert (
+        "import build, faster_whisper, pytest, requests, ruff, "
+        "youtube_transcript_api, yt_dlp"
+    ) in setup
 
 
 @pytest.mark.opens_for_real

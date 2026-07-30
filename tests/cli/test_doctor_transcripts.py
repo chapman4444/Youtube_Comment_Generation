@@ -103,6 +103,22 @@ def test_missing_whisper_library_is_reported_as_optional(tmp_path, monkeypatch):
     assert 'python -m pip install -e ".[local-transcription]"' in printed
 
 
+def test_core_only_install_reports_every_missing_provider(tmp_path, monkeypatch):
+    from llm_youtube_comment_generation.infrastructure import whisper_transcript
+
+    monkeypatch.setattr(CLI, "library_available", lambda: False)
+    monkeypatch.setattr(CLI, "ytdlp_available", lambda: False)
+    monkeypatch.setattr(whisper_transcript, "library_available", lambda: False)
+
+    code, printed = report(tmp_path)
+
+    assert code == 0
+    assert "transcript: scrape" in printed
+    assert "transcript: yt-dlp" in printed
+    assert "transcript: whisper" in printed
+    assert printed.count("not installed") >= 3
+
+
 # -- saved transcripts: what this machine can do with no network -----------
 
 

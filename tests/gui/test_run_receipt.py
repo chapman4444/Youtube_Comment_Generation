@@ -1,6 +1,7 @@
 from llm_youtube_comment_generation.interfaces.gui.run_receipt import (
     comment_receipt,
     reply_receipt,
+    transcript_notification,
 )
 
 
@@ -53,3 +54,18 @@ def test_receipt_exposes_the_actual_reason_a_transcript_was_missing():
 
     assert "Transcript note:" in text
     assert "ModuleNotFoundError" in text
+
+
+def test_notification_distinguishes_no_captions_from_a_block():
+    missing = transcript_notification({
+        "availability": "not_published",
+        "detail": "no caption tracks were published",
+    })
+    blocked = transcript_notification({
+        "availability": "fetch_failed",
+        "detail": "IpBlocked: too many requests",
+    })
+
+    assert "No transcript was published" in missing
+    assert "blocked or failed" in blocked
+    assert "IpBlocked" in blocked

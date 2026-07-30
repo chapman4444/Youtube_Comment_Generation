@@ -265,9 +265,34 @@ def test_the_field_names_are_the_old_applications():
     for name in (
         "my_handle", "max_top", "max_recent", "use_triage",
         "custom_length", "auto_watch", "editor_path",
-        "transcribe_locally", "whisper_model",
+        "transcribe_locally", "whisper_policy", "whisper_model",
     ):
         assert name in payload
+
+
+def test_old_checked_whisper_setting_migrates_to_automatic():
+    restored = PacketOptionsModel.from_settings({
+        "transcribe_locally": True,
+    })
+
+    assert restored.whisper_policy == "automatic"
+
+
+def test_old_unchecked_whisper_setting_migrates_to_ask():
+    restored = PacketOptionsModel.from_settings({
+        "transcribe_locally": False,
+    })
+
+    assert restored.whisper_policy == "ask"
+
+
+def test_manual_transcript_route_is_a_one_run_choice():
+    options = PacketOptionsModel(transcript_route="whisper")
+
+    assert "transcript_route" not in options.to_settings()
+    assert PacketOptionsModel.from_settings(
+        options.to_settings()
+    ).transcript_route == "automatic"
 
 
 def test_a_malformed_settings_file_does_not_stop_the_window_opening():
