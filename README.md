@@ -1,45 +1,89 @@
-# LLM YouTube Comment Generation
+# YouTube Comment Generation
 
-An installable, read-only YouTube comment and reply packet builder. It gathers
-video, transcript, and comment evidence; combines that evidence with selected
-writing approaches and dials; and produces Markdown packets for use with the
-language model of your choice. You review and post any final text yourself.
+[![Quality](https://github.com/chapman4444/Youtube_Comment_Generation/actions/workflows/quality.yml/badge.svg)](https://github.com/chapman4444/Youtube_Comment_Generation/actions/workflows/quality.yml)
+
+A Windows-first research and drafting workbench for thoughtful YouTube comments
+and replies. Give it a video, choose how you want to approach the subject, and
+it assembles the transcript, description, metadata, comments, and replies into
+one evidence-grounded writing packet.
+
+This is not a commenting bot. It does not sign in to YouTube, call a model on
+its own, or publish text. You remain the editor: the application gathers and
+organizes the evidence, your chosen model helps draft, and you decide what is
+worth posting.
 
 The application supports Python 3.10 through 3.12.
 
+## What it does
+
+- Builds top-level comment packets and guided reply packets from one shared core.
+- Keeps the transcript, metadata, description, comments, replies, activity log,
+  generated packet, and returned answer visible in separate GUI tabs.
+- Tries multiple transcript routes with explicit provenance and bounded local
+  Whisper fallback.
+- Provides 44 writing approaches, eight writing dials, length controls, twelve
+  built-in presets, and user-saved custom presets.
+- Validates returned answers before saving the final draft.
+- Preserves accepted drafts separately from the manual **Record as posted** step.
+- Saves complete, inspectable run artifacts rather than hiding the work behind
+  an opaque session.
+
 ## Screenshots
 
-| Start screen | Generated packet |
+![The application ready for a video](docs/screenshots/start-screen.png)
+
+| Source video | Retrieved public discussion |
 | --- | --- |
-| ![Start screen](docs/screenshots/01-start-screen.png) | ![Generated packet](docs/screenshots/02-generated-packet.png) |
+| ![The source video in a browser](docs/screenshots/youtube-video.png) | ![Retrieved YouTube comments](docs/screenshots/comments.png) |
 
-| Activity and retrieval receipt | Transcript source controls |
+| Generated writing packet | Answer validation |
 | --- | --- |
-| ![Activity and retrieval receipt](docs/screenshots/03-activity-log.png) | ![Transcript source controls](docs/screenshots/04-transcript-sources.png) |
+| ![Generated comment packet](docs/screenshots/generated-packet.png) | ![Returned answer being validated](docs/screenshots/answer-validation.png) |
 
-![Answer validation](docs/screenshots/05-answer-validation.png)
+![The manually published final comment](docs/screenshots/published-comment.png)
 
-### Full workflow examples
+<details>
+<summary><strong>Open the complete workflow gallery</strong></summary>
 
-| Source video | Model-answer review |
+| Retrieval activity | Video metadata |
 | --- | --- |
-| ![Source video](docs/screenshots/youtube-video.png) | ![Model-answer review](docs/screenshots/model-answer-review.png) |
+| ![Retrieval activity and run receipt](docs/screenshots/activity-log.png) | ![Retrieved video metadata](docs/screenshots/video-metadata.png) |
 
-| Model critique | Video metadata |
+| Video description | Transcript and manual source controls |
 | --- | --- |
-| ![Model critique](docs/screenshots/model-critique.png) | ![Video metadata](docs/screenshots/video-metadata.png) |
+| ![Retrieved video description](docs/screenshots/video-description.png) | ![Transcript with manual source controls](docs/screenshots/transcript-sources.png) |
 
-| Video description | Retrieved comments |
+| Retrieved replies | Full generated-packet view |
 | --- | --- |
-| ![Video description](docs/screenshots/video-description.png) | ![Retrieved comments](docs/screenshots/comments.png) |
+| ![Retrieved YouTube replies](docs/screenshots/replies.png) | ![Full generated packet](docs/screenshots/generated-packet-detail.png) |
 
-| Retrieved replies | Generated-packet detail |
+| Model-answer review | Model critique and hardened final |
 | --- | --- |
-| ![Retrieved replies](docs/screenshots/replies.png) | ![Generated-packet detail](docs/screenshots/generated-packet-detail.png) |
+| ![Packet and model answer side by side](docs/screenshots/model-answer-review.png) | ![Model critique and hardened final](docs/screenshots/model-critique.png) |
 
-![Published comment](docs/screenshots/published-comment.png)
+</details>
 
 ## Install
+
+### Windows quick start
+
+The supplied launcher keeps the project on its own Python environment. From the
+project directory, install the lightweight caption providers and open the GUI:
+
+```batch
+setup_venv.bat transcripts
+gui.bat
+```
+
+The launcher creates `.venv` with Python 3.10 when it does not already exist.
+To add local Whisper later, run `setup_venv.bat local-transcription`; to install
+both caption providers and Whisper in one step, run `setup_venv.bat all`.
+
+Set `YOUTUBE_API_KEY` in your environment before retrieving video metadata or
+comments. The key is never stored in the repository or included in review
+packages.
+
+### Manual Python installation
 
 From the project directory:
 
@@ -47,7 +91,7 @@ From the project directory:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[verify,transcripts]"
+python -m pip install -e ".[transcripts]"
 ```
 
 The `transcripts` extra installs both lightweight caption routes:
@@ -58,32 +102,31 @@ fallback as well:
 python -m pip install -e ".[local-transcription]"
 ```
 
-Set `YOUTUBE_API_KEY` in your environment for commands that retrieve YouTube
-data. Transcript support is optional; without it, commands that do not need a
-transcript still work and `ytcomment doctor` reports the limitation.
+For a development checkout with the test and clean-build tools installed:
+
+```powershell
+python -m pip install -e ".[verify,transcripts]"
+```
+
+Transcript support is optional. Without it, commands that do not need a
+transcript still work and `ytcomment doctor` reports exactly what is available.
 
 ## Launch
 
-Show the command-line help:
+Double-click `gui.bat` for the main comment workflow. The window opens before
+retrieval; paste a YouTube URL or copy one from your browser, choose your
+settings, and press **Build**. Use `gui.bat --replies` for guided reply mode.
+
+The equivalent command-line entry points are:
 
 ```powershell
 ytcomment --help
+ytcomment comment build URL_OR_ID
+ytcomment comment build URL_OR_ID --window
+ytcomment gui URL_OR_ID --my-handle @name
 ```
 
-Open the main GUI in comment mode:
-
-```powershell
-ytcomment comment build --window
-```
-
-Open it in reply mode:
-
-```powershell
-ytcomment gui
-```
-
-On Windows, `gui.bat` opens comment mode and `gui.bat --replies` opens reply
-mode. The supplied `comment.bat`, `reply.bat`, `doctor.bat`, and
+The supplied `comment.bat`, `reply.bat`, `doctor.bat`, and
 `scoreboard.bat` launch the same installed application. Every launcher calls
 `setup_venv.bat`: on the first run it creates the project-local `.venv` with
 Python 3.10 and installs only the core application. This keeps `doctor.bat`,
@@ -119,23 +162,64 @@ and then the configured Whisper behavior. Four buttons in the Transcript tab
 can rerun a build using exactly one of those sources for diagnosis or manual
 recovery.
 
-## Workflows
+## Workflow
 
-For a comment, choose or paste a YouTube video, select writing approaches,
-dials, length, or a writing preset, then build the packet. The completed packet
-is copied for you to paste into a model. Paste the model's answer into the
-visible answer box (or use the clipboard shortcut), then validate and save the
-draft.
+```mermaid
+flowchart LR
+    A[Paste a YouTube URL] --> B[Choose a preset or writing options]
+    B --> C[Build]
+    C --> D[Inspect evidence and copy the packet]
+    D --> E[Use the packet with your chosen model]
+    E --> F[Paste the complete answer]
+    F --> G[Validate and save the draft]
+    G --> H[Post manually]
+    H --> I[Record as posted]
+```
 
-Built-in presets cover Default, Concise and direct, Evidence first,
-Constructive, Dry and sharp, and Full analysis. **Save as...** captures the
-current registers, dials, and length as a custom preset. Presets deliberately
-exclude videos, handles, paths, proxies, retrieval limits, and credentials.
+### Comment workflow
 
-For replies, open reply mode and identify your YouTube handle. The application
-scans your threads, can build a triage packet, and then walks through each
-selected person. Every accepted draft is saved immediately. Nothing is posted
-to YouTube.
+1. Paste a YouTube URL, enter an 11-character video ID, or copy a supported URL
+   before opening the application.
+2. Choose a writing preset or select approaches, writing dials, and length
+   directly. Selecting a preset applies it immediately.
+3. Press **Build**. The application retrieves the video evidence, assembles and
+   saves the packet, displays a compact run receipt, and copies the packet.
+4. Review the evidence tabs or paste the packet into the model of your choice.
+5. Paste the complete returned answer into **Paste answer**, then click
+   **Validate and save answer**. Invalid structure is explained and preserved
+   for correction; a valid **Hardened final** is saved as the draft.
+6. Post the text yourself if you decide to use it. Only then click
+   **Record as posted** if you want the local scoreboard to track it.
+
+Changing the video or a packet-affecting setting re-enables **Build** without
+discarding the previous packet. **Reset** returns the window to its opening
+state and clears the working tabs.
+
+### Writing presets
+
+The twelve built-in presets are **Default**, **Concise and direct**,
+**Evidence first**, **Constructive**, **Dry and sharp**, **Balanced**,
+**Skeptical**, **Questions and gaps**, **Direct rebuttal**,
+**Creative angles**, **Human impact**, and **Full analysis**.
+
+**Save preset...** captures the current approaches, dials, and length as a
+custom preset. Presets deliberately exclude videos, handles, local paths,
+proxies, retrieval limits, and credentials.
+
+### Debug workflow
+
+Select **Debug build** before pressing **Build** to produce a one-run diagnostic
+packet alongside the normal packet. The returned answer must include a
+`### Debug report` immediately before `### Hardened final`. The application
+saves the safe build settings, run record, exact packet, complete response,
+validation status, and final draft together in a shareable debug bundle. A
+rejected response is preserved with the exact reason instead of being lost.
+
+### Reply workflow
+
+Open reply mode and identify your YouTube handle. The application scans your
+threads, can build a triage packet, and then walks through each selected person.
+Every accepted draft is saved immediately. Nothing is posted to YouTube.
 
 Accepted and posted are deliberately different states. After you manually
 post a saved draft, use **Record as posted** in the GUI so the scoreboard may
@@ -158,10 +242,9 @@ YouTube API operation count, packet size, and output location. One logical
 operation is one Data API call made by the application. Automatic HTTP
 transport retries do not increase this count, so it is not a physical network
 attempt counter. The **Activity** tab shows retrieval and processing messages.
-Changing the video or a packet-affecting setting re-enables Build while
-leaving the previous packet available for reference. Metadata, description,
-transcript, comments, and replies each have a separate tab and Copy button.
-Selected text in every text view can also be copied from its right-click menu.
+Metadata, description, transcript, comments, and replies each have a separate
+tab and Copy button. Selected text in every text view can also be copied from
+its right-click menu.
 
 The CLI exposes the same core workflows:
 
@@ -173,7 +256,34 @@ ytcomment doctor
 
 Use `ytcomment <group> <command> --help` for the complete options.
 
+## Design
+
+The application is a modular monolith with a functional core and explicit
+ports around YouTube, transcripts, the clipboard, storage, settings, and time.
+The CLI and GUI construct the same application commands, so the GUI presents
+the workflow without owning a second copy of the business rules.
+
+The packet pipeline records evidence provenance, retrieval completeness,
+warnings, budgets, and completion state. YouTube-controlled text is isolated as
+untrusted evidence before it reaches the packet. Run publication is atomic, and
+an interrupted or incomplete run is not presented as a successful one.
+
+The design notes are intentionally concrete:
+
+- [Architecture overview](docs/architecture/01_ARCHITECTURE_OVERVIEW.md)
+- [Project structure](docs/architecture/02_PROJECT_STRUCTURE.md)
+- [Guided workflow state machine](docs/architecture/04_GUIDED_WORKFLOW_STATE_MACHINE.md)
+- [Packet build pipeline](docs/architecture/05_PACKET_BUILD_PIPELINE.md)
+- [CLI and GUI contract](docs/architecture/06_CLI_GUI_CONTRACT.md)
+- [Dependency constraints](docs/architecture/09_DEPENDENCY_CONSTRAINTS.md)
+
 ## Verify
+
+Install the declared review and verification toolset first:
+
+```batch
+setup_venv.bat review
+```
 
 Run the full suite:
 
@@ -187,8 +297,9 @@ Check tracked files for private state, credentials, and personal work notes:
 ytcomment privacy check
 ```
 
-The same privacy audit and test suite run automatically on GitHub for Python
-3.10, 3.11, and 3.12.
+GitHub Actions runs the privacy audit, failure-class lint, test suite,
+transcript-provider imports, two-run determinism gate, and clean-wheel install
+on Windows with Python 3.10, 3.11, and 3.12.
 
 Dependency updates are intentional rather than “newest available” installs.
 See `docs/architecture/09_DEPENDENCY_CONSTRAINTS.md` for the clean-environment
@@ -254,6 +365,5 @@ is not an independent reviewer rerun.
 The project uses read-only YouTube access. It contains no posting adapter,
 OAuth write scope, or automatic model invocation. All YouTube-controlled text
 is treated as untrusted evidence inside explicit packet boundaries. The
-operator remains responsible for reviewing and manually posting final text.
-
-Architecture documentation is available in `docs/architecture/`.
+operator remains responsible for checking every draft, deciding whether it
+should be posted, and manually posting the final text.
