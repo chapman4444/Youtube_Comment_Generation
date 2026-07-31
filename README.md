@@ -7,6 +7,38 @@ language model of your choice. You review and post any final text yourself.
 
 The application supports Python 3.10 through 3.12.
 
+## Screenshots
+
+| Start screen | Generated packet |
+| --- | --- |
+| ![Start screen](docs/screenshots/01-start-screen.png) | ![Generated packet](docs/screenshots/02-generated-packet.png) |
+
+| Activity and retrieval receipt | Transcript source controls |
+| --- | --- |
+| ![Activity and retrieval receipt](docs/screenshots/03-activity-log.png) | ![Transcript source controls](docs/screenshots/04-transcript-sources.png) |
+
+![Answer validation](docs/screenshots/05-answer-validation.png)
+
+### Full workflow examples
+
+| Source video | Model-answer review |
+| --- | --- |
+| ![Source video](docs/screenshots/youtube-video.png) | ![Model-answer review](docs/screenshots/model-answer-review.png) |
+
+| Model critique | Video metadata |
+| --- | --- |
+| ![Model critique](docs/screenshots/model-critique.png) | ![Video metadata](docs/screenshots/video-metadata.png) |
+
+| Video description | Retrieved comments |
+| --- | --- |
+| ![Video description](docs/screenshots/video-description.png) | ![Retrieved comments](docs/screenshots/comments.png) |
+
+| Retrieved replies | Generated-packet detail |
+| --- | --- |
+| ![Retrieved replies](docs/screenshots/replies.png) | ![Generated-packet detail](docs/screenshots/generated-packet-detail.png) |
+
+![Published comment](docs/screenshots/published-comment.png)
+
 ## Install
 
 From the project directory:
