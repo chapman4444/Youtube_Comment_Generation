@@ -94,6 +94,61 @@ def test_checkout_comparison_ignores_only_known_runtime_material(
     assert compare_checkout(tmp_path, expected) == ()
 
 
+def test_readme_screenshots_are_not_release_inputs(tmp_path: Path):
+    """A PNG cannot change what pytest, ruff or pip check do.
+
+    make_review_zip.bat stages docs\\architecture and not docs\\screenshots.
+    While the illustrations counted as release inputs the two tools could never
+    agree, and every recording failed on fourteen "unmanifested" entries before
+    a single gate ran.
+    """
+
+    source = tmp_path / "src" / "example.py"
+    source.parent.mkdir()
+    source.write_text("answer = 42\n", encoding="utf-8")
+    expected = {
+        "src/example.py": hashlib.sha256(source.read_bytes()).hexdigest()
+    }
+    shot = tmp_path / "docs" / "screenshots" / "start-screen.png"
+    shot.parent.mkdir(parents=True)
+    shot.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    assert compare_checkout(tmp_path, expected) == ()
+
+
+def test_the_screenshot_allowance_is_pinned_to_its_one_location(tmp_path: Path):
+    """The negative proof, without which the rule could be far too broad.
+
+    The exclusion is a path, not a directory name. A "screenshots" folder
+    somewhere else, and the architecture notes beside it, are still release
+    inputs and must still be manifested.
+    """
+
+    source = tmp_path / "src" / "example.py"
+    source.parent.mkdir()
+    source.write_text("answer = 42\n", encoding="utf-8")
+    expected = {
+        "src/example.py": hashlib.sha256(source.read_bytes()).hexdigest()
+    }
+    for relative in (
+        "screenshots/top-level.png",
+        "src/screenshots/bundled.png",
+        "docs/architecture/01_ARCHITECTURE_OVERVIEW.md",
+    ):
+        extra = tmp_path / relative
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_bytes(b"extra\n")
+
+    problems = compare_checkout(tmp_path, expected)
+
+    assert "unmanifested: screenshots/top-level.png" in problems
+    assert "unmanifested: src/screenshots/bundled.png" in problems
+    assert (
+        "unmanifested: docs/architecture/01_ARCHITECTURE_OVERVIEW.md"
+        in problems
+    )
+
+
 def test_manifest_tree_contains_only_verified_manifest_inputs(tmp_path: Path):
     source = tmp_path / "checkout" / "src" / "example.py"
     source.parent.mkdir(parents=True)
