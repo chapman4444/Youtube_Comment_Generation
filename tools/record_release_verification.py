@@ -59,6 +59,19 @@ EXCLUDED_DIRECTORY_NAMES = {
     "build",
     "dist",
 }
+# Documentation illustrations, named by their exact position rather than by a
+# bare directory name so an unrelated "screenshots" folder elsewhere would
+# still be accounted for.
+#
+# These are README images. A release input is a file "capable of influencing
+# release gates", and a PNG cannot change what pytest, ruff or pip check do.
+# make_review_zip.bat stages docs\architecture and not these, so treating them
+# as release inputs made the two tools permanently disagree: every recording
+# after the screenshots were added failed with fourteen "unmanifested" entries
+# before a single gate ran.
+EXCLUDED_RELATIVE_DIRECTORIES = {
+    "docs/screenshots",
+}
 EXCLUDED_TOP_LEVEL_FILES = {
     "posted_history.json",
     "engagement_history.sqlite3",
@@ -158,6 +171,12 @@ def release_input_files(root: Path) -> tuple[Path, ...]:
         if any(
             part in EXCLUDED_DIRECTORY_NAMES or part.endswith(".egg-info")
             for part in parts[:-1]
+        ):
+            continue
+        parent = relative.parent.as_posix()
+        if any(
+            parent == excluded or parent.startswith(excluded + "/")
+            for excluded in EXCLUDED_RELATIVE_DIRECTORIES
         ):
             continue
         if path.suffix.lower() in {".pyc", ".pyo"}:
