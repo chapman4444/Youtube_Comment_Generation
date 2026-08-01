@@ -74,6 +74,93 @@ def write_valid_release_evidence(root: Path, digest: str) -> dict:
     return record
 
 
+def failed_record(digest: str) -> dict:
+    """The shape a run leaves behind when a gate stops it early.
+
+    The clean-wheel gate never ran, so there is nothing to name under
+    distribution artifacts.
+    """
+
+    output = "gate failed"
+    return {
+        "schema_version": 1,
+        "recorder": "tools/record_release_verification.py",
+        "generated": "2026-07-30T12:00:00+00:00",
+        "manifest_sha256": digest,
+        "review_archive": "review.zip",
+        "source_tree_mode": "manifest-reconstructed",
+        "overall_result": "FAILED",
+        "initial_source_identity": {
+            "status": "FAIL",
+            "problems": ["unmanifested: docs/screenshots/start-screen.png"],
+        },
+        "gates": [{
+            "name": "Python 3.10 Windows matrix",
+            "commands": ["python gate.py"],
+            "returncode": 1,
+            "status": "FAIL",
+            "output": output,
+            "output_sha256": hashlib.sha256(output.encode()).hexdigest(),
+        }],
+        "final_source_identity": {
+            "status": "FAIL",
+            "problems": ["unmanifested: docs/screenshots/start-screen.png"],
+        },
+        "distribution_artifacts": {},
+    }
+
+
+def test_a_failed_run_still_renders_a_report():
+    """The recorder used to die here, on the run that most needed writing up.
+
+    render_release_report indexed the wheel unconditionally, so a failing
+    gate produced KeyError: 'wheel' while the report was being written. The
+    reason for the failure survived only in the JSON, which is written first.
+    """
+
+    report = render_release_report(failed_record("a" * 64))
+
+    assert "Overall result: **FAILED**" in report
+    assert "unmanifested: docs/screenshots/start-screen.png" in report
+    assert "Python 3.10 Windows matrix: FAIL" in report
+
+
+def test_missing_artifacts_are_never_rendered_as_a_verified_distribution():
+    """Absence has to read as a failure, not as a distribution left unnamed."""
+
+    report = render_release_report(failed_record("a" * 64))
+
+    assert "## Distribution artifacts" in report
+    assert "None recorded." in report
+    assert "must not be read as" in report
+    # No fabricated or blank artifact lines that a reader could mistake for a
+    # recorded distribution.
+    assert "- Wheel:" not in report
+    assert "- Wheel SHA-256:" not in report
+    assert "- Source distribution:" not in report
+
+
+@pytest.mark.parametrize(
+    "dropped", ("wheel", "wheel_sha256", "sdist", "sdist_sha256")
+)
+def test_a_partially_recorded_distribution_is_not_rendered_either(dropped: str):
+    """Half a record is not evidence, so naming what survived would mislead."""
+
+    record = failed_record("a" * 64)
+    record["distribution_artifacts"] = {
+        "wheel": "package-0.1-py3-none-any.whl",
+        "wheel_sha256": "1" * 64,
+        "sdist": "package-0.1.tar.gz",
+        "sdist_sha256": "2" * 64,
+    }
+    del record["distribution_artifacts"][dropped]
+
+    report = render_release_report(record)
+
+    assert "None recorded." in report
+    assert "package-0.1-py3-none-any.whl" not in report
+
+
 def test_clean_install_payload_allows_recorded_exit_line_after_json():
     output = (
         "$ python tools/verify_clean_install.py\n"

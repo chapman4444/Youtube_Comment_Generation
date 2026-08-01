@@ -175,18 +175,32 @@ def render_release_report(record: Mapping[str, Any]) -> str:
         "",
         "## Distribution artifacts",
         "",
-        f"- Wheel: `{record['distribution_artifacts']['wheel']}`",
-        (
-            "- Wheel SHA-256: `"
-            f"{record['distribution_artifacts']['wheel_sha256']}`"
-        ),
-        f"- Source distribution: `{record['distribution_artifacts']['sdist']}`",
-        (
-            "- Source distribution SHA-256: `"
-            f"{record['distribution_artifacts']['sdist_sha256']}`"
-        ),
-        "",
     ])
+    # A failing run has no artifacts to name: the clean-wheel gate builds them
+    # and only runs once every earlier gate has passed. Indexing them
+    # unconditionally meant the recorder died with KeyError while writing the
+    # report, so the one run that most needed a written explanation produced a
+    # traceback instead and left the reason recoverable only from the JSON.
+    artifacts = record["distribution_artifacts"]
+    named = ("wheel", "wheel_sha256", "sdist", "sdist_sha256")
+    if all(key in artifacts for key in named):
+        lines.extend([
+            f"- Wheel: `{artifacts['wheel']}`",
+            f"- Wheel SHA-256: `{artifacts['wheel_sha256']}`",
+            f"- Source distribution: `{artifacts['sdist']}`",
+            f"- Source distribution SHA-256: `{artifacts['sdist_sha256']}`",
+            "",
+        ])
+    else:
+        lines.extend([
+            "None recorded. The clean-wheel installation gate builds and "
+            "hashes the distribution, and it runs only after every earlier "
+            "gate has passed, so an incomplete run names no artifacts.",
+            "",
+            "This absence is itself a failure signal and must not be read as "
+            "a distribution that was verified and left unnamed.",
+            "",
+        ])
     return "\n".join(lines)
 
 
