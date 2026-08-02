@@ -94,13 +94,14 @@ def test_checkout_comparison_ignores_only_known_runtime_material(
     assert compare_checkout(tmp_path, expected) == ()
 
 
-def test_readme_screenshots_are_not_release_inputs(tmp_path: Path):
-    """A PNG cannot change what pytest, ruff or pip check do.
+def test_unstaged_documentation_is_not_a_release_input(tmp_path: Path):
+    """Only docs/architecture is staged, so only it can influence a gate.
 
-    make_review_zip.bat stages docs\\architecture and not docs\\screenshots.
-    While the illustrations counted as release inputs the two tools could never
-    agree, and every recording failed on fourteen "unmanifested" entries before
-    a single gate ran.
+    Naming individual exclusions did not hold. docs/screenshots was excluded
+    first, and every recording still failed once docs/SCREENSHOTS.md was added
+    beside it. A document the archive never stages cannot reach the
+    reconstructed tree, so the rule follows the builder instead of chasing
+    each new file.
     """
 
     source = tmp_path / "src" / "example.py"
@@ -109,19 +110,26 @@ def test_readme_screenshots_are_not_release_inputs(tmp_path: Path):
     expected = {
         "src/example.py": hashlib.sha256(source.read_bytes()).hexdigest()
     }
-    shot = tmp_path / "docs" / "screenshots" / "start-screen.png"
-    shot.parent.mkdir(parents=True)
-    shot.write_bytes(b"\x89PNG\r\n\x1a\n")
+    for relative in (
+        "docs/screenshots/start-screen.png",
+        "docs/SCREENSHOTS.md",
+        "docs/some-future-note.md",
+    ):
+        unstaged = tmp_path / relative
+        unstaged.parent.mkdir(parents=True, exist_ok=True)
+        unstaged.write_bytes(b"\x89PNG\r\n\x1a\n")
 
     assert compare_checkout(tmp_path, expected) == ()
 
 
-def test_the_screenshot_allowance_is_pinned_to_its_one_location(tmp_path: Path):
+def test_the_documentation_allowance_stops_at_the_staged_directory(
+    tmp_path: Path,
+):
     """The negative proof, without which the rule could be far too broad.
 
-    The exclusion is a path, not a directory name. A "screenshots" folder
-    somewhere else, and the architecture notes beside it, are still release
-    inputs and must still be manifested.
+    The allowance is scoped to docs/. A "screenshots" folder anywhere else,
+    and the architecture notes that really are staged, remain release inputs
+    and must still be manifested.
     """
 
     source = tmp_path / "src" / "example.py"
