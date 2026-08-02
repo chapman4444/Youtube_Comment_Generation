@@ -374,7 +374,14 @@ def git_provenance(root: Path, entries: Mapping[str, str]) -> dict[str, Any]:
         "branch": branch,
         "status_porcelain": status,
         "release_inputs_differ_from_head": sorted(differing),
-        "matches_head": available and not status and not differing,
+        # Deliberately not "the whole tree is clean". Only release inputs can
+        # reach the reconstructed tree, so only their drift can change a gate.
+        # docs/screenshots is the case that proved it: editing the images to
+        # obscure commenter names leaves a dirty status while no manifested
+        # file moves, and refusing to record then would block evidence over a
+        # change that cannot affect any result. The status is still recorded
+        # so a reader can see the tree was not pristine.
+        "matches_head": available and not differing,
     }
 
 

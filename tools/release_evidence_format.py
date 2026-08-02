@@ -67,8 +67,10 @@ def validate_release_record(
         raise ValueError("release evidence could not determine its commit")
     if not SHA1.fullmatch(str(provenance.get("commit") or "")):
         raise ValueError("release evidence has an invalid commit id")
-    if provenance.get("status_porcelain"):
-        raise ValueError("release gates ran against an unclean working tree")
+    # A dirty working tree is recorded but not refused. Only release inputs
+    # reach the reconstructed tree, so only their drift can change a gate;
+    # rejecting on unrelated edits would block evidence over changes that
+    # provably cannot affect the result.
     if provenance.get("release_inputs_differ_from_head"):
         raise ValueError("release inputs differ from the recorded commit")
     if not provenance.get("matches_head"):
@@ -155,19 +157,28 @@ def render_release_report(record: Mapping[str, Any]) -> str:
         "",
         f"- Commit: `{provenance.get('commit') or 'unknown'}`",
         f"- Branch: `{provenance.get('branch') or 'unknown'}`",
+        "- Release inputs differing from that commit: "
+        + str(len(provenance.get("release_inputs_differ_from_head") or [])),
         "- Working tree: "
         + (
             "clean"
             if not provenance.get("status_porcelain")
-            else "**not clean**"
+            else "carried unrelated local changes (listed below)"
         ),
-        "- Release inputs differing from that commit: "
-        + str(len(provenance.get("release_inputs_differ_from_head") or [])),
         "",
         "Source identity below proves the manifest equals the checkout that "
         "was measured. This section names which commit that checkout was, so "
         "the archive can be tied to the repository without repeating the "
         "comparison by hand.",
+        "",
+        "Only release inputs reach the reconstructed tree, so only their "
+        "drift can change a gate. Local changes to anything else are reported "
+        "rather than treated as invalidating.",
+        "",
+        "```text",
+        str(provenance.get("status_porcelain") or "").strip()
+        or "The working tree had no local changes.",
+        "```",
         "",
     ])
     for key, title in (
