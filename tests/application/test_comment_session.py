@@ -170,3 +170,94 @@ def test_debug_build_preserves_a_rejected_response_and_explains_why():
     bundle = one.artifacts.read("debug_bundle.md")
     assert "Response status" in bundle
     assert "requires exactly one" in bundle
+
+
+# --------------------------------------------------------------------------
+# The debug bundle's privacy contract
+#
+# The bundle was labelled "privacy-safe" and "shareable" while embedding the
+# exact packet, which retains commenter names and text. The wording invited
+# the one mistake it should have prevented. These pin what the bundle really
+# holds, so the labels cannot drift back.
+# --------------------------------------------------------------------------
+
+SENTINELS = {
+    "author": "SENTINEL-AUTHOR-Qx7",
+    "comment": "SENTINEL-COMMENT-BODY-Qx7",
+    "transcript": "SENTINEL-TRANSCRIPT-PHRASE-Qx7",
+    "description": "SENTINEL-DESCRIPTION-Qx7",
+}
+
+
+def make_debug_bundle() -> str:
+    packet = "\n".join([
+        "# packet",
+        f"from: {SENTINELS['author']}",
+        SENTINELS["comment"],
+        SENTINELS["description"],
+        SENTINELS["transcript"],
+    ])
+    one = CommentSession(
+        packet_text=packet,
+        video={"video_id": VIDEO, "title": "A video"},
+        registers=("short_hook",),
+        packet_path="output/run/packet.md",
+        prompt_version="abc123",
+        run_id="run-1",
+        artifacts=MemoryArtifactStore(),
+    )
+    one.debug_build = True
+    one.start()
+    one.submit(
+        f"{VIDEO_LINE}\n\n### Debug report\nThe evidence is attributed.\n\n"
+        "### Hardened final\nA finished comment ready to post."
+    )
+    return one.artifacts.read("debug_bundle.md")
+
+
+def test_the_debug_bundle_says_it_is_unredacted_before_anything_else():
+    """The warning has to travel with the file, not sit in the window."""
+
+    bundle = make_debug_bundle()
+    heading = bundle.index("# Debug build bundle")
+    warning = bundle.index("Review before sharing")
+    first_section = bundle.index("## Safe build settings")
+
+    assert heading < warning < first_section, (
+        "the warning must precede the first section of content"
+    )
+
+
+def test_the_debug_bundle_still_carries_the_evidence_it_warns_about():
+    """The claim has to match the file both ways.
+
+    Redaction was rejected deliberately: a diagnostic without the packet
+    cannot explain the build. So the test proves the material really is
+    present, which is what makes the warning load-bearing rather than
+    decorative.
+    """
+
+    bundle = make_debug_bundle()
+
+    for name, sentinel in SENTINELS.items():
+        assert sentinel in bundle, f"the bundle dropped the {name} evidence"
+
+
+def test_the_debug_bundle_is_never_called_privacy_safe_or_shareable():
+    """The exact wording that made the bundle unsafe to trust."""
+
+    bundle = make_debug_bundle().lower()
+
+    assert "privacy-safe" not in bundle
+    assert "privacy safe" not in bundle
+    assert "shareable" not in bundle
+
+
+def test_the_debug_bundle_carries_no_credential_or_local_path():
+    """The narrow claim the module always got right, kept true."""
+
+    bundle = make_debug_bundle()
+
+    assert "YOUTUBE_API_KEY" not in bundle
+    assert "C:\\" not in bundle
+    assert "api_key" not in bundle.lower()

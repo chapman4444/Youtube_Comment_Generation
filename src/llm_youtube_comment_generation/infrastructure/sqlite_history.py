@@ -91,11 +91,21 @@ class SqliteHistoryStore:
     def append(self, entries: Sequence[dict[str, Any]]) -> int:
         """Insert drafts that are not already recorded; return how many were new.
 
-        Uniqueness is stable posting-event identity: workflow, target,
-        thread, run, draft, timestamp, and source. Identical text may therefore
-        be recorded separately when it was posted to different targets or as
-        distinct posting events. ``match_key`` is normalized text retained
-        only for later scoreboard matching; it is not persistence identity.
+        Identity is ``event_id`` when the caller supplies one. Otherwise it is
+        a hash of video, workflow, target, target comment, thread, run, draft,
+        ``drafted_at`` and source.
+
+        Note which timestamp that is. ``drafted_at`` participates; ``posted_at``
+        does not. This docstring used to say "timestamp" without saying which,
+        which read as though two posts of the same text were distinguished by
+        when they were posted. They are not. A caller that supplies neither an
+        ``event_id`` nor a distinguishing ``run_id``/``drafted_at`` will have a
+        second identical post treated as a duplicate and dropped, so callers
+        that cannot guarantee one must establish identity themselves rather
+        than rely on this method to separate the events.
+
+        ``match_key`` is normalized text retained only for later scoreboard
+        matching; it is not persistence identity.
         """
 
         added = 0

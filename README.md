@@ -212,8 +212,15 @@ Select **Debug build** before pressing **Build** to produce a one-run diagnostic
 packet alongside the normal packet. The returned answer must include a
 `### Debug report` immediately before `### Hardened final`. The application
 saves the safe build settings, run record, exact packet, complete response,
-validation status, and final draft together in a shareable debug bundle. A
-rejected response is preserved with the exact reason instead of being lost.
+validation status, and final draft together in one debug bundle. A rejected
+response is preserved with the exact reason instead of being lost.
+
+The bundle is deliberately unredacted, because a diagnostic that omitted the
+packet and the response could not explain the build it describes. It carries
+no credentials and no local paths, but it does carry the retained YouTube
+evidence inside the packet: commenter display names, comment and reply text,
+the video description, and transcript text. The file says so at the top.
+Review it before attaching it to a bug report or posting it publicly.
 
 ### Reply workflow
 
@@ -227,9 +234,16 @@ measure it. The GUI shows the exact draft and asks for confirmation before
 recording. The equivalent CLI operation is:
 
 ```powershell
-ytcomment history record URL_OR_ID --workflow comment --draft-file comment.txt
+ytcomment history record URL_OR_ID --workflow comment --draft-file comment.txt --event-id UNIQUE_ID
 ytcomment history record URL_OR_ID --workflow reply --draft-file reply.txt --target-comment-id COMMENT_ID --run-id RUN
 ```
+
+Each recorded event needs a stable identity, supplied as `--event-id` or
+`--run-id`. Without one the command refuses rather than guess, because two
+genuinely distinct posts of the same text to the same video would otherwise
+be indistinguishable and the second would be silently discarded. Repeating
+the same `--event-id` is safe: it records the event once, so a retry after an
+interrupted run cannot create a duplicate.
 
 Reply discovery uses its own scan depth (3,000 comments by default).
 `reply --max-comments` and the reply GUI's matching option change that depth;

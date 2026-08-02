@@ -253,7 +253,7 @@ class CommentSession:
         return added
 
     def debug_bundle(self) -> str:
-        """The shareable diagnostic record for this build, if requested."""
+        """The unredacted diagnostic record for this build, if requested."""
 
         if not self.debug_build:
             return ""
