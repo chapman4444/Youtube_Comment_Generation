@@ -1284,3 +1284,103 @@ def test_the_problems_are_all_reported_at_once(window):
     window.do_primary()
 
     assert "video" in window.status.get().lower()
+
+
+# --------------------------------------------------------------------------
+# A refused answer has to be visible where the result is read
+#
+# Validation reported a refusal only in the status bar along the bottom edge,
+# while the saved-draft panel kept saying "No answer has been saved yet."
+# Both were true, and together they read as a dead button: the panel that
+# reports what pressing it achieved said nothing had happened, and the reason
+# sat in the least prominent strip of the window. The button was working and
+# the explanation was still missed.
+# --------------------------------------------------------------------------
+
+REFUSAL = (
+    "The Video line must contain the YouTube URL exactly once as plain "
+    "text; found 2 copies. Do not wrap it in Markdown brackets, "
+    "parentheses, or link syntax."
+)
+
+
+def refusing_session():
+    class Session:
+        accepted: list = []
+        state = SimpleNamespace(last_error=REFUSAL)
+
+        def submit(self, text):
+            return SimpleNamespace(status=SimpleNamespace(value="refused"))
+
+        def finish(self):
+            return None
+
+    return Session()
+
+
+def test_a_refused_comment_answer_says_so_in_the_draft_panel(window):
+    window.comment_session = refusing_session()
+    window.video.set("gC-J7zwYMAM")
+    window.answer_input.insert("1.0", ANSWER)
+
+    window.take_comment_answer()
+
+    panel = window.said.get("1.0", "end-1c")
+    assert "Not saved" in panel, "the panel does not report the refusal at all"
+    assert "exactly once as plain text" in panel, (
+        "the panel does not say why the answer was refused"
+    )
+    assert panel != "No answer has been saved yet.", (
+        "a refusal still reads as though the button did nothing"
+    )
+
+
+def test_a_refused_comment_answer_still_reaches_the_status_bar(window):
+    """The status bar keeps its message; the panel is added, not swapped."""
+
+    window.comment_session = refusing_session()
+    window.video.set("gC-J7zwYMAM")
+    window.answer_input.insert("1.0", ANSWER)
+
+    window.take_comment_answer()
+
+    assert "exactly once as plain text" in window.status.get()
+
+
+def test_a_refused_answer_does_not_discard_what_was_pasted(window):
+    """The text must survive so the operator can correct it in place."""
+
+    window.comment_session = refusing_session()
+    window.video.set("gC-J7zwYMAM")
+    window.answer_input.insert("1.0", ANSWER)
+
+    window.take_comment_answer()
+
+    assert window._answer_text() == ANSWER.strip()
+
+
+def test_a_saved_answer_replaces_an_earlier_refusal_in_the_panel(window):
+    """The panel must not keep showing a refusal that no longer applies."""
+
+    window.comment_session = refusing_session()
+    window.video.set("gC-J7zwYMAM")
+    window.answer_input.insert("1.0", ANSWER)
+    window.take_comment_answer()
+    assert "Not saved" in window.said.get("1.0", "end-1c")
+
+    class Accepting:
+        accepted: list = []
+        state = SimpleNamespace(last_error="")
+
+        def submit(self, text):
+            self.accepted.append(SimpleNamespace(draft="The saved comment."))
+            return SimpleNamespace(status=SimpleNamespace(value="ok"))
+
+        def finish(self):
+            return None
+
+    window.comment_session = Accepting()
+    window.answer_input.insert("1.0", ANSWER)
+    window.take_comment_answer()
+
+    assert window.said.get("1.0", "end-1c") == "The saved comment."

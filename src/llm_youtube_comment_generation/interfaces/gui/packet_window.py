@@ -1803,6 +1803,24 @@ class PacketWindow:
                 text or "No answer has been saved yet.",
             )
 
+    def _show_refusal(self, reason: str) -> None:
+        """Put a refused answer's reason where the operator is looking.
+
+        A refusal used to go only to the status bar along the bottom edge,
+        while this panel kept saying "No answer has been saved yet." Both
+        statements were true and the combination read as a dead button: the
+        one place that reports the outcome of pressing it said nothing had
+        happened, and the explanation sat in the least prominent strip of the
+        window. Validation was working and being reported, and the report was
+        still missed.
+        """
+
+        if hasattr(self, "said"):
+            self._set_text(
+                self.said,
+                "Not saved. " + (reason or "That paste could not be used."),
+            )
+
     def paste_answer(self) -> None:
         """Paste explicitly into the visible answer field."""
 
@@ -1996,8 +2014,9 @@ class PacketWindow:
         if getattr(getattr(result, "status", None), "value", "") == "refused":
             if getattr(session, "debug_build", False):
                 self._set_evidence_view("debug", session.debug_bundle())
-            self.say(session.state.last_error
-                     or "That paste could not be used.")
+            reason = session.state.last_error or "That paste could not be used."
+            self.say(reason)
+            self._show_refusal(reason)
             self.refresh()
             return
 
@@ -2076,8 +2095,9 @@ class PacketWindow:
             return
 
         if getattr(getattr(result, "status", None), "value", "") == "refused":
-            self.say(session.state.last_error
-                     or "That paste could not be used.")
+            reason = session.state.last_error or "That paste could not be used."
+            self.say(reason)
+            self._show_refusal(reason)
             self.refresh()
             return
 
