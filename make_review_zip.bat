@@ -11,6 +11,11 @@ set "ARCHIVE=%REVIEW_DIR%\Youtube_Comment_Generation_review.zip"
 set "TEMP_ARCHIVE=%REVIEW_DIR%\Youtube_Comment_Generation_review.new.zip"
 set "ARCHIVE_DIGEST=%ARCHIVE%.sha256"
 set "DIGEST_TEMP=%ARCHIVE_DIGEST%.new"
+rem git wants forward slashes and no trailing separator for safe.directory.
+rem It is set for this repository only: the check exists to stop a stranger's
+rem hooks running, and this script already lives in the checkout it exports.
+set "PROJECT_ROOT_POSIX=%PROJECT_ROOT:~0,-1%"
+set "PROJECT_ROOT_POSIX=%PROJECT_ROOT_POSIX:\=/%"
 rem Where a failed verification report is kept once the stage is gone.
 set "FAILED_REPORT=%REVIEW_DIR%\REVIEW_VERIFICATION_FAILED.md"
 
@@ -81,21 +86,28 @@ if exist "%TEMP_ARCHIVE%" (
     goto :cleanup
 )
 
-for %%F in (
-    ".gitattributes"
-    ".gitignore"
-    "README.md"
-    "REVIEW_PROMPT.md"
-    "pyproject.toml"
-    "comment.bat"
-    "doctor.bat"
-    "gui.bat"
-    "make_review_zip.bat"
-    "reply.bat"
-    "scoreboard.bat"
-    "setup_venv.bat"
-) do (
-    if exist "%PROJECT_ROOT%%%~F" copy /y "%PROJECT_ROOT%%%~F" "%STAGE%\" >nul
+rem The staged tree is the committed tree, produced by git rather than copied
+rem out of the working directory.
+rem
+rem It used to be an allowlist: six robocopy calls and twelve named files.
+rem The release-input rule that has to agree with it is a denylist. Two
+rem opposite policies over one domain drift by construction, and each drift
+rem cost a full release-matrix run to discover -- docs/screenshots first, then
+rem docs/SCREENSHOTS.md added beside it. A file was a release input the moment
+rem it was created and was staged only if somebody remembered to edit this
+rem list.
+rem
+rem git archive removes the second policy. What ships is what is committed,
+rem so nothing can be a release input without also being staged, and no
+rem local edit or stray file can reach the archive at all. It applies
+rem .gitattributes too, so .bat files arrive CRLF and Python arrives LF
+rem exactly as a clean checkout would, which is what made the archive's bytes
+rem depend on this machine before.
+git -c safe.directory=%PROJECT_ROOT_POSIX% archive --format=tar HEAD | tar -x -C "%STAGE%"
+if errorlevel 1 (
+    echo Could not export the committed tree with git archive.
+    echo Uncommitted work is never staged: commit it first.
+    goto :copy_failed
 )
 
 if exist "%REVIEW_DIR%\RELEASE_VERIFICATION.md" (
@@ -105,30 +117,10 @@ if exist "%REVIEW_DIR%\RELEASE_VERIFICATION.json" (
     copy /y "%REVIEW_DIR%\RELEASE_VERIFICATION.json" "%STAGE%\" >nul
 )
 
-robocopy "%PROJECT_ROOT%docs\architecture" "%STAGE%\docs\architecture" /E /NFL /NDL /NJH /NJS /NP >nul
-if errorlevel 8 goto :copy_failed
-
-robocopy "%PROJECT_ROOT%constraints" "%STAGE%\constraints" /E /NFL /NDL /NJH /NJS /NP >nul
-if errorlevel 8 goto :copy_failed
-
-robocopy "%PROJECT_ROOT%src" "%STAGE%\src" /E /XD __pycache__ *.egg-info /XF *.pyc *.pyo /NFL /NDL /NJH /NJS /NP >nul
-if errorlevel 8 goto :copy_failed
-
-robocopy "%PROJECT_ROOT%tests" "%STAGE%\tests" /E /XD __pycache__ .pytest_cache /XF *.pyc *.pyo test_frozen_inventory.py /NFL /NDL /NJH /NJS /NP >nul
-if errorlevel 8 goto :copy_failed
-
-robocopy "%PROJECT_ROOT%tools" "%STAGE%\tools" /E /XD __pycache__ /XF *.pyc *.pyo freeze_inventory.py write_not_ported.py /NFL /NDL /NJH /NJS /NP >nul
-if errorlevel 8 goto :copy_failed
-
-if exist "%PROJECT_ROOT%.github" (
-    robocopy "%PROJECT_ROOT%.github" "%STAGE%\.github" /E /NFL /NDL /NJH /NJS /NP >nul
-    if errorlevel 8 goto :copy_failed
-)
-
 rem The staged tree must actually contain what the reviewer is promised. An
 rem earlier run exited with a partial stage that was missing src, tests and
-rem tools entirely, because robocopy reports "nothing copied" as success and
-rem only a missing *source* raises 8.
+rem tools entirely, because the copy step reported "nothing copied" as
+rem success.
 for %%D in ("src" "tests" "tools" "constraints" "docs\architecture") do (
     if not exist "%STAGE%\%%~D" (
         echo The staged tree is missing %%~D.

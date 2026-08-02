@@ -30,16 +30,43 @@ The application supports Python 3.10 through 3.12.
 
 ## Screenshots
 
-The application working through one comment, from an empty window to a
-manually published post:
-**[open the screenshot gallery](https://github.com/chapman4444/Youtube_Comment_Generation/blob/main/docs/SCREENSHOTS.md)**.
+![The application ready for a video](docs/screenshots/start-screen.png)
 
-The gallery is linked rather than embedded so this file carries no local
-image references. The review archive does not stage `docs/screenshots/`, and
-an embedded gallery therefore reached reviewers as broken images in the first
-document they read. An absolute link resolves from the repository and from an
-extracted archive alike, and it keeps the archived README byte-identical to
-the checkout.
+| Source video | Retrieved public discussion |
+| --- | --- |
+| ![The source video in a browser](docs/screenshots/youtube-video.png) | ![Retrieved YouTube comments](docs/screenshots/comments.png) |
+
+| Generated writing packet | Answer validation |
+| --- | --- |
+| ![Generated comment packet](docs/screenshots/generated-packet.png) | ![Returned answer being validated](docs/screenshots/answer-validation.png) |
+
+![The manually published final comment](docs/screenshots/published-comment.png)
+
+<details>
+<summary><strong>Open the complete workflow gallery</strong></summary>
+
+| Retrieval activity | Video metadata |
+| --- | --- |
+| ![Retrieval activity and run receipt](docs/screenshots/activity-log.png) | ![Retrieved video metadata](docs/screenshots/video-metadata.png) |
+
+| Video description | Transcript and manual source controls |
+| --- | --- |
+| ![Retrieved video description](docs/screenshots/video-description.png) | ![Transcript with manual source controls](docs/screenshots/transcript-sources.png) |
+
+| Retrieved replies | Full generated-packet view |
+| --- | --- |
+| ![Retrieved YouTube replies](docs/screenshots/replies.png) | ![Full generated packet](docs/screenshots/generated-packet-detail.png) |
+
+| Model-answer review | Model critique and hardened final |
+| --- | --- |
+| ![Packet and model answer side by side](docs/screenshots/model-answer-review.png) | ![Model critique and hardened final](docs/screenshots/model-critique.png) |
+
+</details>
+
+The usernames and channel ids in these captures are obscured. The review
+archive ships them, because `git archive HEAD` stages every committed file,
+so these references resolve from the repository and from an extracted archive
+alike.
 
 ## Install
 

@@ -226,12 +226,16 @@ def test_review_zip_records_snapshot_verification_evidence():
     assert 'call "%PROJECT_ROOT%setup_venv.bat" review' in text
     assert "import build, faster_whisper, pytest, requests, ruff" in text
     assert '"%PROJECT_PY%" tools\\create_review_evidence.py' in text
-    assert '"REVIEW_PROMPT.md"' in text
     assert "REVIEW_VERIFICATION.md" in text
     assert "WinRAR.exe" in text
     assert "Youtube_Comment_Generation_review.new.zip" in text
     assert '"%WINRAR_EXE%" t -y "%TEMP_ARCHIVE%"' in text
-    assert '"%PROJECT_ROOT%constraints"' in text
+    # The staged tree is the committed tree. REVIEW_PROMPT.md and constraints
+    # were named here while staging was an allowlist; they arrive now because
+    # they are committed, so what has to be asserted is the export itself and
+    # the check that the result is not a partial tree.
+    assert "archive --format=tar HEAD" in text
+    assert '"constraints"' in text
     assert "RELEASE_VERIFICATION.md" in text
     assert "RELEASE_VERIFICATION.json" in text
     assert (

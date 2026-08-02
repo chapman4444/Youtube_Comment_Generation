@@ -92,16 +92,17 @@ def test_architecture_documents_state_the_implemented_contracts():
 # --------------------------------------------------------------------------
 # The README carries no local image reference
 #
-# The review archive stages the architecture notes but not docs/screenshots,
-# so an embedded gallery reached reviewers as fourteen broken images in the
-# document they read first. Rewriting the README during staging was tried and
-# rejected: it broke the byte-identical match between the archived files and
-# the checkout, which is the property the release evidence exists to prove.
+# The gallery reached reviewers as fourteen broken images while the archive
+# staged an allowlist that omitted docs/screenshots. Rewriting the README
+# during staging was tried and reverted: it broke the byte-identical match
+# between the archived files and the checkout, which is the property the
+# release evidence exists to prove. Linking the gallery out worked but split
+# the documentation in two.
 #
-# Linking the gallery instead keeps one README true in both places. This
-# guards that, and it is checked as an absence rather than by resolving paths
-# so it stays meaningful inside the archive, where the images are absent by
-# design and a resolve-each-path test would pass only by luck.
+# git archive HEAD stages every committed file, so the images ship and the
+# references resolve. This runs in whichever tree it sits in, the repository
+# and the archive alike, and resolving each path is meaningful in both now
+# that neither is missing them by design.
 # --------------------------------------------------------------------------
 
 import re
@@ -130,12 +131,15 @@ def test_the_scan_recognises_a_local_image_and_ignores_a_remote_one():
     assert local_image_references(sample) == ["docs/screenshots/one.png"]
 
 
-def test_the_readme_embeds_no_local_image():
+def test_every_local_readme_image_resolves_in_this_tree():
     found = local_image_references(text("README.md"))
+    missing = [
+        reference for reference in found if not (ROOT / reference).is_file()
+    ]
 
-    assert not found, (
-        "README embeds local images that the review archive does not stage: "
-        + ", ".join(sorted(found))
-        + ". Add them to docs/SCREENSHOTS.md and link to it instead."
+    assert found, "the README gallery has lost every image"
+    assert not missing, (
+        "README references local images absent from this tree: "
+        + ", ".join(sorted(missing))
     )
 

@@ -97,69 +97,6 @@ def test_checkout_comparison_ignores_only_known_runtime_material(
     assert compare_checkout(tmp_path, expected) == ()
 
 
-def test_unstaged_documentation_is_not_a_release_input(tmp_path: Path):
-    """Only docs/architecture is staged, so only it can influence a gate.
-
-    Naming individual exclusions did not hold. docs/screenshots was excluded
-    first, and every recording still failed once docs/SCREENSHOTS.md was added
-    beside it. A document the archive never stages cannot reach the
-    reconstructed tree, so the rule follows the builder instead of chasing
-    each new file.
-    """
-
-    source = tmp_path / "src" / "example.py"
-    source.parent.mkdir()
-    source.write_text("answer = 42\n", encoding="utf-8")
-    expected = {
-        "src/example.py": hashlib.sha256(source.read_bytes()).hexdigest()
-    }
-    for relative in (
-        "docs/screenshots/start-screen.png",
-        "docs/SCREENSHOTS.md",
-        "docs/some-future-note.md",
-    ):
-        unstaged = tmp_path / relative
-        unstaged.parent.mkdir(parents=True, exist_ok=True)
-        unstaged.write_bytes(b"\x89PNG\r\n\x1a\n")
-
-    assert compare_checkout(tmp_path, expected) == ()
-
-
-def test_the_documentation_allowance_stops_at_the_staged_directory(
-    tmp_path: Path,
-):
-    """The negative proof, without which the rule could be far too broad.
-
-    The allowance is scoped to docs/. A "screenshots" folder anywhere else,
-    and the architecture notes that really are staged, remain release inputs
-    and must still be manifested.
-    """
-
-    source = tmp_path / "src" / "example.py"
-    source.parent.mkdir()
-    source.write_text("answer = 42\n", encoding="utf-8")
-    expected = {
-        "src/example.py": hashlib.sha256(source.read_bytes()).hexdigest()
-    }
-    for relative in (
-        "screenshots/top-level.png",
-        "src/screenshots/bundled.png",
-        "docs/architecture/01_ARCHITECTURE_OVERVIEW.md",
-    ):
-        extra = tmp_path / relative
-        extra.parent.mkdir(parents=True, exist_ok=True)
-        extra.write_bytes(b"extra\n")
-
-    problems = compare_checkout(tmp_path, expected)
-
-    assert "unmanifested: screenshots/top-level.png" in problems
-    assert "unmanifested: src/screenshots/bundled.png" in problems
-    assert (
-        "unmanifested: docs/architecture/01_ARCHITECTURE_OVERVIEW.md"
-        in problems
-    )
-
-
 def test_manifest_tree_contains_only_verified_manifest_inputs(tmp_path: Path):
     source = tmp_path / "checkout" / "src" / "example.py"
     source.parent.mkdir(parents=True)
@@ -200,66 +137,84 @@ def test_redaction_handles_case_and_repeated_windows_separators():
 
 
 # --------------------------------------------------------------------------
-# The builder and the release-input rule must agree
+# The builder stages the committed tree
 #
-# make_review_zip.bat stages by allowlist: six robocopy calls and a list of
-# named files. release_input_files excludes by denylist. Two opposite
-# policies over one domain drift by construction, and every drift is a
-# recording that fails ~13 minutes in with "unmanifested".
-#
-# It happened twice: docs/screenshots, then docs/SCREENSHOTS.md added beside
-# it. Both were release inputs the moment they existed and neither was
-# staged. This turns that into a one-second failure.
+# It used to stage from an allowlist of six robocopy calls and twelve named
+# files, while release_input_files excluded by denylist. Two opposite
+# policies over one domain drift by construction, and each drift cost a full
+# release-matrix run to find: docs/screenshots was a release input that was
+# never staged, then docs/SCREENSHOTS.md was added beside it and did the
+# same. Exporting the commit removes the second policy, so a file cannot be
+# committed and unstaged at the same time.
 # --------------------------------------------------------------------------
 
 
-def top_level_release_inputs(root: Path) -> list[str]:
-    """Top-level names the builder is responsible for putting in the stage.
-
-    The evidence files are generated inside the stage by
-    create_review_evidence.py rather than copied into it, so the builder
-    never names them and should not have to. Running this check inside an
-    extracted archive is what surfaced that: the manifest sits at the top
-    level there and would otherwise look like something the builder forgot.
-    """
-
-    return sorted({
-        path.relative_to(root).as_posix().split("/")[0]
-        for path in release_input_files(root)
-        if path.name not in GENERATED_IN_STAGE
-    })
-
-
-def test_every_release_input_is_named_by_the_archive_builder():
-    """A new top-level file or directory must be staged or excluded.
-
-    Being neither is the silent failure: it counts as a release input the
-    moment it is created, never reaches the staged tree, and the mismatch
-    only surfaces once the whole matrix has run.
-    """
+def test_the_builder_exports_the_committed_tree():
+    """A silent return to hand-listed staging is the regression to catch."""
 
     builder = (ROOT / "make_review_zip.bat").read_text(encoding="utf-8")
 
-    unnamed = [
-        name for name in top_level_release_inputs(ROOT)
-        if name not in builder
-    ]
+    assert "git" in builder and "archive" in builder, (
+        "the builder no longer exports the tree with git archive"
+    )
+    assert "HEAD" in builder, "the builder does not export a commit"
 
-    assert not unnamed, (
-        "these are release inputs but make_review_zip.bat never names them, "
-        "so a recording would fail on 'unmanifested': " + ", ".join(unnamed)
+    # Invocations, not prose. The comment above the export explains what it
+    # replaced, and matching the bare word would fail on that explanation.
+    copying = [
+        line.strip() for line in builder.splitlines()
+        if line.strip().lower().startswith(("robocopy ", "xcopy "))
+    ]
+    assert not copying, (
+        "hand-listed staging is back; it drifts from the release-input rule: "
+        + "; ".join(copying)
     )
 
 
-def test_the_builder_check_would_notice_an_unstaged_addition(tmp_path: Path):
-    """The negative proof: a tree whose builder names nothing must fail."""
+def test_documentation_is_a_release_input_now_that_it_is_staged(
+    tmp_path: Path,
+):
+    """The exclusion existed only because docs were not staged.
 
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "example.py").write_text("x = 1\n", encoding="utf-8")
-    (tmp_path / "scripts").mkdir()
-    (tmp_path / "scripts" / "deploy.py").write_text("x = 1\n", encoding="utf-8")
+    git archive exports everything committed, so the documentation ships like
+    any other tracked file and must be manifested with it.
+    """
 
-    names = top_level_release_inputs(tmp_path)
+    source = tmp_path / "src" / "example.py"
+    source.parent.mkdir()
+    source.write_text("answer = 42\n", encoding="utf-8")
+    expected = {
+        "src/example.py": hashlib.sha256(source.read_bytes()).hexdigest()
+    }
+    for relative in ("docs/screenshots/start-screen.png", "docs/SCREENSHOTS.md"):
+        extra = tmp_path / relative
+        extra.parent.mkdir(parents=True, exist_ok=True)
+        extra.write_bytes(b"documentation\n")
 
-    assert "scripts" in names, "a new top-level directory was not even seen"
-    assert "src" in names
+    problems = compare_checkout(tmp_path, expected)
+
+    assert "unmanifested: docs/screenshots/start-screen.png" in problems
+    assert "unmanifested: docs/SCREENSHOTS.md" in problems
+
+
+def test_runtime_material_is_still_not_a_release_input(tmp_path: Path):
+    """Widening the rule must not have swept in the private state trees."""
+
+    source = tmp_path / "src" / "example.py"
+    source.parent.mkdir()
+    source.write_text("answer = 42\n", encoding="utf-8")
+    expected = {
+        "src/example.py": hashlib.sha256(source.read_bytes()).hexdigest()
+    }
+    for relative in (
+        ".venv/generated.py",
+        "output/run/packet.md",
+        "review_packages/old.zip",
+        "local_notes/private.md",
+        "src/__pycache__/example.cpython-310.pyc",
+    ):
+        noise = tmp_path / relative
+        noise.parent.mkdir(parents=True, exist_ok=True)
+        noise.write_text("runtime\n", encoding="utf-8")
+
+    assert compare_checkout(tmp_path, expected) == ()
