@@ -75,9 +75,15 @@ Line length 88. Ruff's `select` is deliberately narrow (`E9,F63,F7,F82`).
 - **`.bat` files must be CRLF.** `.gitattributes` declares
   `*.bat text eol=crlf`. An LF `.bat` makes `cmd.exe` misparse multi-line
   `if/else` blocks — it executes stray characters as commands.
-- **`git` needs `-c safe.directory=<repo>` here.** `.git` is owned by a
-  different Windows account, so bare `git` calls fail. `gh` hits the same
-  wall; pass `--repo`, `--base`, `--head` explicitly.
+- **This particular checkout may need a command-scoped Git trust setting.**
+  On the original development machine, `.git` is owned by
+  `ALIEN\CodexSandboxOffline` while the interactive user is `ALIEN\Ryan`, so
+  bare Git refuses the checkout. This is machine-local, not a property of the
+  repository or a normal fresh clone. Use
+  `git -c safe.directory=C:/__PROJECTS/Youtube_Comment_Generation ...` here;
+  do not change global Git configuration or filesystem ownership without the
+  operator's approval. When `gh` cannot infer the repository for the same
+  reason, pass `--repo`, `--base`, and `--head` explicitly.
 - **The test harness blocks `subprocess`.** `tests/conftest.py` refuses
   desktop launches by guarding OS calls, so a tool function that shells out
   cannot be exercised from the suite.
