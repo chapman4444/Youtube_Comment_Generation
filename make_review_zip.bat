@@ -10,6 +10,7 @@ set "STAGE=%REVIEW_DIR%\_review_stage_%RANDOM%_%RANDOM%"
 set "ARCHIVE=%REVIEW_DIR%\Youtube_Comment_Generation_review.zip"
 set "TEMP_ARCHIVE=%REVIEW_DIR%\Youtube_Comment_Generation_review.new.zip"
 set "ARCHIVE_DIGEST=%ARCHIVE%.sha256"
+set "DIGEST_TEMP=%ARCHIVE_DIGEST%.new"
 rem Where a failed verification report is kept once the stage is gone.
 set "FAILED_REPORT=%REVIEW_DIR%\REVIEW_VERIFICATION_FAILED.md"
 
@@ -187,14 +188,21 @@ if errorlevel 1 (
     goto :cleanup
 )
 
-rem Written straight over any previous sidecar. Deleting it first opened a
-rem window where the archive had no digest at all if the hash step then failed.
-powershell.exe -NoProfile -Command "$hash=(Get-FileHash -Algorithm SHA256 -LiteralPath '%ARCHIVE%').Hash.ToLowerInvariant(); Set-Content -LiteralPath '%ARCHIVE_DIGEST%' -Value ($hash + '  Youtube_Comment_Generation_review.zip') -Encoding ascii"
-if errorlevel 1 (
-    echo The ZIP passed verification, but its SHA-256 sidecar could not be written.
-    set "EXITCODE=7"
-    goto :cleanup
-)
+rem Hashed into a temporary sidecar and moved into place only once it is
+rem complete, so the published name never holds a partial digest.
+rem
+rem The archive has already been replaced by this point, so the previous
+rem sidecar now describes a file that is gone. Writing straight over it left
+rem the new ZIP paired with the old ZIP's digest whenever hashing failed, and
+rem a wrong digest is worse than a missing one: an absent sidecar is visibly
+rem absent, while a stale one looks authoritative and describes a different
+rem archive. Either the digest matches the published ZIP or there is none.
+if exist "%DIGEST_TEMP%" del /q "%DIGEST_TEMP%"
+powershell.exe -NoProfile -Command "$hash=(Get-FileHash -Algorithm SHA256 -LiteralPath '%ARCHIVE%').Hash.ToLowerInvariant(); Set-Content -LiteralPath '%DIGEST_TEMP%' -Value ($hash + '  Youtube_Comment_Generation_review.zip') -Encoding ascii"
+if errorlevel 1 goto :digest_failed
+if not exist "%DIGEST_TEMP%" goto :digest_failed
+move /y "%DIGEST_TEMP%" "%ARCHIVE_DIGEST%" >nul
+if errorlevel 1 goto :digest_failed
 
 powershell.exe -NoProfile -Command "(Get-Item -LiteralPath '%ARCHIVE%').LastWriteTime = Get-Date"
 if errorlevel 1 (
@@ -212,6 +220,20 @@ goto :cleanup
 :copy_failed
 echo Could not prepare the review files.
 set "EXITCODE=6"
+goto :cleanup
+
+rem --------------------------------------------------------------------------
+rem The published ZIP is already in place and cannot be un-replaced, so the only
+rem safe end state is no sidecar at all. Removing the stale one is what keeps
+rem "the digest beside the archive describes the archive" true at every moment.
+rem --------------------------------------------------------------------------
+:digest_failed
+echo The ZIP passed verification, but its SHA-256 sidecar could not be written.
+echo The stale digest was removed; the archive is published without one:
+echo   %ARCHIVE%
+if exist "%DIGEST_TEMP%" del /q "%DIGEST_TEMP%"
+if exist "%ARCHIVE_DIGEST%" del /q "%ARCHIVE_DIGEST%"
+set "EXITCODE=7"
 goto :cleanup
 
 rem --------------------------------------------------------------------------
