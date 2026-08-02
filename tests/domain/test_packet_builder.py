@@ -22,10 +22,16 @@ from llm_youtube_comment_generation.domain.packet_builder import (
     PacketEvidence,
     PacketOptions,
     build,
+    render_comment,
+    render_reduction_summary,
+    render_comment_section,
     render_instructions,
+    render_threads,
 )
 from llm_youtube_comment_generation.domain.packets import (
     DEFAULT_PACKET_CHARACTERS,
+    PacketAllocation,
+    PacketSelection,
     select_packet_sections,
 )
 from llm_youtube_comment_generation.domain.sanitize import (
@@ -648,3 +654,217 @@ def test_completeness_is_stated_even_when_it_is_good_news(templates):
     packet = assemble(templates)
 
     assert "retrieval status: complete" in packet.evidence
+
+
+# --------------------------------------------------------------------------
+# Chronology reaches the page
+#
+# published_at ordered the sections and was then dropped before rendering, so
+# "Most recent comments" asserted an ordering the packet could not show and a
+# reader could not tell an hour-one reaction from a week-later reply.
+# --------------------------------------------------------------------------
+
+
+def dated_comment(identifier: str, when: str, **extra):
+    record = {
+        "comment_id": identifier,
+        "text": "a body",
+        "author": "@someone",
+        "like_count": 5,
+        "total_reply_count": 0,
+        "published_at": when,
+    }
+    record.update(extra)
+    return record
+
+
+def test_a_comment_header_carries_its_publish_time():
+    rendered = render_comment(
+        dated_comment("c1", "2026-07-01T00:00:00Z"), body=200, index=1
+    )
+
+    assert "2026-07-01T00:00:00Z" in rendered.splitlines()[0]
+
+
+def test_a_reply_header_carries_its_publish_time():
+    parent = dated_comment("p1", "2026-07-01T00:00:00Z", total_reply_count=1)
+    reply = dated_comment("r1", "2026-07-02T09:30:00Z")
+    selection = PacketSelection(threads=[(parent, [reply])])
+
+    rendered = render_threads(
+        selection, threads=1, per_thread=5, body=200, comment_body=200
+    )
+
+    assert "2026-07-02T09:30:00Z" in rendered
+
+
+def test_a_missing_publish_time_leaves_no_dangling_label():
+    """An absent field must not render an empty separator."""
+
+    record = dated_comment("c1", "")
+    del record["published_at"]
+
+    header = render_comment(record, body=200, index=1).splitlines()[0]
+
+    assert header.endswith("likes**")
+    assert "—  " not in header
+    assert ", ," not in header
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("not a date", "## heading", "2026-07-01", "", "   "),
+)
+def test_only_a_timestamp_shape_reaches_the_header(value: str):
+    """The field is API-assigned, and anything unrecognised is dropped.
+
+    Dropping rather than escaping keeps unrecognised text out of a header
+    entirely, which is the same reason the comment id is allowlisted.
+    """
+
+    header = render_comment(
+        dated_comment("c1", value), body=200, index=1
+    ).splitlines()[0]
+
+    assert value.strip() not in header or not value.strip()
+    assert header.endswith("likes**")
+
+
+def test_reply_order_and_displayed_times_agree():
+    """The ordering the section claims must be the one a reader can check."""
+
+    parent = dated_comment("p1", "2026-07-01T00:00:00Z", total_reply_count=3)
+    replies = [
+        dated_comment("r1", "2026-07-02T00:00:00Z"),
+        dated_comment("r2", "2026-07-03T00:00:00Z"),
+        dated_comment("r3", "2026-07-04T00:00:00Z"),
+    ]
+    selection = PacketSelection(threads=[(parent, replies)])
+
+    rendered = render_threads(
+        selection, threads=1, per_thread=5, body=200, comment_body=200
+    )
+
+    positions = [
+        rendered.index(f"2026-07-0{day}T00:00:00Z") for day in (2, 3, 4)
+    ]
+    assert positions == sorted(positions)
+
+
+# --------------------------------------------------------------------------
+# An empty section says which kind of empty it is
+# --------------------------------------------------------------------------
+
+
+def test_a_section_emptied_by_deduplication_does_not_claim_nothing_was_found():
+    """Sections de-duplicate, so a later one can legitimately be empty.
+
+    Saying "None were retrieved" there is false: the comments are a few lines
+    above, in the section that consumed them.
+    """
+
+    rendered = render_comment_section(
+        "Most relevant comments", [], body=200, eligible=0, retrieved=10
+    )
+
+    assert "None were retrieved" not in rendered
+    assert "already appears in an earlier section" in rendered
+
+
+def test_a_genuinely_empty_pool_still_says_nothing_was_retrieved():
+    rendered = render_comment_section(
+        "Most relevant comments", [], body=200, eligible=0, retrieved=0
+    )
+
+    assert "_None were retrieved._" in rendered
+
+
+# --------------------------------------------------------------------------
+# The packet says what it left out
+#
+# PACKET_SCAFFOLDING_ALLOWANCE reserved characters for a reduction summary and
+# nothing produced one. The packet disclosed retrieval completeness -- what
+# YouTube declined to hand over -- and said nothing about what was retrieved
+# and then dropped, so "top-level comments retained: 199" read as though all
+# 199 were below. 140 were.
+# --------------------------------------------------------------------------
+
+
+def bulk_comments(count: int, *, long_bodies: int = 0):
+    return [
+        {
+            "comment_id": f"c{i}",
+            "text": "x" * (3000 if i < long_bodies else 40),
+            "author": "@someone",
+            "like_count": 500 - i,
+            "total_reply_count": 0,
+            "published_at": f"2026-07-{(i % 28) + 1:02d}T00:00:00Z",
+        }
+        for i in range(count)
+    ]
+
+
+def summary_for(comments, replies=(), allocation=None):
+    selection = select_packet_sections(
+        comments, comments, comments, list(replies)
+    )
+    return render_reduction_summary(
+        selection,
+        allocation or PacketAllocation(),
+        PacketEvidence(
+            comments=list(comments),
+            replies=list(replies),
+            transcript_available=True,
+        ),
+    )
+
+
+def test_the_summary_states_rendered_against_eligible_per_section():
+    summary = summary_for(bulk_comments(200))
+
+    assert "Highest-liked: 30 of 200 eligible" in summary
+    assert "Most relevant: 75 of" in summary
+
+
+def test_the_summary_reports_no_reduction_when_everything_fits():
+    """It must not imply loss when there was none."""
+
+    summary = summary_for(bulk_comments(5))
+
+    assert "Highest-liked: 5 of 5 eligible" in summary
+
+
+def test_the_summary_counts_bodies_that_were_shortened():
+    summary = summary_for(bulk_comments(50, long_bodies=4))
+
+    assert "Bodies shortened to fit: 4 comments" in summary
+
+
+def test_the_summary_reports_a_shortened_transcript():
+    selection = select_packet_sections([], [], [], [])
+    reduced = PacketAllocation(transcript_reduced=True)
+
+    summary = render_reduction_summary(
+        selection, reduced, PacketEvidence(transcript_available=True)
+    )
+
+    assert "Transcript: shortened to fit" in summary
+
+
+def test_the_summary_separates_retrieval_from_inclusion():
+    """The conflation this section exists to prevent."""
+
+    summary = summary_for(bulk_comments(200))
+
+    assert "different facts" in summary
+    assert "retained and still absent" in summary
+
+
+def test_the_summary_reaches_the_built_packet(templates):
+    """A helper nothing calls would be the defect it is meant to fix."""
+
+    comments = bulk_comments(120)
+    packet = assemble(templates, evidence=make(comments=comments))
+
+    assert "### What this packet left out" in packet.text
+    assert "Highest-liked: 30 of 120 eligible" in packet.text

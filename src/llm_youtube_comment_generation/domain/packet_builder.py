@@ -163,6 +163,27 @@ def instruction_cost(
 # --------------------------------------------------------------------------
 
 
+PUBLISHED_AT = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$"
+)
+
+
+def published_token(record: dict[str, Any]) -> str:
+    """The API-assigned publish timestamp, or nothing at all.
+
+    Matched against a timestamp shape rather than escaped. safe_token() was
+    the obvious reuse and it is wrong here: its allowlist drops the colons,
+    turning 2026-07-01T00:00:00Z into 2026-07-01T000000Z, which is harder to
+    read than the value it protects. Nothing a commenter authors reaches this
+    field, and anything that does not match a plain timestamp is dropped
+    rather than rendered, so no unrecognised text can enter a header and a
+    missing value leaves no dangling punctuation.
+    """
+
+    raw = str(record.get("published_at", "") or "").strip()
+    return raw if PUBLISHED_AT.fullmatch(raw) else ""
+
+
 def render_comment(comment: dict[str, Any], *, body: int, index: int) -> str:
     """One comment block.
 
@@ -178,6 +199,13 @@ def render_comment(comment: dict[str, Any], *, body: int, index: int) -> str:
     header = f"**[{index}] id {identifier} — {likes:,} likes"
     if replies:
         header += f", {replies:,} replies"
+    # The packet sorts by this and then used to drop it, so a reader could not
+    # tell an hour-one reaction from a week-later reply, and "Most recent
+    # comments" asserted an ordering the evidence could not show. Rendered as
+    # a token because it is API-assigned: a commenter cannot author it.
+    published = published_token(comment)
+    if published:
+        header += f" — {published}"
     header += "**"
     text = truncate(neutralize(comment.get("text", "")), body, label="comment")
     author = inline(comment.get("author", ""))
@@ -190,8 +218,24 @@ def render_comment_section(
     *,
     body: int,
     eligible: int = 0,
+    retrieved: int = 0,
 ) -> str:
+    """One section, and an honest account of an empty one.
+
+    "None were retrieved" was printed for three different situations: nothing
+    came back from YouTube, nothing qualified, and everything qualified but
+    had already been shown in an earlier section. Only the first was true.
+    Sections de-duplicate against each other, so a video whose whole retained
+    pool lands in Highest-liked prints the phrase under Most relevant and
+    Most recent while the comments are plainly there, a few lines above.
+    """
+
     if not comments:
+        if retrieved > 0:
+            return (
+                f"### {title}\n\n_No further comments: every retained comment "
+                "already appears in an earlier section._\n"
+            )
         return f"### {title}\n\n_None were retrieved._\n"
     shown = len(comments)
     header = f"### {title}"
@@ -225,15 +269,105 @@ def render_threads(
             )
         for position, reply in enumerate(kept, 1):
             likes = as_int(reply.get("like_count")) or 0
+            published = published_token(reply)
+            stamp = f", {published}" if published else ""
             lines.append(
                 f"  - **reply {position}, id "
-                f"{safe_token(reply.get('comment_id'))}, {likes:,} likes** "
+                f"{safe_token(reply.get('comment_id'))}, {likes:,} likes"
+                f"{stamp}** "
                 f"from {inline(reply.get('author', ''))}\n\n    "
                 + truncate(neutralize(reply.get("text", "")), body,
                            label="reply").replace("\n", "\n    ")
             )
         blocks.append("\n\n".join(lines))
     return "### Reply threads\n\n" + "\n\n---\n\n".join(blocks) + "\n"
+
+
+def render_reduction_summary(
+    selection: PacketSelection,
+    allocation: PacketAllocation,
+    evidence: PacketEvidence,
+) -> str:
+    """State what was retained and then not rendered.
+
+    PACKET_SCAFFOLDING_ALLOWANCE has always reserved characters for this and
+    nothing produced it. Without it the packet discloses retrieval
+    completeness -- what YouTube declined to hand over -- and says nothing
+    about what was retrieved and then dropped, so a reader who saw "top-level
+    comments retained: 199" reasonably concluded all 199 were below. 140 were.
+
+    Counted from the final selection and allocation, never from the
+    configured defaults, so it stays true if the caps ever move.
+    """
+
+    sections = (
+        ("Highest-liked", selection.most_liked, selection.most_liked_eligible),
+        ("Most-replied", selection.most_replied, selection.most_replied_eligible),
+        ("Most relevant", selection.relevant, selection.relevant_eligible),
+        ("Most recent", selection.recent, selection.recent_eligible),
+    )
+    lines = ["### What this packet left out", ""]
+    for title, chosen, eligible in sections:
+        shown = len(chosen)
+        total = max(eligible, shown)
+        lines.append(f"- {title}: {shown:,} of {total:,} eligible")
+
+    threads_shown = min(len(selection.threads), allocation.reply_threads)
+    threads_total = max(selection.threads_eligible, threads_shown)
+    lines.append(
+        f"- Reply threads: {threads_shown:,} of {threads_total:,} eligible"
+    )
+
+    replies_shown = sum(
+        min(len(replies), allocation.replies_per_thread)
+        for _parent, replies in selection.threads[:allocation.reply_threads]
+    )
+    replies_total = sum(
+        len(replies)
+        for _parent, replies in selection.threads[:allocation.reply_threads]
+    )
+    lines.append(
+        f"- Replies within those threads: {replies_shown:,} of "
+        f"{replies_total:,} retrieved"
+    )
+
+    rendered = [
+        comment
+        for _title, chosen, _eligible in sections
+        for comment in chosen
+    ]
+    # truncate() strips before measuring, so this predicate has to as well or
+    # the count would disagree with the [comment truncated] markers actually
+    # rendered. A summary that miscounts is worse than no summary.
+    def shortened(text: Any, limit: int) -> bool:
+        return len(neutralize(text).strip()) > limit
+
+    clipped_comments = sum(
+        1 for comment in rendered
+        if shortened(comment.get("text", ""), allocation.comment_body)
+    )
+    clipped_replies = sum(
+        1
+        for _parent, replies in selection.threads[:allocation.reply_threads]
+        for reply in replies[:allocation.replies_per_thread]
+        if shortened(reply.get("text", ""), allocation.reply_body)
+    )
+    lines.append(
+        f"- Bodies shortened to fit: {clipped_comments:,} comments, "
+        f"{clipped_replies:,} replies"
+    )
+    lines.append(
+        "- Transcript: "
+        + ("shortened to fit" if allocation.transcript_reduced else "complete")
+        + ("" if evidence.transcript_available else " (none available)")
+    )
+    lines.append("")
+    lines.append(
+        "These counts describe what reached this packet. The retrieval "
+        "status above describes what YouTube handed over; the two are "
+        "different facts and a comment can be retained and still absent here."
+    )
+    return "\n".join(lines) + "\n"
 
 
 def render_metadata(video: dict[str, Any], allocation: PacketAllocation) -> str:
@@ -515,18 +649,24 @@ def build(
             )
         ),
         "",
+        render_reduction_summary(selection, allocation, evidence),
+        "",
         render_comment_section("Highest-liked comments", selection.most_liked,
                                body=allocation.comment_body,
-                               eligible=selection.most_liked_eligible),
+                               eligible=selection.most_liked_eligible,
+                               retrieved=len(evidence.comments)),
         render_comment_section("Most-replied comments", selection.most_replied,
                                body=allocation.comment_body,
-                               eligible=selection.most_replied_eligible),
+                               eligible=selection.most_replied_eligible,
+                               retrieved=len(evidence.comments)),
         render_comment_section("Most relevant comments", selection.relevant,
                                body=allocation.comment_body,
-                               eligible=selection.relevant_eligible),
+                               eligible=selection.relevant_eligible,
+                               retrieved=len(evidence.comments)),
         render_comment_section("Most recent comments", selection.recent,
                                body=allocation.comment_body,
-                               eligible=selection.recent_eligible),
+                               eligible=selection.recent_eligible,
+                               retrieved=len(evidence.comments)),
         render_threads(selection, threads=allocation.reply_threads,
                        per_thread=allocation.replies_per_thread,
                        body=allocation.reply_body,
