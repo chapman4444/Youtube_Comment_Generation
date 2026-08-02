@@ -52,12 +52,20 @@ def write_valid_release_evidence(root: Path, digest: str) -> dict:
             "output_sha256": hashlib.sha256(output.encode()).hexdigest(),
         })
     record = {
-        "schema_version": 1,
+        "schema_version": 2,
         "recorder": "tools/record_release_verification.py",
         "generated": "2026-07-30T12:00:00+00:00",
         "manifest_sha256": digest,
         "review_archive": "review.zip",
         "source_tree_mode": "manifest-reconstructed",
+        "source_provenance": {
+            "available": True,
+            "commit": "c" * 40,
+            "branch": "main",
+            "status_porcelain": "",
+            "release_inputs_differ_from_head": [],
+            "matches_head": True,
+        },
         "overall_result": "PASSED",
         "initial_source_identity": {"status": "PASS", "problems": []},
         "gates": gates,
@@ -83,7 +91,7 @@ def failed_record(digest: str) -> dict:
 
     output = "gate failed"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "recorder": "tools/record_release_verification.py",
         "generated": "2026-07-30T12:00:00+00:00",
         "manifest_sha256": digest,
@@ -401,3 +409,84 @@ def test_evidence_discloses_material_overrides_versions_and_exit_codes(
     assert "not an independent reviewer rerun" in report
     assert "clean-wheel installation" in report
     assert "explicitly does not claim those results" in report
+
+
+# --------------------------------------------------------------------------
+# Source provenance
+#
+# Source identity proves the manifest equals the checkout that was measured.
+# It never said which commit that checkout was, so evidence could describe a
+# tree that existed on one machine and nowhere else and still validate.
+# Confirming the archive against the repository meant redoing the comparison
+# by hand after every build.
+# --------------------------------------------------------------------------
+
+
+def provenance(**overrides):
+    base = {
+        "available": True,
+        "commit": "c" * 40,
+        "branch": "main",
+        "status_porcelain": "",
+        "release_inputs_differ_from_head": [],
+        "matches_head": True,
+    }
+    base.update(overrides)
+    return base
+
+
+@pytest.mark.parametrize(
+    "broken, expected",
+    [
+        (provenance(available=False, commit=""), "could not determine"),
+        (provenance(commit="not-a-commit"), "invalid commit id"),
+        (provenance(status_porcelain=" M src/x.py"), "unclean working tree"),
+        (
+            provenance(release_inputs_differ_from_head=["src/x.py"]),
+            "differ from the recorded commit",
+        ),
+        (provenance(matches_head=False), "does not match its recorded commit"),
+    ],
+)
+def test_evidence_without_a_trustworthy_commit_is_refused(
+    tmp_path: Path,
+    broken,
+    expected,
+):
+    """Each way the commit claim can be untrue must be its own refusal."""
+
+    digest = "a" * 64
+    record = write_valid_release_evidence(tmp_path, digest)
+    record["source_provenance"] = broken
+    (tmp_path / "RELEASE_VERIFICATION.json").write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "RELEASE_VERIFICATION.md").write_text(
+        render_release_report(record), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=expected):
+        validate_release_evidence(tmp_path, digest)
+
+
+def test_valid_evidence_still_passes_with_provenance(tmp_path: Path):
+    """The permissive half: the guard must not reject a good record."""
+
+    digest = "a" * 64
+    write_valid_release_evidence(tmp_path, digest)
+
+    assert validate_release_evidence(tmp_path, digest) is not None
+
+
+def test_the_report_names_the_commit_it_was_recorded_from(tmp_path: Path):
+    """A reader must not have to open the JSON to learn the commit."""
+
+    digest = "a" * 64
+    record = write_valid_release_evidence(tmp_path, digest)
+
+    report = render_release_report(record)
+
+    assert "## Source provenance" in report
+    assert "c" * 40 in report
+    assert "Branch: `main`" in report
+    assert "Working tree: clean" in report
