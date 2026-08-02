@@ -94,7 +94,8 @@ After manually posting, the operator must confirm **Record as posted** in the
 GUI or run:
 
 ```text
-ytcomment history record VIDEO --workflow comment --draft-file comment.txt
+ytcomment history record VIDEO --workflow comment --draft-file comment.txt \
+  --event-id UNIQUE_ID
 ytcomment history record VIDEO --workflow reply --draft-file reply.txt \
   --target-comment-id COMMENT_ID --run-id RUN
 ```
@@ -102,6 +103,13 @@ ytcomment history record VIDEO --workflow reply --draft-file reply.txt \
 SQLite uses a stable posting-event key for idempotency. Fuzzy normalized text
 is retained only for later scoreboard matching, so identical text posted to
 different targets remains distinct.
+
+That key is `event_id` when supplied, and otherwise a hash that includes
+`drafted_at` but **not** `posted_at`. Two distinct posts of the same text to
+the same video therefore collide unless the caller distinguishes them. The
+GUI does so naturally, because each build supplies its own run artifact path
+as `run_id`. The CLI cannot, so `history record` requires `--event-id` or
+`--run-id` and refuses without one rather than merge two real events.
 
 The GUI asks for confirmation using the exact latest accepted draft. After a
 successful record, the review artifact marks that draft's posting record as

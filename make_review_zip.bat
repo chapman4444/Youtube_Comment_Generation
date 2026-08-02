@@ -98,6 +98,18 @@ for %%F in (
     if exist "%PROJECT_ROOT%%%~F" copy /y "%PROJECT_ROOT%%%~F" "%STAGE%\" >nul
 )
 
+rem The screenshots are not staged, so the README's gallery would arrive as
+rem fourteen broken image links in a document that presents them as evidence
+rem of the GUI. Replace that one section with a pointer to where they can be
+rem seen. tests/test_release_docs.py enforces the result from inside the
+rem stage, so a gallery that came back would fail the build rather than ship.
+powershell.exe -NoProfile -Command "$p='%STAGE%\README.md'; $t=[IO.File]::ReadAllText($p); $n=[regex]::Replace($t,'(?ms)^## Screenshots\r?\n.*?(?=^## )','## Screenshots' + [char]10 + [char]10 + 'The screenshot gallery is omitted from this review archive: the images are documentation assets rather than release inputs, and staging 5 MB of PNGs would not help a source review. They can be viewed in the README at the project repository.' + [char]10 + [char]10); if ($n -eq $t) { exit 1 }; [IO.File]::WriteAllText($p,$n)"
+if errorlevel 1 (
+    echo Could not stage a review README without the screenshot gallery.
+    set "EXITCODE=6"
+    goto :cleanup
+)
+
 if exist "%REVIEW_DIR%\RELEASE_VERIFICATION.md" (
     copy /y "%REVIEW_DIR%\RELEASE_VERIFICATION.md" "%STAGE%\" >nul
 )

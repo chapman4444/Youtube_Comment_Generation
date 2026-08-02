@@ -363,8 +363,9 @@ class PacketWindow:
         )
         self._tip(
             self.debug_build_check,
-            "For this one build, add a diagnostic request and save a shareable "
-            "bundle with safe settings, the packet, and the full model response.",
+            "For this one build, add a diagnostic request and save a bundle "
+            "with safe settings, the packet, and the full model response. "
+            "The bundle is unredacted: review it before sharing it.",
         )
 
     def _build_left(self, parent: ttk.Frame) -> ttk.Frame:
@@ -769,9 +770,11 @@ class PacketWindow:
         self._add_evidence_tab(
             "debug",
             "Debug bundle",
-            "A privacy-safe diagnostic bundle for a Debug build. It includes "
-            "safe settings, the exact packet, and—after validation—the full "
-            "model response.",
+            "A diagnostic bundle for a Debug build. It includes safe "
+            "settings, the exact packet, and—after validation—the full model "
+            "response. Because it includes the packet, it also includes the "
+            "commenter names and text retained inside it. It holds no "
+            "credentials or local paths. Review it before sharing it.",
         )
 
         packet_tab = ttk.Frame(self.output_tabs, padding=PADDING)

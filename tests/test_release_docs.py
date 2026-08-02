@@ -87,3 +87,52 @@ def test_architecture_documents_state_the_implemented_contracts():
     assert "--window --dry-run" in interfaces
     assert "reply_scan_comments" in interfaces
     assert "Record as posted" in interfaces
+
+
+# --------------------------------------------------------------------------
+# Every local asset the README points at must exist beside it
+#
+# This runs against whichever tree it sits in. In the checkout that is the
+# repository, where the screenshots are present. Inside a staged review
+# archive it is the stage, where they are not, so the archive builder has to
+# remove the gallery rather than ship fourteen broken image links to a
+# reviewer whose README presents them as evidence of the GUI.
+# --------------------------------------------------------------------------
+
+import re
+
+LOCAL_ASSET = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+
+
+def readme_local_assets() -> list[str]:
+    found = []
+    for target in LOCAL_ASSET.findall(text("README.md")):
+        reference = target.split()[0].strip("<>")
+        if reference.startswith(("http://", "https://", "data:", "#")):
+            continue
+        found.append(reference)
+    return found
+
+
+def test_the_asset_scan_can_actually_find_a_reference():
+    """A scan that matched nothing would pass everywhere and prove nothing."""
+
+    sample = "![alt](docs/screenshots/one.png) and ![b](https://example/x.png)"
+    matches = [
+        m for m in LOCAL_ASSET.findall(sample)
+        if not m.startswith("https://")
+    ]
+
+    assert matches == ["docs/screenshots/one.png"]
+
+
+def test_every_local_readme_image_exists_in_this_tree():
+    missing = [
+        reference for reference in readme_local_assets()
+        if not (ROOT / reference).is_file()
+    ]
+
+    assert not missing, (
+        "README references local images that are absent from this tree: "
+        + ", ".join(sorted(missing))
+    )

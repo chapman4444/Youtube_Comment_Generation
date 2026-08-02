@@ -47,6 +47,7 @@ from ...application.configuration import (
 from ...domain.errors import (
     EXIT_ERROR,
     EXIT_SUCCESS,
+    EXIT_VALIDATION,
     OperationCancelled,
     PacketError,
 )
@@ -1612,6 +1613,29 @@ def run_history(arguments, configuration, stdout) -> int:
             )
         else:
             draft = str(arguments.draft or "")
+        # Engagement history is the only irreplaceable state this project
+        # keeps, so a posting event it silently drops cannot be reconstructed.
+        #
+        # Without a caller-supplied identity the store falls back to hashing
+        # the video, workflow, target, draft and drafted_at. The CLI supplies
+        # no drafted_at, so two genuinely distinct posts of the same text to
+        # the same video hash identically and the second is discarded as a
+        # duplicate. posted_at cannot rescue it: this command generates one
+        # when it is omitted, so folding that into the identity would make an
+        # ordinary retry insert a second row instead.
+        #
+        # Refusing is the honest option. An operator who is told exactly what
+        # to add loses nothing; one whose second post vanished never finds out.
+        if not arguments.event_id and not arguments.run_id:
+            print(
+                "This posting event has no stable identity, so recording it "
+                "could silently collapse it into an earlier identical one.\n"
+                "  Add --event-id UNIQUE_ID for a distinct posting event, or\n"
+                "  add --run-id RUN to tie it to the run that drafted it.\n"
+                "Repeating the same --event-id is safe: it records once.",
+                file=stdout,
+            )
+            return EXIT_VALIDATION
         posted_at = (
             arguments.posted_at
             or datetime.now(timezone.utc).isoformat()

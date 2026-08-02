@@ -1,4 +1,22 @@
-"""Privacy-safe diagnostic material for an explicitly requested debug build."""
+"""Diagnostic material for an explicitly requested debug build.
+
+The bundle carries the exact packet and the complete model response, because
+a diagnostic that omitted them could not explain the build it describes. That
+means it also carries the retained YouTube evidence inside the packet:
+commenter display names, comment and reply text, the video description and
+transcript text.
+
+This module used to call that "privacy-safe" and "shareable". It is neither,
+and the wording invited exactly the mistake it should have prevented, which is
+attaching the file to a public bug report. tests/test_publishable.py states
+the project's position on the same material plainly: those are real people's
+names and words, and they are not ours to republish.
+
+Redacting the evidence here was considered and rejected: it would leave a
+diagnostic that cannot diagnose. The bundle stays complete and the labels now
+say what it holds, so deciding to share it is a deliberate act rather than one
+taken on a false assurance.
+"""
 
 from __future__ import annotations
 
@@ -94,7 +112,13 @@ def render_debug_bundle(
     draft: str,
     rejection_reason: str = "",
 ) -> str:
-    """Render one shareable record without secrets, local paths, or credentials."""
+    """Render one diagnostic record, complete enough to explain the build.
+
+    It holds no credentials, no local paths and no settings beyond the safe
+    set. It does hold the exact packet and the complete model response, so it
+    also holds the retained YouTube evidence those contain. Review it before
+    sending it anywhere.
+    """
 
     sections = (
         ("Safe build settings", json.dumps(dict(settings), indent=2,
@@ -106,7 +130,19 @@ def render_debug_bundle(
         ("Response status", rejection_reason or "Accepted."),
         ("Saved Hardened final", draft.rstrip()),
     )
-    lines = ["# Debug build bundle", ""]
+    # Stated in the file itself, not only in the interface that produced it.
+    # The bundle is what gets attached to a bug report, and by then whatever
+    # the window said is long out of view.
+    lines = [
+        "# Debug build bundle",
+        "",
+        "> **Review before sharing.** This bundle is unredacted. It contains "
+        "the exact packet and the complete model response, and therefore the "
+        "retained YouTube evidence inside them: commenter display names, "
+        "comment and reply text, the video description and transcript text. "
+        "It contains no credentials and no local paths.",
+        "",
+    ]
     for heading, content in sections:
         lines.extend((f"## {heading}", "", content or "_Not available._", ""))
     return "\n".join(lines)
