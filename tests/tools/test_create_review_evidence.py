@@ -440,7 +440,6 @@ def provenance(**overrides):
     [
         (provenance(available=False, commit=""), "could not determine"),
         (provenance(commit="not-a-commit"), "invalid commit id"),
-        (provenance(status_porcelain=" M src/x.py"), "unclean working tree"),
         (
             provenance(release_inputs_differ_from_head=["src/x.py"]),
             "differ from the recorded commit",
@@ -490,3 +489,44 @@ def test_the_report_names_the_commit_it_was_recorded_from(tmp_path: Path):
     assert "c" * 40 in report
     assert "Branch: `main`" in report
     assert "Working tree: clean" in report
+
+
+def test_unrelated_local_changes_do_not_invalidate_the_evidence(
+    tmp_path: Path,
+):
+    """A dirty tree is reported, not refused.
+
+    Only release inputs reach the reconstructed tree, so only their drift can
+    change a gate. docs/screenshots proved the point: editing the images to
+    obscure commenter names leaves a dirty status while no manifested file
+    moves, and refusing then would block evidence over a change that cannot
+    affect any result.
+    """
+
+    digest = "a" * 64
+    record = write_valid_release_evidence(tmp_path, digest)
+    record["source_provenance"] = provenance(
+        status_porcelain=" M docs/screenshots/comments.png",
+    )
+    (tmp_path / "RELEASE_VERIFICATION.json").write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "RELEASE_VERIFICATION.md").write_text(
+        render_release_report(record), encoding="utf-8"
+    )
+
+    assert validate_release_evidence(tmp_path, digest) is not None
+
+
+def test_the_report_shows_unrelated_local_changes(tmp_path: Path):
+    """Accepted is not the same as hidden: a reader must still see them."""
+
+    record = write_valid_release_evidence(tmp_path, "a" * 64)
+    record["source_provenance"] = provenance(
+        status_porcelain=" M docs/screenshots/comments.png",
+    )
+
+    report = render_release_report(record)
+
+    assert "docs/screenshots/comments.png" in report
+    assert "unrelated local changes" in report
