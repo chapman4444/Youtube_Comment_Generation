@@ -15,16 +15,18 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Mapping, Sequence
 
 try:
     from tools.release_evidence_format import (
+        SCHEMA_VERSION,
         STRUCTURED_EVIDENCE_NAME,
         clean_install_payload,
         render_release_report,
     )
 except ModuleNotFoundError:
     from release_evidence_format import (
+        SCHEMA_VERSION,
         STRUCTURED_EVIDENCE_NAME,
         clean_install_payload,
         render_release_report,
@@ -295,6 +297,87 @@ def python_gate_commands(expected: str) -> tuple[tuple[str, ...], ...]:
     return commands
 
 
+def _git(root: Path, *arguments: str) -> bytes | None:
+    """One git query as raw bytes, or None when git cannot answer.
+
+    Bytes rather than text on purpose. Decoding with the console locale made
+    ``git show`` die on a wordlist containing a byte cp1252 has no character
+    for, which would have reported a perfectly ordinary file as unreadable.
+    """
+
+    try:
+        finished = subprocess.run(
+            # safe.directory is set for this repository only, and only for
+            # these read-only queries. The check guards against running a
+            # stranger's hooks; this process is already executing code from
+            # this very checkout, so refusing to read its own commit id would
+            # protect nothing. Without it, provenance is silently unavailable
+            # whenever .git is owned by another account, which is exactly when
+            # a reader most wants the record to say which commit it came from.
+            ["git", "-c", f"safe.directory={str(root).replace(chr(92), '/')}",
+             *arguments],
+            cwd=str(root),
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    return finished.stdout if finished.returncode == 0 else None
+
+
+def _git_text(root: Path, *arguments: str) -> str:
+    raw = _git(root, *arguments)
+    return "" if raw is None else raw.decode("utf-8", "replace").strip()
+
+
+def git_provenance(root: Path, entries: Mapping[str, str]) -> dict[str, Any]:
+    """Name the commit these release inputs came from.
+
+    Source identity proves the manifest equals the local checkout. It does not
+    say which commit that checkout was, so the evidence could describe a tree
+    that never existed in the repository and still validate. Recording the
+    commit, the branch, a porcelain status and whether any manifested file
+    differs from HEAD closes that gap, and makes the archive-to-repository
+    comparison something the record states rather than something a reader has
+    to redo by hand.
+
+    ``matches_head`` is computed from the manifest rather than from git status
+    alone, because an untracked or ignored file can leave the status clean
+    while a manifested file still differs from the committed blob.
+    """
+
+    commit = _git_text(root, "rev-parse", "HEAD")
+    branch = _git_text(root, "rev-parse", "--abbrev-ref", "HEAD")
+    status = _git_text(root, "status", "--porcelain")
+    available = bool(commit)
+
+    differing: list[str] = []
+    if available:
+        for relative in sorted(entries):
+            stored = _git(root, "show", f"HEAD:{relative}")
+            path = root / Path(relative)
+            if stored is None or not path.is_file():
+                differing.append(relative)
+                continue
+            # Newlines normalised before comparing. A checkout applies
+            # .gitattributes and core.autocrlf, so a working file legitimately
+            # differs from the stored blob byte-for-byte while being the same
+            # content. That is precisely why this compares content rather than
+            # the hashes source identity already covers.
+            if (path.read_bytes().replace(b"\r\n", b"\n")
+                    != stored.replace(b"\r\n", b"\n")):
+                differing.append(relative)
+
+    return {
+        "available": available,
+        "commit": commit,
+        "branch": branch,
+        "status_porcelain": status,
+        "release_inputs_differ_from_head": sorted(differing),
+        "matches_head": available and not status and not differing,
+    }
+
+
 def write_reports(
     path: Path,
     structured_path: Path,
@@ -304,6 +387,7 @@ def write_reports(
     gates: Sequence[GateResult],
     initial_problems: Sequence[str],
     final_problems: Sequence[str],
+    provenance: Mapping[str, Any],
 ) -> None:
     """Write matching machine-verifiable and human-readable evidence."""
 
@@ -311,6 +395,9 @@ def write_reports(
         not initial_problems
         and not final_problems
         and all(gate.returncode == 0 for gate in gates)
+        # A record that cannot name its commit, or names one the tree has
+        # drifted from, is not release evidence for that commit.
+        and bool(provenance.get("matches_head"))
     )
     gate_rows = [
         {
@@ -341,12 +428,13 @@ def write_reports(
                 for key in ("wheel", "wheel_sha256", "sdist", "sdist_sha256")
             }
     record = {
-        "schema_version": 1,
+        "schema_version": SCHEMA_VERSION,
         "recorder": "tools/record_release_verification.py",
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "manifest_sha256": manifest_digest,
         "review_archive": archive.name,
         "source_tree_mode": "manifest-reconstructed",
+        "source_provenance": dict(provenance),
         "overall_result": "PASSED" if passed else "FAILED",
         "initial_source_identity": {
             "status": "PASS" if not initial_problems else "FAIL",
@@ -443,6 +531,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
 
     final_problems = compare_checkout(ROOT, entries)
+    provenance = git_provenance(ROOT, entries)
     write_reports(
         args.report,
         args.structured_report,
@@ -451,6 +540,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         gates=gates,
         initial_problems=initial_problems,
         final_problems=final_problems,
+        provenance=provenance,
     )
     passed = (
         not initial_problems

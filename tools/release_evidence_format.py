@@ -8,7 +8,13 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
-SCHEMA_VERSION = 1
+# 2 adds source_provenance. Source identity proves the manifest equals the
+# local checkout; it never said which commit that checkout was, so evidence
+# could describe a tree that existed on one machine and nowhere else and
+# still validate. Recording the commit is what turns "matches a checkout"
+# into "matches this commit".
+SCHEMA_VERSION = 2
+SHA1 = re.compile(r"^[0-9a-f]{40}$")
 RECORDER = "tools/record_release_verification.py"
 STRUCTURED_EVIDENCE_NAME = "RELEASE_VERIFICATION.json"
 HUMAN_EVIDENCE_NAME = "RELEASE_VERIFICATION.md"
@@ -53,6 +59,20 @@ def validate_release_record(
         raise ValueError("release gates did not use a manifest-reconstructed tree")
     if record.get("overall_result") != "PASSED":
         raise ValueError("release evidence does not record an overall pass")
+
+    provenance = record.get("source_provenance")
+    if not isinstance(provenance, dict):
+        raise ValueError("release evidence names no source commit")
+    if not provenance.get("available"):
+        raise ValueError("release evidence could not determine its commit")
+    if not SHA1.fullmatch(str(provenance.get("commit") or "")):
+        raise ValueError("release evidence has an invalid commit id")
+    if provenance.get("status_porcelain"):
+        raise ValueError("release gates ran against an unclean working tree")
+    if provenance.get("release_inputs_differ_from_head"):
+        raise ValueError("release inputs differ from the recorded commit")
+    if not provenance.get("matches_head"):
+        raise ValueError("release evidence does not match its recorded commit")
 
     for identity_name in ("initial_source_identity", "final_source_identity"):
         identity = record.get(identity_name)
@@ -129,6 +149,27 @@ def render_release_report(record: Mapping[str, Any]) -> str:
         "reconstructed from the review archive manifest.",
         "",
     ]
+    provenance = record.get("source_provenance") or {}
+    lines.extend([
+        "## Source provenance",
+        "",
+        f"- Commit: `{provenance.get('commit') or 'unknown'}`",
+        f"- Branch: `{provenance.get('branch') or 'unknown'}`",
+        "- Working tree: "
+        + (
+            "clean"
+            if not provenance.get("status_porcelain")
+            else "**not clean**"
+        ),
+        "- Release inputs differing from that commit: "
+        + str(len(provenance.get("release_inputs_differ_from_head") or [])),
+        "",
+        "Source identity below proves the manifest equals the checkout that "
+        "was measured. This section names which commit that checkout was, so "
+        "the archive can be tied to the repository without repeating the "
+        "comparison by hand.",
+        "",
+    ])
     for key, title in (
         ("initial_source_identity", "Initial source identity"),
         ("final_source_identity", "Final source identity"),
