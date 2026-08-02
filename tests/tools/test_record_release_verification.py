@@ -6,11 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from tools.create_review_evidence import EXCLUDED_NAMES as GENERATED_IN_STAGE
 from tools.record_release_verification import (
+    ROOT,
     _redact,
     compare_checkout,
     load_archive_manifest,
     reconstruct_manifest_tree,
+    release_input_files,
 )
 
 
@@ -194,3 +197,69 @@ def test_redaction_handles_case_and_repeated_windows_separators():
     assert str(Path.home()).lower() not in redacted.lower()
     assert "<user-home>/one" in redacted
     assert "<user-home>/two" in redacted
+
+
+# --------------------------------------------------------------------------
+# The builder and the release-input rule must agree
+#
+# make_review_zip.bat stages by allowlist: six robocopy calls and a list of
+# named files. release_input_files excludes by denylist. Two opposite
+# policies over one domain drift by construction, and every drift is a
+# recording that fails ~13 minutes in with "unmanifested".
+#
+# It happened twice: docs/screenshots, then docs/SCREENSHOTS.md added beside
+# it. Both were release inputs the moment they existed and neither was
+# staged. This turns that into a one-second failure.
+# --------------------------------------------------------------------------
+
+
+def top_level_release_inputs(root: Path) -> list[str]:
+    """Top-level names the builder is responsible for putting in the stage.
+
+    The evidence files are generated inside the stage by
+    create_review_evidence.py rather than copied into it, so the builder
+    never names them and should not have to. Running this check inside an
+    extracted archive is what surfaced that: the manifest sits at the top
+    level there and would otherwise look like something the builder forgot.
+    """
+
+    return sorted({
+        path.relative_to(root).as_posix().split("/")[0]
+        for path in release_input_files(root)
+        if path.name not in GENERATED_IN_STAGE
+    })
+
+
+def test_every_release_input_is_named_by_the_archive_builder():
+    """A new top-level file or directory must be staged or excluded.
+
+    Being neither is the silent failure: it counts as a release input the
+    moment it is created, never reaches the staged tree, and the mismatch
+    only surfaces once the whole matrix has run.
+    """
+
+    builder = (ROOT / "make_review_zip.bat").read_text(encoding="utf-8")
+
+    unnamed = [
+        name for name in top_level_release_inputs(ROOT)
+        if name not in builder
+    ]
+
+    assert not unnamed, (
+        "these are release inputs but make_review_zip.bat never names them, "
+        "so a recording would fail on 'unmanifested': " + ", ".join(unnamed)
+    )
+
+
+def test_the_builder_check_would_notice_an_unstaged_addition(tmp_path: Path):
+    """The negative proof: a tree whose builder names nothing must fail."""
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "example.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "deploy.py").write_text("x = 1\n", encoding="utf-8")
+
+    names = top_level_release_inputs(tmp_path)
+
+    assert "scripts" in names, "a new top-level directory was not even seen"
+    assert "src" in names
