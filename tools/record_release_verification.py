@@ -61,18 +61,6 @@ EXCLUDED_DIRECTORY_NAMES = {
     "build",
     "dist",
 }
-# The only documentation the archive stages, and therefore the only
-# documentation that can be a release input.
-#
-# This mirrors make_review_zip.bat rather than listing what to skip. Naming
-# individual exclusions was tried and did not hold: docs/screenshots was
-# excluded, then docs/SCREENSHOTS.md was added beside it and the recorder
-# failed again on the same class of problem. Anything under docs/ that is not
-# staged can never reach the reconstructed tree, so it cannot influence a
-# gate, so it is not a release input. Stating the rule this way means adding
-# another document cannot silently break a recording.
-DOCUMENTATION_ROOT = "docs"
-STAGED_DOCUMENTATION = "architecture"
 EXCLUDED_TOP_LEVEL_FILES = {
     "posted_history.json",
     "engagement_history.sqlite3",
@@ -155,7 +143,23 @@ def compare_checkout(
 
 
 def release_input_files(root: Path) -> tuple[Path, ...]:
-    """Enumerate every checkout file capable of influencing release gates."""
+    """Enumerate every checkout file capable of influencing release gates.
+
+    Everything on disk that a local gate run could read, which is not the
+    same question as what the archive contains. The builder now exports the
+    committed tree with ``git archive HEAD``, so every tracked file is staged
+    and manifested by construction; what this still catches is a file that
+    exists here and is *not* in the archive, because it would influence a run
+    on this machine and not one from the package.
+
+    Deliberately not "ask git what is tracked". An untracked file is exactly
+    the case worth flagging, so a tracked-only answer would go blind to it.
+    Staying a plain filesystem walk also keeps the function usable from the
+    test harness, which refuses to let a test start a subprocess.
+
+    The old docs exclusion is gone with the allowlist that required it: the
+    documentation is staged now like everything else committed.
+    """
 
     files: list[Path] = []
     for path in root.rglob("*"):
@@ -172,10 +176,6 @@ def release_input_files(root: Path) -> tuple[Path, ...]:
         if any(
             part in EXCLUDED_DIRECTORY_NAMES or part.endswith(".egg-info")
             for part in parts[:-1]
-        ):
-            continue
-        if parts[0] == DOCUMENTATION_ROOT and (
-            parts[1:2] != (STAGED_DOCUMENTATION,)
         ):
             continue
         if path.suffix.lower() in {".pyc", ".pyo"}:
