@@ -21,6 +21,10 @@ The application supports Python 3.10 through 3.12.
   generated packet, and returned answer visible in separate GUI tabs.
 - Tries multiple transcript routes with explicit provenance and bounded local
   Whisper fallback.
+- Expands relevant and recent evidence when the packet budget has room, then
+  reports what was included, shortened, and left out.
+- Carries transcript source, language, generated-caption status, and supporting
+  artifact names into the model-facing packet.
 - Provides 44 writing approaches, eight writing dials, length controls, twelve
   built-in presets, and user-saved custom presets.
 - Validates returned answers before saving the final draft.
@@ -286,6 +290,10 @@ The packet pipeline records evidence provenance, retrieval completeness,
 warnings, budgets, and completion state. YouTube-controlled text is isolated as
 untrusted evidence before it reaches the packet. Run publication is atomic, and
 an interrupted or incomplete run is not presented as a successful one.
+Default section sizes are protected floors rather than permanent ceilings:
+relevant and recent coverage expands while measured candidates still fit the
+packet budget. Candidate packets are never rendered merely to measure them, and
+the live and rebuild paths use the same fitting logic.
 
 The design notes are intentionally concrete:
 

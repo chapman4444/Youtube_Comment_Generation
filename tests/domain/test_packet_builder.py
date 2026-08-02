@@ -22,14 +22,18 @@ from llm_youtube_comment_generation.domain.packet_builder import (
     PacketEvidence,
     PacketOptions,
     build,
+    fit_packet_sections,
     render_comment,
+    render_artifact_pointers,
     render_reduction_summary,
     render_comment_section,
     render_instructions,
+    render_transcript_status,
     render_threads,
 )
 from llm_youtube_comment_generation.domain.packets import (
     DEFAULT_PACKET_CHARACTERS,
+    MINIMUM_PACKET_CHARACTERS,
     PacketAllocation,
     PacketSelection,
     select_packet_sections,
@@ -868,3 +872,114 @@ def test_the_summary_reaches_the_built_packet(templates):
 
     assert "### What this packet left out" in packet.text
     assert "Highest-liked: 30 of 120 eligible" in packet.text
+
+
+# --------------------------------------------------------------------------
+# Spare budget increases evidence coverage without trial rendering
+# --------------------------------------------------------------------------
+
+
+def fitted(comments, templates, *, budget=DEFAULT_PACKET_CHARACTERS):
+    evidence = make(comments=comments)
+    options = PacketOptions(maximum_characters=budget)
+    return fit_packet_sections(
+        comments,
+        comments,
+        evidence,
+        options,
+        workflow_template=templates["workflow"],
+        final_check_template=templates["final"],
+    )
+
+
+def test_spare_budget_expands_relevant_and_recent_coverage(templates):
+    comments = bulk_comments(200)
+
+    selection = fitted(comments, templates)
+
+    assert len(selection.rendered_ids) == 200
+    assert len(selection.relevant) > 75
+    assert len(selection.recent) > 0
+
+
+def test_growth_stops_before_it_would_break_the_budget_floor(templates):
+    comments = bulk_comments(200)
+
+    selection = fitted(
+        comments,
+        templates,
+        budget=MINIMUM_PACKET_CHARACTERS,
+    )
+
+    assert len(selection.rendered_ids) == 145
+    assert len(selection.relevant) == 75
+    assert len(selection.recent) == 40
+
+
+def test_fitting_never_renders_a_candidate_packet(templates, monkeypatch):
+    def refused_render(*_args, **_kwargs):
+        raise AssertionError("candidate packet text was rendered")
+
+    monkeypatch.setattr(
+        "llm_youtube_comment_generation.domain.packet_builder.render_comment",
+        refused_render,
+    )
+
+    selection = fitted(bulk_comments(200), templates)
+
+    assert len(selection.rendered_ids) == 200
+
+
+# --------------------------------------------------------------------------
+# Transcript provenance and complete-artifact pointers reach the model
+# --------------------------------------------------------------------------
+
+
+def test_transcript_status_states_source_language_and_generation(templates):
+    evidence = make()
+    evidence.transcript_provenance = {
+        "availability": "available",
+        "source": "saved-transcript",
+        "immediate_source": "saved-transcript",
+        "original_source": "whisper",
+        "language": "English",
+        "language_code": "en",
+        "is_generated": True,
+        "entries": 14,
+    }
+
+    packet = assemble(templates, evidence=evidence)
+
+    assert "### Transcript status" in packet.evidence
+    assert "- acquisition route: saved-transcript" in packet.evidence
+    assert "- original source: whisper" in packet.evidence
+    assert "- language: English" in packet.evidence
+    assert "- automatically generated: yes" in packet.evidence
+    assert "- transcript entries: 14" in packet.evidence
+
+
+def test_unknown_transcript_details_are_admitted_instead_of_invented():
+    rendered = render_transcript_status(
+        PacketEvidence(transcript_available=True)
+    )
+
+    assert "- acquisition route: not reported" in rendered
+    assert "- language: not reported" in rendered
+    assert "- automatically generated: not reported" in rendered
+
+
+def test_artifact_pointers_appear_only_when_the_producer_declares_files():
+    absent = render_artifact_pointers(PacketEvidence())
+    present = render_artifact_pointers(PacketEvidence(
+        artifact_files=(
+            "evidence.json",
+            "run.json",
+            "transcript_timestamped.txt",
+        )
+    ))
+
+    assert absent == ""
+    assert "### Supporting run artifacts" in present
+    assert "`evidence.json`" in present
+    assert "`run.json`" in present
+    assert "`transcript_timestamped.txt`" in present

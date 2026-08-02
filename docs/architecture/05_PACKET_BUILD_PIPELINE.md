@@ -13,7 +13,9 @@ fetch bounded reply evidence
     ->
 acquire one transcript result
     ->
-measure and select evidence
+select the default evidence sections
+    ->
+grow relevance and recent coverage while measured candidates fit
     ->
 allocate the packet budget
     ->
@@ -84,6 +86,13 @@ records `saved-transcript` as the immediate route without erasing whether the
 original evidence was a published caption, YouTube-generated caption, local
 Whisper result, or legacy evidence with unknown provenance.
 
+The model-facing packet carries the availability, immediate acquisition
+route, original source, language, generated status, and entry count. It also
+points to `evidence.json`, `run.json`, and `transcript_timestamped.txt`, which
+are committed beside it. Live builds and offline rebuilds construct this block
+from the same normalized provenance fields; a rebuild identifies its immediate
+route as saved rebuild evidence while retaining the original source.
+
 ## GUI run ownership
 
 The GUI builder returns a comment-run context containing:
@@ -114,6 +123,18 @@ Protected evidence includes the selected target, relevant thread context, and
 facts required to understand the exchange. Reducible evidence includes
 transcript excerpts, lower-priority surrounding comments, redundant metadata,
 and secondary examples.
+
+The default section caps are floors for ordinary builds, not permanent
+ceilings. A pure fitting step grows relevance and recent caps, asks the
+allocator whether each measured selection fits, and stops before the next
+candidate would violate the body, description, or transcript floors. It never
+renders trial packets. Growth also stops when a larger cap would only relabel
+comments already present rather than increase unique coverage. Both live
+builds and offline rebuilds call this same fitting step.
+
+The rendered reduction summary reports final eligible-versus-included counts,
+shortened bodies, and transcript reduction. Those final counts are the
+acceptance evidence that adaptive growth actually reached packet output.
 
 All YouTube-controlled text stays inside explicit untrusted-evidence markers.
 Content that could impersonate packet structure is defanged before rendering.

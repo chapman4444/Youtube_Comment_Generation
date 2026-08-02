@@ -9,7 +9,7 @@ import pytest
 
 from llm_youtube_comment_generation.application.configuration import resolve
 from llm_youtube_comment_generation.application.runs import validate_run
-from llm_youtube_comment_generation.domain import packets
+from llm_youtube_comment_generation.domain import packet_builder
 from llm_youtube_comment_generation.domain.errors import ConfigurationError
 from llm_youtube_comment_generation.interfaces.cli.main import run_rebuild
 from llm_youtube_comment_generation.infrastructure.filesystem_artifacts import (
@@ -98,6 +98,7 @@ def source_run(tmp_path):
             "language": "en",
             "entries": 1,
             "source": "published-captions",
+            "is_generated": True,
             "detail": "",
         },
         "counts": {"comments": len(comments), "replies": 0},
@@ -221,10 +222,16 @@ def test_unchanged_rebuild_preserves_ranked_inputs_and_validates(
 ):
     source = source_run(tmp_path)
     calls = []
-    real_select = packets.select_packet_sections
+    real_fit = packet_builder.fit_packet_sections
 
-    def capture(relevance, recent, comments, replies):
-        selection = real_select(relevance, recent, comments, replies)
+    def capture(relevance, recent, evidence, options, **templates):
+        selection = real_fit(
+            relevance,
+            recent,
+            evidence,
+            options,
+            **templates,
+        )
         calls.append({
             "relevance": [item["comment_id"] for item in relevance],
             "recent": [item["comment_id"] for item in recent],
@@ -241,7 +248,7 @@ def test_unchanged_rebuild_preserves_ranked_inputs_and_validates(
         })
         return selection
 
-    monkeypatch.setattr(packets, "select_packet_sections", capture)
+    monkeypatch.setattr(packet_builder, "fit_packet_sections", capture)
     first_code, first = rebuild(tmp_path, source)
     second_code, second = rebuild(tmp_path, source)
 
@@ -275,10 +282,16 @@ def test_changed_options_reuse_the_same_ranked_evidence(
 ):
     source = source_run(tmp_path)
     selected = []
-    real_select = packets.select_packet_sections
+    real_fit = packet_builder.fit_packet_sections
 
-    def capture(relevance, recent, comments, replies):
-        selection = real_select(relevance, recent, comments, replies)
+    def capture(relevance, recent, evidence, options, **templates):
+        selection = real_fit(
+            relevance,
+            recent,
+            evidence,
+            options,
+            **templates,
+        )
         selected.append({
             "relevant": [
                 item["comment_id"] for item in selection.relevant
@@ -291,7 +304,7 @@ def test_changed_options_reuse_the_same_ranked_evidence(
         })
         return selection
 
-    monkeypatch.setattr(packets, "select_packet_sections", capture)
+    monkeypatch.setattr(packet_builder, "fit_packet_sections", capture)
     _, default_run = rebuild(tmp_path, source)
     _, changed_run = rebuild(tmp_path, source, registers="dry_joke")
 
@@ -326,3 +339,22 @@ def test_legacy_evidence_is_refused_instead_of_reordered(tmp_path):
             StringIO(),
             Clipboard(),
         )
+
+
+def test_rebuild_packet_discloses_original_transcript_provenance_and_artifacts(
+    tmp_path,
+):
+    source = source_run(tmp_path)
+
+    code, rebuilt = rebuild(tmp_path, source)
+    packet = (rebuilt / "packet.md").read_text(encoding="utf-8")
+
+    assert code == 0
+    assert "- acquisition route: saved-rebuild-evidence" in packet
+    assert "- original source: published-captions" in packet
+    assert "- language: en" in packet
+    assert "- automatically generated: yes" in packet
+    assert "### Supporting run artifacts" in packet
+    assert "`evidence.json`" in packet
+    assert "`run.json`" in packet
+    assert "`transcript_timestamped.txt`" in packet

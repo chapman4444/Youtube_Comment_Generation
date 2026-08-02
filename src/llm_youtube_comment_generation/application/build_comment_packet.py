@@ -15,9 +15,9 @@ from ..domain.packet_builder import (
     PacketEvidence,
     PacketOptions,
     build,
+    fit_packet_sections,
     summarized_retrieval_notes,
 )
-from ..domain.packets import select_packet_sections
 from ..domain.statuses import (
     OperationResult,
     OperationStatus,
@@ -37,6 +37,11 @@ from .inspect_video import handle as inspect_handle
 from .debug_build import DEBUG_PACKET_FILENAME, render_debug_packet
 
 PACKET_FILENAME = "packet.md"
+PACKET_SUPPORTING_ARTIFACTS = (
+    "evidence.json",
+    "run.json",
+    "transcript_timestamped.txt",
+)
 
 
 @dataclass(frozen=True)
@@ -118,16 +123,15 @@ def handle(
     events.emit(ProgressEvent(EventKind.STEP, step="packet",
                               message="Assembling the packet"))
 
-    selection = select_packet_sections(
-        inspection.relevance_comments, inspection.recent_comments,
-        inspection.comments, inspection.replies,
-    )
+    provenance = transcript_provenance(transcript)
     evidence = PacketEvidence(
         video=inspection.video,
         comments=inspection.comments,
         replies=inspection.replies,
         transcript_text=timestamped,
         transcript_available=transcript.available,
+        transcript_provenance=provenance,
+        artifact_files=PACKET_SUPPORTING_ARTIFACTS,
         register=inspection.register,
         retrieval=inspection.retrieval,
         stopwords=stopwords,
@@ -138,6 +142,14 @@ def handle(
         maximum_characters=command.packet_characters,
         explicit_length=command.explicit_length,
         allow_no_transcript=command.allow_no_transcript,
+    )
+    selection = fit_packet_sections(
+        inspection.relevance_comments,
+        inspection.recent_comments,
+        evidence,
+        options,
+        workflow_template=templates["comment_workflow.md"],
+        final_check_template=templates["comment_final_check.md"],
     )
 
     packet = build(
@@ -187,7 +199,7 @@ def handle(
             "reported_total": inspection.retrieval.reported_total,
             "notes": list(inspection.retrieval.notes),
         },
-        "transcript": transcript_provenance(transcript),
+        "transcript": provenance,
         "counts": {
             "comments": len(inspection.comments),
             "replies": len(inspection.replies),

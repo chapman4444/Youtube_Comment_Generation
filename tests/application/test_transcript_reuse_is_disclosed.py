@@ -151,6 +151,32 @@ def test_a_fresh_run_still_records_its_source():
     assert stored["is_generated"] is True
 
 
+def test_fresh_transcript_provenance_reaches_the_packet():
+    packet = build(fresh()).value["packet"].text
+
+    assert "### Transcript status" in packet
+    assert "- acquisition route: youtube-transcript-api" in packet
+    assert "- language: English (auto-generated)" in packet
+    assert "- automatically generated: yes" in packet
+
+
+def test_reused_transcript_keeps_its_original_source_in_the_packet():
+    packet = build(reused()).value["packet"].text
+
+    assert "- acquisition route: saved-transcript" in packet
+    assert "- original source: whisper" in packet
+    assert "- language: English" in packet
+
+
+def test_live_packets_point_to_the_complete_saved_run_artifacts():
+    packet = build(fresh()).value["packet"].text
+
+    assert "### Supporting run artifacts" in packet
+    assert "`evidence.json`" in packet
+    assert "`run.json`" in packet
+    assert "`transcript_timestamped.txt`" in packet
+
+
 def test_a_missing_transcript_is_still_its_own_warning():
     result = build(
         TranscriptResult(

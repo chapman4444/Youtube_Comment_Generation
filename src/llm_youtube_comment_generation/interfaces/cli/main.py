@@ -490,8 +490,12 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
     """
 
     from ...domain.errors import ConfigurationError
-    from ...domain.packet_builder import PacketEvidence, PacketOptions, build
-    from ...domain.packets import select_packet_sections
+    from ...domain.packet_builder import (
+        PacketEvidence,
+        PacketOptions,
+        build,
+        fit_packet_sections,
+    )
     from ...domain.statuses import RetrievalOutcome, RetrievalStatus
     from ...domain.writing_options import DIALS, dial_choice
 
@@ -561,49 +565,15 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
         raise ConfigurationError(
             "evidence.json does not contain valid comment and reply lists."
         )
-    evidence = PacketEvidence(
-        video=saved.get("video", {}),
-        comments=comments,
-        replies=replies,
-        transcript_text=transcript_text,
-        transcript_available=bool(transcript_text.strip()),
-        register=measure_comment_register(comments),
-        retrieval=outcome,
-        stopwords=word_resources.stopwords(),
-    )
-    selection = select_packet_sections(
-        relevance_comments, recent_comments, comments, evidence.replies,
-    )
-    options = PacketOptions(
-        variations=(parse_registers(arguments.registers)
-                    if arguments.registers else ()),
-        dials=parse_dials(arguments.dial or []),
-        maximum_characters=configuration.get("packet_characters"),
-        explicit_length=(parse_length(arguments.length)
-                         if arguments.length else None),
-        allow_no_transcript=arguments.allow_no_transcript,
-    )
-    packet = build(
-        evidence, selection, options,
-        workflow_template=prompt_resources.load("comment_workflow.md").text,
-        final_check_template=prompt_resources.load(
-            "comment_final_check.md").text,
-    )
-
-    video_id = str(saved.get("video", {}).get("video_id") or source.name)
-    artifacts = _artifact_store({}, configuration, video_id)
-    artifacts.stage("packet.md", packet.text)
-    artifacts.stage("evidence.json",
-                    json.dumps(saved, indent=2, ensure_ascii=False))
-    artifacts.stage("transcript_timestamped.txt", transcript_text)
-    rebuilt_record = dict(record)
     source_transcript = record.get("transcript")
     if not isinstance(source_transcript, dict):
         source_transcript = {}
     original_source = source_transcript.get(
         "original_source",
-        source_transcript.get("immediate_source",
-                              source_transcript.get("source", "")),
+        source_transcript.get(
+            "immediate_source",
+            source_transcript.get("source", ""),
+        ),
     )
     if original_source in ("saved-transcript", "saved-rebuild-evidence"):
         original_source = ""
@@ -641,6 +611,51 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
             else []
         ),
     }
+    evidence = PacketEvidence(
+        video=saved.get("video", {}),
+        comments=comments,
+        replies=replies,
+        transcript_text=transcript_text,
+        transcript_available=bool(transcript_text.strip()),
+        transcript_provenance=rebuilt_transcript,
+        artifact_files=build_comment_packet.PACKET_SUPPORTING_ARTIFACTS,
+        register=measure_comment_register(comments),
+        retrieval=outcome,
+        stopwords=word_resources.stopwords(),
+    )
+    options = PacketOptions(
+        variations=(parse_registers(arguments.registers)
+                    if arguments.registers else ()),
+        dials=parse_dials(arguments.dial or []),
+        maximum_characters=configuration.get("packet_characters"),
+        explicit_length=(parse_length(arguments.length)
+                         if arguments.length else None),
+        allow_no_transcript=arguments.allow_no_transcript,
+    )
+    selection = fit_packet_sections(
+        relevance_comments,
+        recent_comments,
+        evidence,
+        options,
+        workflow_template=prompt_resources.load("comment_workflow.md").text,
+        final_check_template=prompt_resources.load(
+            "comment_final_check.md"
+        ).text,
+    )
+    packet = build(
+        evidence, selection, options,
+        workflow_template=prompt_resources.load("comment_workflow.md").text,
+        final_check_template=prompt_resources.load(
+            "comment_final_check.md").text,
+    )
+
+    video_id = str(saved.get("video", {}).get("video_id") or source.name)
+    artifacts = _artifact_store({}, configuration, video_id)
+    artifacts.stage("packet.md", packet.text)
+    artifacts.stage("evidence.json",
+                    json.dumps(saved, indent=2, ensure_ascii=False))
+    artifacts.stage("transcript_timestamped.txt", transcript_text)
+    rebuilt_record = dict(record)
     rebuilt_record.update({
         "kind": "rebuild",
         "artifact_contract_version": 3,

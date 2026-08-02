@@ -38,6 +38,8 @@ from .packets import (
     PacketAllocation,
     PacketSelection,
     SectionCaps,
+    grow,
+    select_packet_sections,
 )
 from .sanitize import (
     SOURCE_BOUNDARY_CLOSE,
@@ -76,6 +78,8 @@ class PacketEvidence:
     replies: list[dict[str, Any]] = field(default_factory=list)
     transcript_text: str = ""
     transcript_available: bool = False
+    transcript_provenance: dict[str, Any] = field(default_factory=dict)
+    artifact_files: tuple[str, ...] = ()
     register: CommentRegister = field(default_factory=CommentRegister)
     retrieval: RetrievalOutcome = field(default_factory=RetrievalOutcome)
     # Data, like the templates: the domain does not read files. Empty is a
@@ -398,6 +402,80 @@ def render_metadata(video: dict[str, Any], allocation: PacketAllocation) -> str:
     ])
 
 
+def render_transcript_status(evidence: PacketEvidence) -> str:
+    """Describe the transcript the model is being asked to trust.
+
+    The run record has always retained this provenance, but the packet is what
+    reaches the model. Keeping source, language and generated status only in a
+    sidecar meant the reader could not tell published human captions from
+    automatic captions, local Whisper, or evidence reused by an offline
+    rebuild.
+
+    Every value is rendered inside the untrusted-source boundary and passed
+    through inline(), even though the normal producer is the application's
+    structured TranscriptResult. Offline rebuilds load the same fields from a
+    saved artifact, so the trust rule must not depend on which path built it.
+    """
+
+    provenance = evidence.transcript_provenance
+    availability = str(
+        provenance.get("availability")
+        or ("available" if evidence.transcript_available else "not available")
+    )
+    immediate = str(
+        provenance.get("immediate_source") or provenance.get("source") or ""
+    )
+    original = str(provenance.get("original_source") or "")
+    language = str(
+        provenance.get("language") or provenance.get("language_code") or ""
+    )
+    generated = provenance.get("is_generated")
+    generated_text = (
+        "yes" if generated is True
+        else "no" if generated is False
+        else "not reported"
+    )
+
+    lines = [
+        "### Transcript status",
+        "",
+        f"- availability: {inline(availability)}",
+        f"- acquisition route: {inline(immediate or 'not reported')}",
+    ]
+    if original and original != immediate:
+        lines.append(f"- original source: {inline(original)}")
+    lines.extend([
+        f"- language: {inline(language or 'not reported')}",
+        f"- automatically generated: {generated_text}",
+    ])
+    entries = provenance.get("entries")
+    if isinstance(entries, int) and not isinstance(entries, bool):
+        lines.append(f"- transcript entries: {entries:,}")
+    return "\n".join(lines) + "\n"
+
+
+def render_artifact_pointers(evidence: PacketEvidence) -> str:
+    """Name complete run artifacts only when the producer declares them.
+
+    The domain can build packets in memory, so claiming files exist merely
+    because their names are conventional would be false. The application and
+    rebuild paths explicitly declare the files they commit beside packet.md;
+    tests and other callers that do not publish artifacts leave this section
+    absent.
+    """
+
+    if not evidence.artifact_files:
+        return ""
+    lines = [
+        "### Supporting run artifacts",
+        "",
+        "The complete saved evidence and provenance for this packet are in:",
+        "",
+    ]
+    lines.extend(f"- `{inline(name)}`" for name in evidence.artifact_files)
+    return "\n".join(lines) + "\n"
+
+
 def summarized_retrieval_notes(notes: Sequence[str]) -> tuple[str, ...]:
     """Collapse identical per-page warnings into readable counted facts."""
 
@@ -580,6 +658,89 @@ def allocate(
     )
 
 
+def fit_packet_sections(
+    relevance_comments: Sequence[dict[str, Any]],
+    recent_comments: Sequence[dict[str, Any]],
+    evidence: PacketEvidence,
+    options: PacketOptions,
+    *,
+    workflow_template: str,
+    final_check_template: str,
+) -> PacketSelection:
+    """Spend spare budget on additional evidence without trial rendering.
+
+    grow() existed, was tested, and had no production caller. That left the
+    default section sizes acting as permanent ceilings: measured packets used
+    less than half their budget while retained comments were omitted.
+
+    This fitting step remains pure. It selects a candidate, asks allocate()
+    whether the measured counts fit, and never renders candidate packet text.
+    Growth stops when it adds no new comment id or when the next candidate
+    would violate the protected body, description, and transcript floors.
+    Stopping before a no-coverage redistribution also preserves a useful
+    recent section instead of letting an arbitrarily large relevance cap
+    merely relabel comments already present.
+    """
+
+    workflow, final_check, _ = render_instructions(
+        workflow_template, final_check_template, options, evidence.register
+    )
+    spec = resolve_prompt_spec(options.variations, options.dials)
+    instruction_characters = len(workflow) + len(final_check)
+    options_characters = (
+        len(variation_specs(spec.variation_keys, options.dials))
+        + len(spec.output_directives)
+    )
+
+    best = select_packet_sections(
+        relevance_comments,
+        recent_comments,
+        evidence.comments,
+        evidence.replies,
+    )
+    available = max(
+        len(evidence.comments),
+        len(relevance_comments),
+        len(recent_comments),
+    )
+    if available <= len(best.rendered_ids):
+        return best
+
+    relevant_factors = (
+        available + CAPS.relevant_comments - 1
+    ) // CAPS.relevant_comments
+    recent_step = max(1, CAPS.recent_comments // 2)
+    recent_factors = 1 + max(
+        0,
+        available - CAPS.recent_comments + recent_step - 1,
+    ) // recent_step
+    maximum_factor = max(1, relevant_factors, recent_factors)
+
+    for factor in range(2, maximum_factor + 1):
+        candidate = select_packet_sections(
+            relevance_comments,
+            recent_comments,
+            evidence.comments,
+            evidence.replies,
+            caps=grow(CAPS, factor),
+        )
+        if len(candidate.rendered_ids) <= len(best.rendered_ids):
+            break
+        try:
+            allocate(
+                evidence,
+                candidate,
+                options,
+                instruction_characters,
+                options_characters,
+            )
+        except PacketTooLargeError:
+            break
+        best = candidate
+
+    return best
+
+
 # --------------------------------------------------------------------------
 # Assembly and validation
 # --------------------------------------------------------------------------
@@ -632,6 +793,7 @@ def build(
             comments=len(evidence.comments),
             replies=len(evidence.replies),
         ),
+        render_transcript_status(evidence),
         "### Transcript",
         "",
         transcript,
@@ -650,6 +812,8 @@ def build(
         ),
         "",
         render_reduction_summary(selection, allocation, evidence),
+        "",
+        render_artifact_pointers(evidence),
         "",
         render_comment_section("Highest-liked comments", selection.most_liked,
                                body=allocation.comment_body,

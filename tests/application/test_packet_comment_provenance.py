@@ -69,19 +69,23 @@ class DifferentlyOrderedYouTube:
 
 def test_relevant_and_recent_sections_use_their_own_fetched_orderings(monkeypatch):
     captured = {}
-    real_select = build_comment_packet.select_packet_sections
+    real_fit = build_comment_packet.fit_packet_sections
 
-    def select(top_comments, recent_comments, comments, replies):
-        selection = real_select(
-            top_comments, recent_comments, comments, replies,
+    def fit(top_comments, recent_comments, evidence, options, **templates):
+        selection = real_fit(
+            top_comments,
+            recent_comments,
+            evidence,
+            options,
+            **templates,
         )
         captured["selection"] = selection
         captured["top"] = top_comments
         captured["recent"] = recent_comments
-        captured["aggregate"] = comments
+        captured["aggregate"] = evidence.comments
         return selection
 
-    monkeypatch.setattr(build_comment_packet, "select_packet_sections", select)
+    monkeypatch.setattr(build_comment_packet, "fit_packet_sections", fit)
     youtube = DifferentlyOrderedYouTube()
 
     build_comment_packet.handle(
@@ -102,11 +106,13 @@ def test_relevant_and_recent_sections_use_their_own_fetched_orderings(monkeypatc
         f"time{i:03}" for i in range(120)
     ]
     assert len(captured["aggregate"]) == 240
+    assert len(selection.rendered_ids) == 240
+    assert len(selection.relevant) > 75
     assert all(item["comment_id"].startswith("rel")
                for item in selection.relevant)
-    assert [item["comment_id"] for item in selection.recent] == [
-        f"time{i:03}" for i in range(40)
-    ]
+    assert selection.recent
+    assert all(item["comment_id"].startswith("time")
+               for item in selection.recent)
 
 
 def test_debug_build_stages_a_diagnostic_packet_without_replacing_packet():
