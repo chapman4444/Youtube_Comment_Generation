@@ -76,6 +76,7 @@ def test_disconnected_editor_and_overwrite_controls_are_not_offered(dialog):
     assert "Overwrite a previous output folder" not in labels
     assert "Reply threads:" not in labels
     assert "Reply threads to retrieve:" in labels
+    assert "Replies to retrieve per thread:" in labels
 
 
 def test_whisper_behavior_is_a_three_way_choice(dialog):

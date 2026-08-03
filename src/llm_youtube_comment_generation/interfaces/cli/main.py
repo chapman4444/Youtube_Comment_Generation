@@ -1328,7 +1328,7 @@ def run_packet_window(
         from ...application.comment_session import CommentSession
 
         return CommentSession(
-            packet_text=run.text,
+            packet_text=run.model_text,
             video=dict(run.video),
             registers=tuple(run.packet.variations),
             packet_path=run.packet_path,

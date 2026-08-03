@@ -142,42 +142,41 @@ class CommentSession:
                        "that paste was the packet itself")
             return result
 
+        draft = extract_hardened_final(text)
+        format_problems = []
         identification_problem = comment_answer_identification_problem(
             text,
             video_title=str(self.video.get("title", "")),
             video_id=str(self.video.get("video_id", "")),
         )
         if identification_problem:
-            reject_answer(self.state, identification_problem)
-            self._save_debug_rejection(identification_problem)
-            result.status = OperationStatus.REFUSED
-            result.value = self.state
-            self._emit(
-                EventKind.WARNING,
-                "comment",
-                "the required Video line is malformed",
-            )
-            return result
-
+            format_problems.append(identification_problem)
         if self.debug_build and (problem := debug_report_problem(text)):
-            reject_answer(self.state, problem)
-            self._save_debug_rejection(problem)
-            result.status = OperationStatus.REFUSED
-            result.value = self.state
-            self._emit(EventKind.WARNING, "comment", "debug report missing")
-            return result
-
-        draft = extract_hardened_final(text)
+            format_problems.append(problem)
         if not draft:
-            reason = (
+            format_problems.append(
                 "no '### Hardened final' section was found, so there is "
                 "nothing safe to take as the comment"
+            )
+        if format_problems:
+            count = len(format_problems)
+            noun = "problem" if count == 1 else "problems"
+            reason = (
+                f"The answer has {count} format {noun}:\n"
+                + "\n".join(
+                    f"{index}. {problem}"
+                    for index, problem in enumerate(format_problems, 1)
+                )
             )
             reject_answer(self.state, reason)
             self._save_debug_rejection(reason)
             result.status = OperationStatus.REFUSED
             result.value = self.state
-            self._emit(EventKind.WARNING, "comment", "no Hardened final found")
+            self._emit(
+                EventKind.WARNING,
+                "comment",
+                f"answer rejected with {count} format {noun}",
+            )
             return result
 
         accept_answer(self.state, draft)

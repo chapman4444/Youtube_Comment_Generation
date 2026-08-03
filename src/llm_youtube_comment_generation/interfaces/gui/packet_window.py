@@ -141,6 +141,7 @@ class PacketWindow:
         self._notify = notify or self._default_notify
         self.job = BackgroundJob()
         self.sequence = ReplySequence()
+        self.generated_packet = ""
         self.last_packet = ""
         self.result: Any = None
         #: The last thing said, which outranks the state description in the
@@ -185,6 +186,7 @@ class PacketWindow:
         self._completed_build_signature = ""
         self._message = initial_video_error
         self._text_context_menus: list[TextContextMenu] = []
+        self.evidence_tabs: dict[str, ttk.Frame] = {}
         self.evidence_views: dict[str, tk.Text] = {}
         self.evidence_copy_buttons: dict[str, ttk.Button] = {}
 
@@ -769,12 +771,11 @@ class PacketWindow:
         )
         self._add_evidence_tab(
             "debug",
-            "Debug bundle",
-            "A diagnostic bundle for a Debug build. It includes safe "
-            "settings, the exact packet, and—after validation—the full model "
-            "response. Because it includes the packet, it also includes the "
-            "commenter names and text retained inside it. It holds no "
-            "credentials or local paths. Review it before sharing it.",
+            "Debug",
+            "Before validation, this tab shows the diagnostic packet sent to "
+            "the model. After validation, it shows the completed bundle with "
+            "the model response and result. It includes retained commenter "
+            "names and text. Review it before sharing it.",
         )
 
         packet_tab = ttk.Frame(self.output_tabs, padding=PADDING)
@@ -801,12 +802,15 @@ class PacketWindow:
         self._add_text_context_menu(self.packet_preview)
         self._tip(
             self.packet_preview,
-            "The complete generated packet sent to your model.",
+            "The ordinary generated packet. Debug instructions and results "
+            "appear separately in the Debug tab.",
         )
         packet_actions = ttk.Frame(packet_tab)
         packet_actions.grid(row=3, column=0, sticky="ew", pady=(6, 0))
         self.packet_copy_button = ttk.Button(
-            packet_actions, text="Copy again", command=self.do_copy,
+            packet_actions,
+            text="Copy again",
+            command=self.copy_generated_packet,
             state="disabled",
         )
         self.packet_copy_button.pack(side="left")
@@ -955,7 +959,7 @@ class PacketWindow:
         key: str,
         title: str,
         description: str,
-    ) -> None:
+    ) -> ttk.Frame:
         tab = ttk.Frame(self.output_tabs, padding=PADDING)
         tab.columnconfigure(0, weight=1)
         tab.rowconfigure(1, weight=1)
@@ -994,8 +998,10 @@ class PacketWindow:
             button,
             f"Copy the {title.lower()} shown in this tab.",
         )
+        self.evidence_tabs[key] = tab
         self.evidence_views[key] = view
         self.evidence_copy_buttons[key] = button
+        return tab
 
     def _build_bottom(self) -> None:
         bottom = ttk.Frame(self.root, padding=(PADDING, 4, PADDING, PADDING))
@@ -1092,9 +1098,31 @@ class PacketWindow:
         if button is not None:
             button.configure(state=("normal" if text else "disabled"))
 
+    def _set_debug_view(self, text: str, *, complete: bool) -> None:
+        """Show whether Debug contains the outgoing packet or final bundle."""
+
+        tab = self.evidence_tabs.get("debug")
+        if tab is not None:
+            self.output_tabs.tab(
+                tab,
+                text="Debug bundle" if complete else "Debug packet",
+            )
+        button = self.evidence_copy_buttons.get("debug")
+        if button is not None:
+            button.configure(
+                text="Copy debug bundle" if complete else "Copy debug packet"
+            )
+        self._set_evidence_view("debug", text)
+
     def _clear_evidence_views(self) -> None:
         for key in tuple(self.evidence_views):
             self._set_evidence_view(key, "")
+        tab = self.evidence_tabs.get("debug")
+        if tab is not None:
+            self.output_tabs.tab(tab, text="Debug")
+        button = self.evidence_copy_buttons.get("debug")
+        if button is not None:
+            button.configure(text="Copy debug")
 
     def _show_evidence(self, evidence: Any) -> None:
         evidence = evidence if isinstance(evidence, dict) else {}
@@ -1513,17 +1541,18 @@ class PacketWindow:
         else:
             self.video_url.set("")
         self.packet_size_label.configure(text="", foreground="#666666")
+        preview_packet = self.generated_packet or self.last_packet
         self.packet_preview.configure(state="normal")
         self.packet_preview.delete("1.0", "end")
         self.packet_preview.insert(
-            "1.0", self.last_packet or "Build a packet first."
+            "1.0", preview_packet or "Build a packet first."
         )
         self.packet_preview.configure(state="disabled")
         self.packet_count.configure(
-            text=(f"{len(self.last_packet):,} characters"
-                  if self.last_packet else "")
+            text=(f"{len(preview_packet):,} characters"
+                  if preview_packet else "")
         )
-        self._enable(self.packet_copy_button, bool(self.last_packet))
+        self._enable(self.packet_copy_button, bool(preview_packet))
         self.output_tabs.tab(
             self.answer_tab,
             state=("normal" if self.last_packet else "disabled"),
@@ -1868,6 +1897,7 @@ class PacketWindow:
         self.result = None
         self.triage_packet = ""
         self.current_packet = ""
+        self.generated_packet = ""
         self.last_packet = ""
         self._pending_build_signature = ""
         self._completed_build_signature = ""
@@ -2013,7 +2043,7 @@ class PacketWindow:
 
         if getattr(getattr(result, "status", None), "value", "") == "refused":
             if getattr(session, "debug_build", False):
-                self._set_evidence_view("debug", session.debug_bundle())
+                self._set_debug_view(session.debug_bundle(), complete=True)
             reason = session.state.last_error or "That paste could not be used."
             self.say(reason)
             self._show_refusal(reason)
@@ -2059,10 +2089,11 @@ class PacketWindow:
         self._show_transcript(transcript)
         debug_packet = str(getattr(packet, "debug_packet", "") or "")
         if debug_packet:
-            self._set_evidence_view("debug", debug_packet)
+            self._set_debug_view(debug_packet, complete=False)
         else:
-            self._set_evidence_view(
-                "debug", "Debug build was not selected for this packet."
+            self._set_debug_view(
+                "Debug build was not selected for this packet.",
+                complete=False,
             )
         if self._comment_session_factory is None:
             return
@@ -2095,6 +2126,8 @@ class PacketWindow:
             return
 
         if getattr(getattr(result, "status", None), "value", "") == "refused":
+            if getattr(session, "debug_build", False):
+                self._set_debug_view(session.debug_bundle(), complete=True)
             reason = session.state.last_error or "That paste could not be used."
             self.say(reason)
             self._show_refusal(reason)
@@ -2107,7 +2140,7 @@ class PacketWindow:
                 str(getattr(session.accepted[-1], "draft", "") or "")
             )
         if getattr(session, "debug_build", False):
-            self._set_evidence_view("debug", session.debug_bundle())
+            self._set_debug_view(session.debug_bundle(), complete=True)
         self._clear_answer()
         self.say(
             f"Draft saved. {len(session.accepted)} so far. Nothing was posted."
@@ -2259,6 +2292,23 @@ class PacketWindow:
     def do_copy(self) -> None:
         self._copy_current_packet(auto=False)
 
+    def copy_generated_packet(self) -> None:
+        """Copy exactly what the Generated packet tab displays."""
+
+        text = self.generated_packet or self.last_packet
+        if not text:
+            self.say("Build a packet first.")
+            return
+        try:
+            if self.clipboard is None:
+                raise RuntimeError("no clipboard service is available")
+            self.clipboard.write(text)
+        except Exception as failure:        # noqa: BLE001 - visible copy error
+            self.say(f"Could not copy the generated packet: {failure}")
+            return
+        self.say(f"Generated packet copied: {len(text):,} characters.")
+        self.refresh()
+
     def stop_build(self) -> None:
         """Request cancellation from either visible Stop button."""
 
@@ -2356,6 +2406,7 @@ class PacketWindow:
         self.result = None
         self.triage_packet = ""
         self.current_packet = ""
+        self.generated_packet = ""
         self.last_packet = ""
         self._pending_build_signature = ""
         self._completed_build_signature = ""
@@ -2401,6 +2452,7 @@ class PacketWindow:
         self.result = None
         self.triage_packet = ""
         self.current_packet = ""
+        self.generated_packet = ""
         self.last_packet = ""
         self._pending_build_signature = ""
         self._completed_build_signature = ""
@@ -2502,9 +2554,17 @@ class PacketWindow:
                 # packet: it owns every rule about who gets which packet and
                 # what counts as an answer, so the window drives it instead
                 # of deciding any of that a second time.
+                self.generated_packet = ""
                 self._adopt_session(event.value)
             else:
-                self.last_packet = str(getattr(event.value, "text", "") or "")
+                self.generated_packet = str(
+                    getattr(event.value, "text", "") or ""
+                )
+                self.last_packet = str(
+                    getattr(event.value, "model_text", "")
+                    or getattr(event.value, "debug_packet", "")
+                    or self.generated_packet
+                )
                 self._adopt_comment(event.value)
                 self._copy_current_packet(auto=True)
             self.output_tabs.select(self.packet_tab)

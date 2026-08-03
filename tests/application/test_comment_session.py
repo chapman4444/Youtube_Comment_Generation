@@ -172,6 +172,30 @@ def test_debug_build_preserves_a_rejected_response_and_explains_why():
     assert "requires exactly one" in bundle
 
 
+def test_debug_rejection_reports_all_answer_format_problems_together():
+    one = make_session()
+    one.debug_build = True
+    one.start()
+    malformed = (
+        "**Video:** A video "
+        "[[https://www.youtube.com/watch?v=gC-J7zwYMAM]"
+        "(https://www.youtube.com/watch?v=gC-J7zwYMAM)]"
+        "(https://www.youtube.com/watch?v=gC-J7zwYMAM)\n\n"
+        "### Hardened final\nA comment that must not be saved."
+    )
+
+    result = one.submit(malformed)
+
+    assert result.status.value == "refused"
+    assert "2 format problems" in one.state.last_error
+    assert "found 3 copies" in one.state.last_error
+    assert "### Debug report" in one.state.last_error
+    bundle = one.artifacts.read("debug_bundle.md")
+    assert "2 format problems" in bundle
+    assert "found 3 copies" in bundle
+    assert "### Debug report" in bundle
+
+
 # --------------------------------------------------------------------------
 # The debug bundle's privacy contract
 #

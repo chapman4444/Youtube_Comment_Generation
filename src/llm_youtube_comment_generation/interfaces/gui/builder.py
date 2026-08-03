@@ -54,7 +54,13 @@ class CommentRun:
     def text(self) -> str:
         """Compatibility surface used by the window's packet preview."""
 
-        return self.debug_packet or str(getattr(self.packet, "text", "") or "")
+        return str(getattr(self.packet, "text", "") or "")
+
+    @property
+    def model_text(self) -> str:
+        """The packet copied to the model for this run."""
+
+        return self.debug_packet or self.text
 
 
 class JobEvents:

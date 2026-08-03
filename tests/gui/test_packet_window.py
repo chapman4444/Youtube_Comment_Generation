@@ -103,7 +103,7 @@ def test_debug_build_is_a_one_run_checkbox_beside_build(window):
     assert window.debug_build_check.master == window.build_button.master
     assert window.debug_build.get() is False
     assert any(
-        window.output_tabs.tab(tab, "text") == "Debug bundle"
+        window.output_tabs.tab(tab, "text") == "Debug"
         for tab in window.output_tabs.tabs()
     )
 
@@ -576,6 +576,101 @@ def test_successful_build_copies_exact_packet_and_moves_to_answer(window):
     assert str(window.packet_preview.cget("state")) == "disabled"
     assert "✓ Build" in window.rail_labels[0].cget("text")
     assert "● Answer" in window.rail_labels[1].cget("text")
+
+
+def test_debug_build_displays_normal_packet_but_copies_diagnostic_packet(window):
+    ordinary = "ordinary generated packet"
+    diagnostic = "ordinary generated packet\n\n## Debug-build instructions"
+
+    class Session:
+        accepted = []
+        state = None
+        debug_build = True
+
+        def start(self):
+            return None
+
+        def copy_packet(self):
+            window.clipboard.write(diagnostic)
+            return diagnostic
+
+    run = SimpleNamespace(
+        text=ordinary,
+        model_text=diagnostic,
+        debug_packet=diagnostic,
+        variations=(),
+        run_record={},
+        evidence={},
+        transcript=None,
+        artifacts=None,
+    )
+    window._comment_session_factory = lambda _packet: Session()
+
+    window._on_event(WorkerEvent("done", "done", run))
+
+    assert window.packet_preview.get("1.0", "end-1c") == ordinary
+    assert window.clipboard.value == diagnostic
+    assert window.last_packet == diagnostic
+    assert window.generated_packet == ordinary
+    assert (
+        window.output_tabs.tab(window.evidence_tabs["debug"], "text")
+        == "Debug packet"
+    )
+    assert window.evidence_views["debug"].get("1.0", "end-1c") == diagnostic
+
+    window.packet_copy_button.invoke()
+
+    assert window.clipboard.value == ordinary
+
+
+def test_rejected_debug_answer_replaces_debug_packet_with_completed_bundle(
+    window,
+):
+    diagnostic = "diagnostic packet"
+
+    class Session:
+        accepted = []
+        debug_build = True
+        state = SimpleNamespace(last_error="Two format problems were found.")
+
+        def start(self):
+            return None
+
+        def copy_packet(self):
+            window.clipboard.write(diagnostic)
+            return diagnostic
+
+        def submit(self, _text):
+            return SimpleNamespace(
+                status=SimpleNamespace(value="refused")
+            )
+
+        def debug_bundle(self):
+            return "# Debug build bundle\n\nTwo format problems were found."
+
+    run = SimpleNamespace(
+        text="ordinary packet",
+        model_text=diagnostic,
+        debug_packet=diagnostic,
+        variations=(),
+        run_record={},
+        evidence={},
+        transcript=None,
+        artifacts=None,
+    )
+    window._comment_session_factory = lambda _packet: Session()
+    window._on_event(WorkerEvent("done", "done", run))
+    window.answer_input.insert("1.0", "malformed model answer")
+
+    window.take_comment_answer()
+
+    assert (
+        window.output_tabs.tab(window.evidence_tabs["debug"], "text")
+        == "Debug bundle"
+    )
+    assert "# Debug build bundle" in window.evidence_views["debug"].get(
+        "1.0", "end-1c"
+    )
 
 
 def test_copy_again_restores_the_exact_packet(window):

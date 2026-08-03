@@ -11,10 +11,13 @@ that does not need YouTube.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from llm_youtube_comment_generation.domain.errors import OperationCancelled
 from llm_youtube_comment_generation.interfaces.gui.builder import (
+    CommentRun,
     JobEvents,
     build_comment,
 )
@@ -53,6 +56,20 @@ class FakeStore:
 
 def options(**kwargs) -> PacketOptionsModel:
     return PacketOptionsModel(video="gC-J7zwYMAM", **kwargs)
+
+
+def test_a_debug_run_keeps_the_generated_and_model_packets_distinct():
+    run = CommentRun(
+        packet=SimpleNamespace(text="ordinary generated packet"),
+        video={},
+        artifacts=None,
+        packet_path="",
+        run_record={},
+        debug_packet="diagnostic packet",
+    )
+
+    assert run.text == "ordinary generated packet"
+    assert run.model_text == "diagnostic packet"
 
 
 # -- the event sink --------------------------------------------------------
