@@ -45,6 +45,8 @@ def test_api_key_and_user_home_are_reported_without_echoing_the_key(tmp_path):
     assert "YouTube API key" in rendered
     assert "Windows user directory" in rendered
     assert key not in rendered
+    assert "Operator" not in rendered
+    assert r"C:\Users\<redacted>" in rendered
 
 
 def test_clean_publishable_files_pass(tmp_path):

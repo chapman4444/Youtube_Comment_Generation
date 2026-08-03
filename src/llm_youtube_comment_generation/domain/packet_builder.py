@@ -95,6 +95,8 @@ class PacketOptions:
     variations: tuple[str, ...] = ()
     dials: dict[str, str] = field(default_factory=dict)
     maximum_characters: int = 280_000
+    reply_threads: int = CAPS.reply_threads
+    replies_per_thread: int = CAPS.replies_per_thread
     explicit_length: tuple[int, int] | None = None
     allow_no_transcript: bool = False
 
@@ -565,6 +567,17 @@ def allocate(
     template's size sends him to change the one thing that will not help.
     """
 
+    caps = SectionCaps(
+        relevant_comments=CAPS.relevant_comments,
+        most_liked_comments=CAPS.most_liked_comments,
+        most_replied_comments=CAPS.most_replied_comments,
+        recent_comments=CAPS.recent_comments,
+        reply_threads=max(0, options.reply_threads),
+        replies_per_thread=max(0, options.replies_per_thread),
+        comment_body=CAPS.comment_body,
+        reply_body=CAPS.reply_body,
+        description=CAPS.description,
+    )
     budget = options.maximum_characters
     ceiling = int(budget * INSTRUCTION_BUDGET_SHARE)
     if options_characters > ceiling:
@@ -582,23 +595,30 @@ def allocate(
             "--packet-characters."
         )
     description = min(
-        len(neutralize(evidence.video.get("description", ""))), CAPS.description
+        len(neutralize(evidence.video.get("description", ""))),
+        caps.description,
     )
 
     rendered_comments = (
         len(selection.most_liked) + len(selection.most_replied)
         + len(selection.relevant) + len(selection.recent)
     )
-    rendered_replies = sum(
-        min(len(replies), CAPS.replies_per_thread)
-        for _, replies in selection.threads[:CAPS.reply_threads]
-    )
+    reply_threads = min(caps.reply_threads, len(selection.threads))
+    replies_per_thread = caps.replies_per_thread
+
+    def rendered_reply_count() -> int:
+        return sum(
+            min(len(replies), replies_per_thread)
+            for _, replies in selection.threads[:reply_threads]
+        )
 
     def comment_cost(body: int) -> int:
         return rendered_comments * (body + COMMENT_RENDER_OVERHEAD)
 
     def reply_cost(body: int) -> int:
-        return rendered_replies * (body + COMMENT_RENDER_OVERHEAD // 2)
+        return rendered_reply_count() * (
+            body + COMMENT_RENDER_OVERHEAD // 2
+        )
 
     # First establish a packet that fits the protected floors. Then spend
     # additional room on a complete ordinary-length transcript before
@@ -615,6 +635,24 @@ def allocate(
         comment_body -= 50
         reply_body = max(200, min(reply_body, comment_body // 2 + 200))
 
+    # Reply retrieval is an upper bound, not a reason to reject a packet that
+    # otherwise fits. Earlier code silently replaced the operator's setting
+    # with a fixed eight replies per thread. The selected ceiling now reaches
+    # the allocator, which keeps as many of those replies as the packet floors
+    # permit and reports the exact resulting cap in the reduction summary.
+    while (
+        comment_cost(comment_body) + reply_cost(reply_body)
+        > floor_available
+        and (replies_per_thread > 0 or reply_threads > 0)
+    ):
+        if replies_per_thread > 1:
+            replies_per_thread -= 1
+        elif reply_threads > 0:
+            reply_threads -= 1
+        else:
+            replies_per_thread = 0
+
+    rendered_replies = rendered_reply_count()
     if (
         comment_cost(comment_body) + reply_cost(reply_body)
         > floor_available
@@ -650,8 +688,8 @@ def allocate(
     return PacketAllocation(
         comment_body=comment_body,
         reply_body=reply_body,
-        reply_threads=CAPS.reply_threads,
-        replies_per_thread=CAPS.replies_per_thread,
+        reply_threads=reply_threads,
+        replies_per_thread=replies_per_thread,
         description=max(FLOORS.description, description),
         transcript=transcript,
         transcript_reduced=reduced,
@@ -692,11 +730,23 @@ def fit_packet_sections(
         + len(spec.output_directives)
     )
 
+    caps = SectionCaps(
+        relevant_comments=CAPS.relevant_comments,
+        most_liked_comments=CAPS.most_liked_comments,
+        most_replied_comments=CAPS.most_replied_comments,
+        recent_comments=CAPS.recent_comments,
+        reply_threads=max(0, options.reply_threads),
+        replies_per_thread=max(0, options.replies_per_thread),
+        comment_body=CAPS.comment_body,
+        reply_body=CAPS.reply_body,
+        description=CAPS.description,
+    )
     best = select_packet_sections(
         relevance_comments,
         recent_comments,
         evidence.comments,
         evidence.replies,
+        caps=caps,
     )
     available = max(
         len(evidence.comments),
@@ -722,7 +772,7 @@ def fit_packet_sections(
             recent_comments,
             evidence.comments,
             evidence.replies,
-            caps=grow(CAPS, factor),
+            caps=grow(caps, factor),
         )
         if len(candidate.rendered_ids) <= len(best.rendered_ids):
             break

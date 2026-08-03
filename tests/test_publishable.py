@@ -15,10 +15,15 @@ measurement history all sit in the working tree beside the code.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
+
+from llm_youtube_comment_generation.application.privacy import (
+    audit_files,
+    render_findings,
+)
+from llm_youtube_comment_generation.infrastructure.git_files import tracked_files
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,30 +38,10 @@ MUST_BE_IGNORED = (
     "writing_presets.json",
 )
 
-#: Shapes of identifying data. Checked against everything that would be
-#: committed, not only the files somebody remembered to look at.
-IDENTIFIERS = (
-    # A YouTube channel id, which names a person as precisely as a handle.
-    re.compile(r"\bUC[A-Za-z0-9_-]{22}\b"),
-    # A Windows home directory, which carries the account name.
-    re.compile(r"[Cc]:\\Users\\(?!<)[A-Za-z0-9._-]+"),
-)
-
-TEXT_SUFFIXES = {".py", ".bat", ".md", ".txt", ".json", ".toml", ".cfg", ".ini"}
-
-SKIP_DIRECTORIES = {
-    "output", "__pycache__", ".git", ".venv", "venv", ".pytest_cache",
-    "ab_compare", "previous_runs", "node_modules", "build", "dist",
-}
-
-
-def committable_files():
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
-            continue
-        if SKIP_DIRECTORIES & set(path.relative_to(ROOT).parts):
-            continue
-        yield path
+# Resolve this at collection time, before the harness blocks subprocesses.
+# The publishable set is Git's index, not a second denylist that can drift
+# away from .gitignore and accuse ignored private notes or release artifacts.
+TRACKED_FILES = tracked_files(ROOT)
 
 
 def test_a_gitignore_exists_at_all():
@@ -82,20 +67,20 @@ def test_no_committable_file_names_a_person():
     unnoticed identity leak.
     """
 
-    offenders: list[str] = []
-    for path in committable_files():
-        try:
-            body = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        for pattern in IDENTIFIERS:
-            for found in pattern.findall(body):
-                offenders.append(f"{path.relative_to(ROOT)}: {found}")
+    findings = audit_files(ROOT, TRACKED_FILES)
 
-    assert not offenders, (
-        "identifying data in files that would be committed:\n  "
-        + "\n  ".join(sorted(set(offenders))[:20])
-    )
+    assert not findings, render_findings(findings)
+
+
+def test_ignored_work_and_release_directories_are_not_committable():
+    tracked = {Path(relative).parts[0].casefold() for relative in TRACKED_FILES}
+
+    assert not tracked & {
+        "env",
+        "local_notes",
+        "models",
+        "review_packages",
+    }
 
 
 def test_the_api_key_is_never_written_down():

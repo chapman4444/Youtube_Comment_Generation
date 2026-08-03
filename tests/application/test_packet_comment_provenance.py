@@ -138,3 +138,23 @@ def test_debug_build_stages_a_diagnostic_packet_without_replacing_packet():
     assert "### Debug report" in debug_packet
     assert "will be rejected" in debug_packet
     assert result.value["debug_packet"] == debug_packet
+
+
+def test_reply_retrieval_limits_become_packet_limits():
+    result = build_comment_packet.handle(
+        BuildCommentPacketCommand(
+            video=VIDEO,
+            max_reply_threads=7,
+            max_replies_per_thread=17,
+        ),
+        youtube=DifferentlyOrderedYouTube(),
+        transcripts=FakeTranscriptPort(),
+        events=FakeEventSink(),
+        artifacts=FakeArtifactStore(),
+        templates=TEMPLATES,
+        prompt_version="test",
+    )
+
+    allocation = result.value["run"]["allocation"]
+    assert allocation["reply_threads"] == 0
+    assert allocation["replies_per_thread"] == 17

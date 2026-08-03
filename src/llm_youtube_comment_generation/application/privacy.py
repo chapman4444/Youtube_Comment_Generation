@@ -153,6 +153,9 @@ def _safe_detail(value: str) -> str:
         return value.split("://", 1)[0] + "://[credentials]@..."
     if value.startswith("UC") and len(value) == 24:
         return f"{value[:4]}...{value[-4:]}"
+    if re.match(r"(?i)^[A-Z]:[\\/]+Users[\\/]+", value):
+        separator = "\\" if "\\" in value else "/"
+        return f"{value[0]}:{separator}Users{separator}<redacted>"
     return value
 
 

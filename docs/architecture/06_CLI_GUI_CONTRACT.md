@@ -37,7 +37,9 @@ Comment evidence depth and reply discovery depth are separate values:
 - reply `--max-comments` overrides `reply_scan_comments`;
 - the GUI reply scan uses `reply_scan_comments`, never the comment packet's
   `max_top`;
-- `max_replies_per_thread` controls bounded per-thread reply retrieval.
+- `max_replies_per_thread` controls bounded per-thread reply retrieval and is
+  also the packet fitter's per-thread ceiling. The character budget may lower
+  the rendered count, and the packet reduction summary reports that result.
 
 Every exposed window flag is projected into the model. Unsupported flags are
 not silently accepted.

@@ -496,6 +496,7 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
         build,
         fit_packet_sections,
     )
+    from ...domain.packets import CAPS
     from ...domain.statuses import RetrievalOutcome, RetrievalStatus
     from ...domain.writing_options import DIALS, dial_choice
 
@@ -568,6 +569,18 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
     source_transcript = record.get("transcript")
     if not isinstance(source_transcript, dict):
         source_transcript = {}
+    source_allocation = record.get("allocation")
+    if not isinstance(source_allocation, dict):
+        source_allocation = {}
+
+    def recorded_reply_limit(name: str, default: int) -> int:
+        value = source_allocation.get(name)
+        return (
+            value
+            if isinstance(value, int) and not isinstance(value, bool)
+            and value >= 0
+            else default
+        )
     original_source = source_transcript.get(
         "original_source",
         source_transcript.get(
@@ -628,6 +641,12 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
                     if arguments.registers else ()),
         dials=parse_dials(arguments.dial or []),
         maximum_characters=configuration.get("packet_characters"),
+        reply_threads=recorded_reply_limit(
+            "reply_threads", CAPS.reply_threads
+        ),
+        replies_per_thread=recorded_reply_limit(
+            "replies_per_thread", CAPS.replies_per_thread
+        ),
         explicit_length=(parse_length(arguments.length)
                          if arguments.length else None),
         allow_no_transcript=arguments.allow_no_transcript,
@@ -672,6 +691,8 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
         "allocation": {
             "comment_body": packet.allocation.comment_body,
             "reply_body": packet.allocation.reply_body,
+            "reply_threads": packet.allocation.reply_threads,
+            "replies_per_thread": packet.allocation.replies_per_thread,
             "transcript": packet.allocation.transcript,
             "transcript_reduced": packet.allocation.transcript_reduced,
         },

@@ -5,7 +5,6 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from ...domain.packets import CAPS
 from .options import PacketOptionsModel, WHISPER_POLICIES
 from .widgets import Tooltip
 
@@ -39,9 +38,9 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
         "max_recent": "Maximum newest comments to retain.",
         "max_threads": "Maximum comment threads whose replies are retrieved.",
         "max_replies": (
-            "Maximum replies fetched from each selected thread. The packet "
-            f"shows up to {CAPS.replies_per_thread} per thread and reports "
-            "any omitted replies."
+            "Maximum replies fetched and offered to the packet from each "
+            "selected thread. The packet budget decides how many fit and "
+            "reports any omissions."
         ),
         "packet_characters": "Maximum total size of the generated model packet.",
     }

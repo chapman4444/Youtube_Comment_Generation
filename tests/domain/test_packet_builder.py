@@ -73,8 +73,8 @@ def comment(index, *, likes=0, replies=0, text=None, author=None):
     }
 
 
-def make(comments=None, *, transcript="[00:00:00] words here", available=True,
-         retrieval=None, video=None):
+def make(comments=None, *, replies=None, transcript="[00:00:00] words here",
+         available=True, retrieval=None, video=None):
     comments = comments if comments is not None else [comment(i) for i in range(6)]
     return PacketEvidence(
         video=video or {"video_id": "gC-J7zwYMAM", "title": "A video",
@@ -82,7 +82,7 @@ def make(comments=None, *, transcript="[00:00:00] words here", available=True,
                         "description": "a description",
                         "comment_count": len(comments)},
         comments=comments,
-        replies=[],
+        replies=list(replies or ()),
         transcript_text=transcript,
         transcript_available=available,
         register=measure_comment_register(comments),
@@ -538,6 +538,90 @@ def test_a_packet_never_exceeds_its_budget(templates):
     packet = assemble(templates, evidence=make(comments, transcript="y" * 500_000))
 
     assert len(packet) <= DEFAULT_PACKET_CHARACTERS
+
+
+def test_the_selected_reply_limit_reaches_the_packet(templates):
+    parent = comment(0, replies=12)
+    replies = [
+        {
+            "comment_id": f"r{index}",
+            "parent_comment_id": parent["comment_id"],
+            "author": f"@reply{index}",
+            "text": f"reply body {index}",
+            "like_count": 0,
+            "published_at": "2026-07-02T00:00:00Z",
+        }
+        for index in range(12)
+    ]
+    packet = assemble(
+        templates,
+        evidence=make([parent], replies=replies),
+        options=PacketOptions(reply_threads=1, replies_per_thread=20),
+    )
+
+    assert packet.allocation.reply_threads == 1
+    assert packet.allocation.replies_per_thread == 20
+    assert "Replies within those threads: 12 of 12 retrieved" in packet.text
+    for index in range(12):
+        assert f"id r{index}," in packet.text
+
+
+def test_a_lower_reply_limit_is_reported_as_packet_reduction(templates):
+    parent = comment(0, replies=12)
+    replies = [
+        {
+            "comment_id": f"r{index}",
+            "parent_comment_id": parent["comment_id"],
+            "author": f"@reply{index}",
+            "text": f"reply body {index}",
+            "like_count": 0,
+            "published_at": "2026-07-02T00:00:00Z",
+        }
+        for index in range(12)
+    ]
+    packet = assemble(
+        templates,
+        evidence=make([parent], replies=replies),
+        options=PacketOptions(reply_threads=1, replies_per_thread=3),
+    )
+
+    assert packet.allocation.replies_per_thread == 3
+    assert "Replies within those threads: 3 of 12 retrieved" in packet.text
+    assert "id r2," in packet.text
+    assert "id r3," not in packet.text
+
+
+def test_reply_coverage_shrinks_only_when_the_packet_budget_requires_it(
+    templates,
+):
+    parents = [comment(index, replies=100) for index in range(4)]
+    replies = [
+        {
+            "comment_id": f"r{parent_index}-{reply_index}",
+            "parent_comment_id": parents[parent_index]["comment_id"],
+            "author": f"@reply{parent_index}-{reply_index}",
+            "text": "long reply evidence " * 80,
+            "like_count": 0,
+            "published_at": "2026-07-02T00:00:00Z",
+        }
+        for parent_index in range(4)
+        for reply_index in range(100)
+    ]
+    packet = assemble(
+        templates,
+        evidence=make(parents, replies=replies),
+        options=PacketOptions(
+            maximum_characters=MINIMUM_PACKET_CHARACTERS,
+            reply_threads=4,
+            replies_per_thread=100,
+        ),
+    )
+
+    assert len(packet) <= MINIMUM_PACKET_CHARACTERS
+    assert packet.allocation.reply_threads == 4
+    assert 0 < packet.allocation.replies_per_thread < 100
+    assert "Replies within those threads:" in packet.text
+    assert "of 400 retrieved" in packet.text
 
 
 def test_comment_coverage_counts_survive_budget_pressure(templates):

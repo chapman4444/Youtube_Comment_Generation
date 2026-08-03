@@ -140,6 +140,8 @@ def handle(
         variations=command.variations,
         dials=dict(command.dials),
         maximum_characters=command.packet_characters,
+        reply_threads=command.max_reply_threads,
+        replies_per_thread=command.max_replies_per_thread,
         explicit_length=command.explicit_length,
         allow_no_transcript=command.allow_no_transcript,
     )
@@ -189,6 +191,8 @@ def handle(
         "allocation": {
             "comment_body": packet.allocation.comment_body,
             "reply_body": packet.allocation.reply_body,
+            "reply_threads": packet.allocation.reply_threads,
+            "replies_per_thread": packet.allocation.replies_per_thread,
             "transcript": packet.allocation.transcript,
             "transcript_reduced": packet.allocation.transcript_reduced,
         },

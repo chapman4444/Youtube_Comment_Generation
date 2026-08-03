@@ -319,6 +319,45 @@ def test_changed_options_reuse_the_same_ranked_evidence(
     assert validate_run(changed_run).ok
 
 
+def test_rebuild_preserves_the_source_reply_packet_limits(
+    tmp_path, monkeypatch,
+):
+    source = source_run(tmp_path)
+    record_path = source / "run.json"
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    record["allocation"]["reply_threads"] = 7
+    record["allocation"]["replies_per_thread"] = 17
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    refresh_completion_marker(source)
+    captured = {}
+    real_fit = packet_builder.fit_packet_sections
+
+    def capture(relevance, recent, evidence, options, **templates):
+        captured["reply_threads"] = options.reply_threads
+        captured["replies_per_thread"] = options.replies_per_thread
+        return real_fit(
+            relevance,
+            recent,
+            evidence,
+            options,
+            **templates,
+        )
+
+    monkeypatch.setattr(packet_builder, "fit_packet_sections", capture)
+
+    code, rebuilt = rebuild(tmp_path, source)
+
+    assert code == 0
+    assert captured == {
+        "reply_threads": 7,
+        "replies_per_thread": 17,
+    }
+    rebuilt_record = json.loads(
+        (rebuilt / "run.json").read_text(encoding="utf-8")
+    )
+    assert rebuilt_record["allocation"]["replies_per_thread"] == 17
+
+
 def test_legacy_evidence_is_refused_instead_of_reordered(tmp_path):
     source = source_run(tmp_path)
     evidence_path = source / "evidence.json"
