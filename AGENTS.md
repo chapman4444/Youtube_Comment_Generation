@@ -75,15 +75,13 @@ Line length 88. Ruff's `select` is deliberately narrow (`E9,F63,F7,F82`).
 - **`.bat` files must be CRLF.** `.gitattributes` declares
   `*.bat text eol=crlf`. An LF `.bat` makes `cmd.exe` misparse multi-line
   `if/else` blocks — it executes stray characters as commands.
-- **This particular checkout may need a command-scoped Git trust setting.**
-  On the original development machine, `.git` is owned by
-  `ALIEN\CodexSandboxOffline` while the interactive user is `ALIEN\Ryan`, so
-  bare Git refuses the checkout. This is machine-local, not a property of the
-  repository or a normal fresh clone. Use
-  `git -c safe.directory=C:/__PROJECTS/Youtube_Comment_Generation ...` here;
-  do not change global Git configuration or filesystem ownership without the
-  operator's approval. When `gh` cannot infer the repository for the same
-  reason, pass `--repo`, `--base`, and `--head` explicitly.
+- **Do not hide a Git ownership problem with a global trust exception.**
+  A normal checkout works with bare Git. If Git reports dubious ownership,
+  confirm the working tree is clean and synchronized, then repair or replace
+  that checkout with the operator's approval. A command-scoped
+  `-c safe.directory=<exact checkout>` is acceptable for diagnosis and
+  recovery; `safe.directory=*` and unrequested global configuration changes
+  are not.
 - **The test harness blocks `subprocess`.** `tests/conftest.py` refuses
   desktop launches by guarding OS calls, so a tool function that shells out
   cannot be exercised from the suite.
@@ -97,6 +95,29 @@ Line length 88. Ruff's `select` is deliberately narrow (`E9,F63,F7,F82`).
 - **Any new top-level file becomes a release input immediately.** An
   untracked file at the repo root will be reported as `unmanifested` and
   fail a release recording. Commit it or keep it out of the tree.
+
+## Verification tiers - do not turn every edit into a release
+
+Use the smallest tier that proves the change. Do not run the release recorder
+or rebuild the review ZIP merely because a tracked file changed.
+
+1. **Documentation-only change:** inspect the diff, run the privacy audit, and
+   run only the documentation, launcher, or contract tests relevant to the
+   edited file.
+2. **Source or test change:** run focused tests while editing, then run Ruff,
+   the privacy audit, and one complete local test suite before pushing.
+3. **Release or external-review snapshot:** only when the operator explicitly
+   asks for a release, review ZIP, or recorded release evidence, run the
+   archive procedure below and its identity-bound gates.
+
+GitHub Actions owns the cross-version Python matrix, transcript-provider
+imports, two-run determinism, and clean-wheel installation for ordinary
+pushes. Let those jobs run in parallel on GitHub instead of reproducing the
+release matrix locally after every small change.
+
+An older review ZIP may remain on disk after ordinary development. Treat it as
+a historical snapshot and never claim it represents the current commit. Build
+a new one only under tier 3.
 
 ## The release archive — two-phase, and easy to get wrong
 

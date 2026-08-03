@@ -328,6 +328,14 @@ GitHub Actions runs the privacy audit, failure-class lint, test suite,
 transcript-provider imports, two-run determinism gate, and clean-wheel install
 on Windows with Python 3.10, 3.11, and 3.12.
 
+For ordinary development, use focused tests while editing and one complete
+local test run before pushing a source change. Documentation-only edits need
+only the relevant documentation or contract tests plus the privacy audit.
+The cross-version matrix, determinism gate, and clean-wheel check run in
+parallel on GitHub. The release recorder and review ZIP are reserved for an
+explicit release or external-review snapshot; they are not an after-every-edit
+development loop.
+
 Dependency updates are intentional rather than “newest available” installs.
 See `docs/architecture/09_DEPENDENCY_CONSTRAINTS.md` for the clean-environment
 update and verification procedure.
