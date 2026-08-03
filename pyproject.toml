@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,8 @@ name = "llm-youtube-comment-generation"
 version = "0.1.0"
 description = "YouTube comment and reply packet builder"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10,<3.13"
 # requests arrives in Phase 3 with the YouTube adapter. The domain and ports
 # layers still import nothing outside the standard library, and the

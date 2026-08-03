@@ -402,3 +402,7 @@ OAuth write scope, or automatic model invocation. All YouTube-controlled text
 is treated as untrusted evidence inside explicit packet boundaries. The
 operator remains responsible for checking every draft, deciding whether it
 should be posted, and manually posting the final text.
+
+## License
+
+This project is available under the [MIT License](LICENSE).
