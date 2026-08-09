@@ -987,7 +987,18 @@ def test_spare_budget_expands_relevant_and_recent_coverage(templates):
 
 
 def test_growth_stops_before_it_would_break_the_budget_floor(templates):
-    comments = bulk_comments(200)
+    """The bodies are long on purpose: growth has to be stopped by evidence
+    that genuinely does not fit.
+
+    This fixture used to be 200 forty-character comments, which stopped growth
+    only because the allocator billed every one of them at the full body cap.
+    Once allocation measured the bodies instead, all 200 fitted this budget
+    with room to spare and the assertion below was pinning the defect rather
+    than the floor. The counts are unchanged; only the evidence is now large
+    enough to reach them honestly.
+    """
+
+    comments = bulk_comments(200, long_bodies=200)
 
     selection = fitted(
         comments,

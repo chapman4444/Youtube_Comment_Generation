@@ -606,18 +606,47 @@ def allocate(
     reply_threads = min(caps.reply_threads, len(selection.threads))
     replies_per_thread = caps.replies_per_thread
 
+    # Measured once, from the same text render_comment will truncate. Charging
+    # every item the body cap instead is what made a 280,000 budget behave as
+    # though it were short: 165 comments measuring 9,570 characters in total
+    # were billed at 1,600 each, the estimate came to twice the budget, and the
+    # allocator cut bodies to their floor and the transcript to its floor
+    # against a shortage that did not exist. Cap-based billing also made the
+    # result insensitive to its own input -- evidence a hundred times larger
+    # produced byte-identical allocations.
+    comment_lengths = tuple(
+        len(neutralize(comment.get("text", "")))
+        for group in (
+            selection.most_liked,
+            selection.most_replied,
+            selection.relevant,
+            selection.recent,
+        )
+        for comment in group
+    )
+    thread_reply_lengths = tuple(
+        tuple(len(neutralize(reply.get("text", ""))) for reply in replies)
+        for _, replies in selection.threads
+    )
+
     def rendered_reply_count() -> int:
         return sum(
             min(len(replies), replies_per_thread)
-            for _, replies in selection.threads[:reply_threads]
+            for replies in thread_reply_lengths[:reply_threads]
         )
 
     def comment_cost(body: int) -> int:
-        return rendered_comments * (body + COMMENT_RENDER_OVERHEAD)
+        measured = sum(min(length, body) for length in comment_lengths)
+        return measured + rendered_comments * COMMENT_RENDER_OVERHEAD
 
     def reply_cost(body: int) -> int:
-        return rendered_reply_count() * (
-            body + COMMENT_RENDER_OVERHEAD // 2
+        measured = sum(
+            min(length, body)
+            for replies in thread_reply_lengths[:reply_threads]
+            for length in replies[:replies_per_thread]
+        )
+        return measured + rendered_reply_count() * (
+            COMMENT_RENDER_OVERHEAD // 2
         )
 
     # First establish a packet that fits the protected floors. Then spend
