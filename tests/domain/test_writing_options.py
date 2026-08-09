@@ -194,6 +194,33 @@ def test_a_changed_dial_states_itself_once():
     assert directives.count("Write in the first person") == 1
 
 
+def test_the_humor_replacement_notice_stays_after_the_other_directives():
+    """The comment workflow appends its humor=none line after the dial loop
+    rather than emitting it in DIALS order, where humor sits before
+    aggression. Emitting it in place reorders the block for every humor=none
+    build, which silently rewrites text the model reads.
+
+    This is the comment path, reached through ``resolve_prompt_spec``. The
+    reply workflow's ``output_directives`` is a separate block with no
+    replacement wording, and asserting this there proves nothing.
+    """
+
+    spec = resolve_prompt_spec(
+        (),
+        {"humor": "none", "person": "as_me", "aggression": "uncapped"},
+    )
+    lines = [
+        line for line in spec.output_directives.splitlines()
+        if line.startswith("- [")
+    ]
+
+    assert [line.split("]")[0] + "]" for line in lines] == [
+        "- [person=as_me]",
+        "- [aggression=uncapped]",
+        "- [humor=none]",
+    ]
+
+
 def test_every_dial_choice_has_compliance_semantics():
     for name, dial in DIALS.items():
         for value in dial.choices:

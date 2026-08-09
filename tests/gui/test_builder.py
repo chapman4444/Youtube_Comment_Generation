@@ -357,6 +357,67 @@ def test_comment_build_returns_the_original_canonical_run_context(video):
     assert result.packet_path.endswith("packet.md")
 
 
+def test_the_template_logic_audit_context_is_carried_from_the_build():
+    """The session completes the audit artifact long after the build, and by
+    then the window's options may have moved on. Carrying the context the
+    build produced is what keeps the finished file describing the packet that
+    was actually sent, rather than whatever is selected when the answer
+    arrives."""
+
+    context = object()
+
+    def handle(command, **kwargs):
+        class Packet:
+            text = "packet"
+            variations = ("short_hook",)
+
+            def __len__(self):
+                return len(self.text)
+
+        return OperationResult(
+            value={
+                "packet": Packet(),
+                "run": {"video_id": command.video_id},
+                "template_logic_audit_context": context,
+            },
+            artifacts=["packet.md"],
+        )
+
+    import llm_youtube_comment_generation.interfaces.gui.builder as module
+
+    original = module.build_comment_packet.handle
+    module.build_comment_packet.handle = handle
+    try:
+        result = build_comment(
+            PacketOptionsModel(video="gC-J7zwYMAM"),
+            BackgroundJob(),
+            ports_factory=lambda events: {
+                "youtube": None, "transcripts": None
+            },
+            templates={
+                "comment_workflow.md": "x",
+                "comment_final_check.md": "y",
+            },
+            artifacts_for=lambda video_id, directory: FakeStore(),
+        )
+    finally:
+        module.build_comment_packet.handle = original
+
+    assert result.template_logic_audit_context is context
+
+
+def test_an_ordinary_run_carries_no_audit_context_to_complete():
+    run = CommentRun(
+        packet=SimpleNamespace(text="ordinary generated packet"),
+        video={},
+        artifacts=None,
+        packet_path="",
+        run_record={},
+    )
+
+    assert run.template_logic_audit_context is None
+
+
 def test_the_window_never_names_a_template_or_a_run_directory():
     """Filenames are the artifact store's business. A window that knew one
     would be a second place the output layout is defined, and

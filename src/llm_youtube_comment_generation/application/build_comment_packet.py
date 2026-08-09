@@ -34,7 +34,13 @@ from ..domain.writing_options import (
 from ..ports.events import EventKind, ProgressEvent
 from .commands import InspectVideoCommand
 from .inspect_video import handle as inspect_handle
-from .debug_build import DEBUG_PACKET_FILENAME, render_debug_packet
+from .debug_build import (
+    DEBUG_PACKET_FILENAME,
+    TEMPLATE_LOGIC_AUDIT_FILENAME,
+    build_template_logic_audit_context,
+    render_debug_packet,
+    render_template_logic_audit,
+)
 
 PACKET_FILENAME = "packet.md"
 PACKET_SUPPORTING_ARTIFACTS = (
@@ -215,6 +221,7 @@ def handle(
     }
 
     debug_packet = ""
+    template_logic_audit_context = None
     if command.debug:
         run_record["debug_build"] = True
         debug_packet = render_debug_packet(
@@ -222,10 +229,24 @@ def handle(
             settings=command.debug_settings,
             run=run_record,
         )
+        template_logic_audit_context = build_template_logic_audit_context(
+            settings=command.debug_settings,
+            run=run_record,
+            normal_packet=packet.text,
+            debug_packet=debug_packet,
+            selected_variations=command.variations,
+            dials=command.dials,
+            final_check_template=templates["comment_final_check.md"],
+            explicit_length=command.explicit_length,
+        )
 
     artifacts.stage(PACKET_FILENAME, packet.text)
     if debug_packet:
         artifacts.stage(DEBUG_PACKET_FILENAME, debug_packet)
+        artifacts.stage(
+            TEMPLATE_LOGIC_AUDIT_FILENAME,
+            render_template_logic_audit(template_logic_audit_context),
+        )
     artifacts.stage("transcript_timestamped.txt", timestamped or "")
     artifacts.stage("evidence.json", json.dumps({
         "schema_version": 2,
@@ -253,6 +274,7 @@ def handle(
         "packet": packet,
         "debug_packet": debug_packet,
         "debug_settings": dict(command.debug_settings),
+        "template_logic_audit_context": template_logic_audit_context,
         "run": run_record,
         "transcript": transcript,
         "evidence": {

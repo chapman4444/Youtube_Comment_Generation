@@ -26,6 +26,7 @@ from typing import Any, Callable
 
 from ...application import build_comment_packet
 from ...application.build_comment_packet import BuildCommentPacketCommand
+from ...application.debug_build import TemplateLogicAuditContext
 from ...domain.errors import OperationCancelled
 from ...domain.section_profile import parse_length
 from ...domain.statuses import transcript_provenance
@@ -49,6 +50,11 @@ class CommentRun:
     evidence: dict[str, Any] | None = None
     debug_packet: str = ""
     debug_settings: dict[str, Any] | None = None
+    # Carried from the build rather than rebuilt from widgets later: the
+    # session completes the audit artifact after a response arrives, and the
+    # options the operator sees by then may no longer be the ones that
+    # produced this packet.
+    template_logic_audit_context: TemplateLogicAuditContext | None = None
 
     @property
     def text(self) -> str:
@@ -300,6 +306,9 @@ def build_comment(
         evidence=dict(result.value.get("evidence") or {}),
         debug_packet=str(result.value.get("debug_packet") or ""),
         debug_settings=dict(result.value.get("debug_settings") or {}),
+        template_logic_audit_context=result.value.get(
+            "template_logic_audit_context"
+        ),
     )
 
 

@@ -972,8 +972,29 @@ def _resolved_directives(
 ) -> str:
     """Non-structural option rules; structural choices render elsewhere."""
 
+    lines = list(resolved_dial_directives(selections).values())
+    if not lines:
+        return ""
+    return "\n".join(["", "## Output options", ""] + lines)
+
+
+def resolved_dial_directives(
+    selections: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Exact non-structural directive line emitted for each active dial.
+
+    Debug provenance needs the text the packet really emitted, particularly
+    for ``humor=none``: its stored choice text predates register replacement
+    and is not the line the resolved prompt uses. Keeping this mapping beside
+    ``_resolved_directives`` means diagnostics cannot grow a second version of
+    the prompt semantics merely to explain the first one.
+
+    Structural dials are absent because their exact emitted text lives in the
+    corresponding fields of :class:`ResolvedPromptSpec`.
+    """
+
     structural = {"critique", "final", "grounding", "ending"}
-    lines = []
+    directives: dict[str, str] = {}
     for name in DIALS:
         value = dial_choice(name, selections)
         text = DIALS[name].choices[value]
@@ -982,15 +1003,17 @@ def _resolved_directives(
         if text and name not in structural and not (
             name == "humor" and value == "none"
         ):
-            lines.append(f"- [{name}={value}] {text}")
+            directives[name] = f"- [{name}={value}] {text}"
     if dial_choice("humor", selections) == "none":
-        lines.append(
+        # Inserted after the loop, not in DIALS order. The replacement notice
+        # trails the options it qualifies, and the packet's bytes depend on
+        # that position: humor sits before aggression in DIALS, so keying it
+        # during the loop silently reorders every humor=none packet.
+        directives["humor"] = (
             "- [humor=none] Use no jokes, sarcasm, wordplay, or comic "
             "understatement. Any humorous register has already been replaced."
         )
-    if not lines:
-        return ""
-    return "\n".join(["", "## Output options", ""] + lines)
+    return directives
 
 
 def resolve_prompt_spec(

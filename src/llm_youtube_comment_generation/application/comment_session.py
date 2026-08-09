@@ -44,8 +44,11 @@ from .debug_build import (
     DEBUG_BUNDLE_FILENAME,
     DEBUG_REJECTED_RESPONSE_FILENAME,
     DEBUG_RESPONSE_FILENAME,
+    TEMPLATE_LOGIC_AUDIT_FILENAME,
+    TemplateLogicAuditContext,
     debug_report_problem,
     render_debug_bundle,
+    render_template_logic_audit,
 )
 
 DRAFT_FILENAME = "comment_drafts.md"
@@ -80,6 +83,7 @@ class CommentSession:
     debug_build: bool = False
     debug_settings: dict[str, Any] = field(default_factory=dict)
     run_record: dict[str, Any] = field(default_factory=dict)
+    template_logic_audit_context: TemplateLogicAuditContext | None = None
 
     state: WorkflowState = field(default_factory=WorkflowState)
     accepted: list[AcceptedComment] = field(default_factory=list)
@@ -274,6 +278,10 @@ class CommentSession:
         if self.debug_build and self.debug_response:
             self.artifacts.stage(DEBUG_RESPONSE_FILENAME, self.debug_response)
             self.artifacts.stage(DEBUG_BUNDLE_FILENAME, self.debug_bundle())
+            self._stage_template_logic_audit(
+                status="accepted",
+                draft=self.accepted[-1].draft,
+            )
         self.artifacts.commit()
 
     def _save_debug_rejection(self, reason: str) -> None:
@@ -284,7 +292,33 @@ class CommentSession:
         self.debug_rejection = reason
         self.artifacts.stage(DEBUG_REJECTED_RESPONSE_FILENAME, self.debug_response)
         self.artifacts.stage(DEBUG_BUNDLE_FILENAME, self.debug_bundle())
+        self._stage_template_logic_audit(
+            status="rejected",
+            rejection_reason=reason,
+        )
         self.artifacts.commit()
+
+    def _stage_template_logic_audit(
+        self,
+        *,
+        status: str,
+        rejection_reason: str = "",
+        draft: str = "",
+    ) -> None:
+        """Complete the build-time audit case with the submitted response."""
+
+        if self.template_logic_audit_context is None:
+            return
+        self.artifacts.stage(
+            TEMPLATE_LOGIC_AUDIT_FILENAME,
+            render_template_logic_audit(
+                self.template_logic_audit_context,
+                response_text=self.debug_response,
+                response_status=status,
+                rejection_reason=rejection_reason,
+                draft=draft,
+            ),
+        )
 
     def _emit(self, kind: EventKind, step: str, message: str) -> None:
         if self.events is not None:

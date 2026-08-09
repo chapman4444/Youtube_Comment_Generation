@@ -1364,6 +1364,9 @@ def run_packet_window(
             debug_build=bool(getattr(run, "debug_packet", "")),
             debug_settings=dict(getattr(run, "debug_settings", {}) or {}),
             run_record=dict(getattr(run, "run_record", {}) or {}),
+            template_logic_audit_context=getattr(
+                run, "template_logic_audit_context", None
+            ),
         )
 
     window = launch(
