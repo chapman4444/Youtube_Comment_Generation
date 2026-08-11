@@ -189,8 +189,14 @@ BUILT_IN_PRESETS: tuple[WritingPreset, ...] = (
     WritingPreset(
         name="Dry and sharp",
         description="Compact deadpan, sarcasm, and blunt correction.",
+        # Four tones and nothing else was the whole problem: every register
+        # said how to sound and none said what analytical move to make, so
+        # four sharply worded restatements of the video's own point satisfied
+        # the packet. The description already promised correction; now the
+        # selection delivers it, and numbers_only supplies an evidence
+        # strategy whose spec asks for what the figures imply.
         comment_variations=(
-            "dry_joke", "dry_observation", "sardonic", "deadpan",
+            "deadpan", "sardonic", "correction", "numbers_only",
         ),
         reply_variations=(
             "dry_one_liner", "blunt_correction", "sardonic", "deadpan",

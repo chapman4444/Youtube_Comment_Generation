@@ -201,8 +201,14 @@ VARIATION_LIBRARY: dict[str, VariationDefinition] = {
     ),
     "deadpan": VariationDefinition(
         "Deadpan",
-        "State the damning fact and stop. No comment on it, no adjective "
-        "doing the work the fact already does.",
+        # "State the damning fact and stop" pointed this register at a fact
+        # while the workflow required a conclusion the video had not stated,
+        # and the two cannot both be obeyed. Every model given it either
+        # restated the video flatly or added a second sentence and broke the
+        # "and stop" rule. Tone controls delivery; it does not get to choose
+        # the substance.
+        "State the conclusion flatly and stop. Give only the evidence needed "
+        "to make it land, and no adjective doing work the point already does.",
         dimension=ApproachDimension.TONE,
     ),
     "blunt_correction": VariationDefinition(
@@ -1326,9 +1332,19 @@ def render_final_check(
             f"{'them' if len(waived) > 1 else 'it'} for that."
         )
     else:
+        # The strong test belongs here, not only in the waived branch. This
+        # said "none is primarily a summary", which is a weaker rule than the
+        # workflow's "contribute a conclusion that is not explicitly or
+        # substantially stated". A twenty-word deadpan restatement of a fact
+        # the video states outright is not *primarily* a summary, so it passed
+        # the last check the model reads while failing the first rule it was
+        # given. The check was therefore weakest exactly when every selected
+        # register was required to add analysis, and strongest when some
+        # register was allowed to skip it.
         substance = (
-            f"none is primarily a summary, and all {total} follow the user "
-            "direction and evidence boundary,"
+            f"all {total} contribute something the video did not state "
+            "rather than restating what it did state more sharply, and "
+            "follow the user direction and evidence boundary,"
         )
         waiver = ""
     rendered = (

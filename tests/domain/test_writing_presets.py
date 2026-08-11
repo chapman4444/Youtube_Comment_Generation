@@ -5,6 +5,9 @@ from __future__ import annotations
 import pytest
 
 from llm_youtube_comment_generation.domain.errors import ConfigurationError
+from llm_youtube_comment_generation.domain.writing_options import (
+    VARIATION_LIBRARY,
+)
 from llm_youtube_comment_generation.domain.writing_presets import (
     BUILT_IN_PRESETS,
     WritingPreset,
@@ -12,6 +15,42 @@ from llm_youtube_comment_generation.domain.writing_presets import (
 from llm_youtube_comment_generation.interfaces.gui.options import (
     PacketOptionsModel,
 )
+
+
+def test_dry_and_sharp_asks_for_an_analytical_move_not_only_a_tone():
+    """It used to be four tone registers and nothing else.
+
+    Tone says how to sound; it never says what analytical move to make. Every
+    one of the four told the model to state a fact -- "the damning fact", "one
+    concrete inconsistency", "the facts do the damage" -- so four sharply
+    worded restatements of the video's own point satisfied the packet, which is
+    exactly what the operator kept getting back. A preset has to select at
+    least one register whose spec asks for something the video did not say.
+    """
+
+    preset = next(p for p in BUILT_IN_PRESETS if p.name == "Dry and sharp")
+    dimensions = {
+        VARIATION_LIBRARY[key].dimension for key in preset.comment_variations
+    }
+
+    assert len(dimensions) > 1
+    assert not all(
+        VARIATION_LIBRARY[key].dimension.value == "tone"
+        for key in preset.comment_variations
+    )
+
+
+def test_no_built_in_preset_lets_every_register_skip_the_analysis_test():
+    """A preset built entirely from waivers would ask for nothing original at
+    all, and the final check would exempt all of it by name."""
+
+    for preset in BUILT_IN_PRESETS:
+        keys = preset.comment_variations
+        if not keys:
+            continue
+        assert not all(
+            VARIATION_LIBRARY[key].waives_analysis for key in keys
+        ), f"{preset.name} waives analysis in every register"
 
 
 def test_built_in_presets_have_unique_valid_names():
