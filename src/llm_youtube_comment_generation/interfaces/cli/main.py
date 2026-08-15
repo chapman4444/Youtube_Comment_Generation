@@ -1855,11 +1855,14 @@ def _scan_for_window(*, video, handle, max_comments, youtube, events, clock,
 def _guided_session_for(
     *, found, waiting, transcript, templates, artifacts, events,
     registers, dials, packet_characters, history=None, prompt_version="",
+    debug_build=False, debug_settings=None,
 ):
     """A guided session over the people a window's scan just found."""
 
     scan_retrieval = getattr(found, "retrieval", None)
     return GuidedSession(
+        debug_build=bool(debug_build),
+        debug_settings=dict(debug_settings or {}),
         targets=list(waiting),
         threads={t.comment_id: t for t in found.threads},
         owner_channel_id=found.owner_channel_id,

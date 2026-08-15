@@ -327,3 +327,19 @@ def test_guided_limit_bounds_the_session_queue():
     )
 
     assert len(result.session.targets) == 2
+
+
+def test_the_debug_checkbox_reaches_the_reply_session():
+    """Found live 2026-08-15: Debug build checked, Reply mode, empty Debug
+    tab. The comment path carried the flag from the start; this path
+    shipped the checkbox live and never passed it."""
+
+    result = run(model=options(debug_build=True))
+
+    assert result.session.kwargs["debug_build"] is True
+    settings = result.session.kwargs["debug_settings"]
+    assert settings["mode"] == "reply"
+    assert "retrieval_limits" in settings
+
+    unchecked = run(model=options(debug_build=False))
+    assert unchecked.session.kwargs["debug_build"] is False

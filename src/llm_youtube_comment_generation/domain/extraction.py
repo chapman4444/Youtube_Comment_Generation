@@ -15,6 +15,25 @@ from .targeting import strip_invisible
 from .video import watch_url
 
 
+def triage_skips_everyone(text: str) -> bool:
+    """Whether this is a real triage answer that picked nobody.
+
+    "SKIP: @TotalAFOL" with no ranked lines is not a failed paste — it is
+    the model saying nobody here needs a reply, which is a legitimate
+    verdict the operator hit live on 2026-08-15. Telling him "No handles
+    were found, paste the triage answer" was wrong twice: handles were
+    found, and it was the triage answer. The callers use this to say what
+    actually happened and point at the work-through-everyone path instead.
+    """
+
+    if parse_triage_selection(text):
+        return False
+    return any(
+        strip_invisible(line).strip().upper().startswith("SKIP:")
+        for line in str(text or "").splitlines()
+    )
+
+
 def parse_triage_selection(text: str) -> list[str]:
     """Read handles back out of an LLM's triage answer.
 

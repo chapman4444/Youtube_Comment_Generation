@@ -72,10 +72,23 @@ def named_selection(candidates, named: str = ""):
     if not text:
         return list(candidates)
 
-    from ..domain.extraction import parse_triage_selection
+    from ..domain.extraction import (
+        parse_triage_selection,
+        triage_skips_everyone,
+    )
     wanted = {handle.lstrip("@").casefold()
               for handle in parse_triage_selection(text)}
     if not wanted:
+        if triage_skips_everyone(text):
+            # A real verdict, not a bad paste: the model picked nobody.
+            # The old message accused the operator of pasting the wrong
+            # thing, which stranded him at triage on a live run.
+            raise ConfigurationError(
+                "The triage answer picked nobody as worth answering — "
+                "every reply is on its SKIP line. To answer people "
+                "anyway, continue without triage, or name them directly "
+                "like @alice,@bob."
+            )
         raise ConfigurationError(
             f"No handles were found in {text!r}. Give a comma-separated "
             "list like @alice,@bob, or paste the triage answer."
@@ -220,6 +233,14 @@ class GuidedSession:
     packet_characters: int = 280_000
     prompt_version: str = ""
     run_id: str = ""
+    # Debug is per-session, exactly like CommentSession. The window checks
+    # these on the session, and until 2026-08-15 they simply did not exist
+    # here: the Debug build checkbox was live in reply mode and did nothing,
+    # which is the shipped-disabled-control rule broken in its subtlest form.
+    debug_build: bool = False
+    debug_settings: dict[str, Any] = field(default_factory=dict)
+    debug_response: str = ""
+    debug_rejection: str = ""
 
     artifacts: Any = None
     history: Any = None
@@ -367,8 +388,15 @@ class GuidedSession:
         result = OperationResult()
         self.state.apply(Intent.SUBMIT_PERSON_ANSWER)
 
+        if self.debug_build:
+            # The exact paste, kept before any verdict on it — a rejected
+            # response is the one a bug report needs most.
+            self.debug_response = text
+            self.debug_rejection = ""
+
         if looks_like_packet_text(text, self.current_packet):
             reject_answer(self.state, "that is the packet, not an answer to it")
+            self.debug_rejection = "that is the packet, not an answer to it"
             result.status = OperationStatus.REFUSED
             result.value = self.state
             self._emit(EventKind.WARNING, "thread",
@@ -382,6 +410,7 @@ class GuidedSession:
             if len(problems) > 3:
                 shown += f"; and {len(problems) - 3} more"
             reject_answer(self.state, shown)
+            self.debug_rejection = shown
             result.status = OperationStatus.REFUSED
             result.value = self.state
             self._emit(EventKind.WARNING, "thread",
@@ -473,6 +502,29 @@ class GuidedSession:
         return added
 
     # -- internals -------------------------------------------------------
+
+    def debug_bundle(self) -> str:
+        """The unredacted diagnostic record for this run, if requested.
+
+        Same renderer, same section order as CommentSession's bundle, so
+        one bug-report format covers both modes. The packet shown is the
+        current thread's; the response is the exact last paste, kept even
+        when it was refused, because the refused one is the paste a bug
+        report exists to explain.
+        """
+
+        if not self.debug_build:
+            return ""
+        from .debug_build import render_debug_bundle
+
+        return render_debug_bundle(
+            settings=self.debug_settings,
+            run=json.loads(self._run_record()),
+            packet_text=self.current_packet,
+            response_text=self.debug_response,
+            draft=self.accepted[-1].draft if self.accepted else "",
+            rejection_reason=self.debug_rejection,
+        )
 
     def _save_review(self) -> None:
         if self.artifacts is None:

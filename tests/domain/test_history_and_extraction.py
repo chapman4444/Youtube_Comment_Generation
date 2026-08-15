@@ -7,6 +7,7 @@ from llm_youtube_comment_generation.domain.extraction import (
     extract_hardened_final,
     looks_like_packet_text,
     parse_triage_selection,
+    triage_skips_everyone,
 )
 from llm_youtube_comment_generation.domain.history import (
     normalise_for_match,
@@ -310,6 +311,42 @@ def test_real_triage_answer_survives_a_wrapped_skip_list():
     )
 
     assert parse_triage_selection(answer) == ["@alice"]
+
+
+def test_an_all_skip_answer_is_a_verdict_not_a_failed_paste():
+    """The answer the operator's live run actually drew on 2026-08-15:
+    no ranked lines, everyone on the SKIP line. It parses to nobody by
+    design (SKIP must never leak into the targets), but it has to be
+    distinguishable from a wrong paste so the caller can say what really
+    happened instead of "No handles were found"."""
+
+    verbatim = "SKIP: @TotalAFOL, @TotalAFOL"
+
+    assert parse_triage_selection(verbatim) == []
+    assert triage_skips_everyone(verbatim) is True
+
+
+def test_a_ranked_answer_never_reads_as_all_skip():
+    assert triage_skips_everyone(
+        "@alice | 1 | worth answering\nSKIP: @bob"
+    ) is False
+
+
+def test_a_wrong_paste_without_a_skip_line_is_not_a_verdict():
+    """Garbage stays garbage: only an explicit SKIP line proves the text
+    is a triage answer at all."""
+
+    assert triage_skips_everyone("here is my essay about the video") is False
+    assert triage_skips_everyone("") is False
+
+
+def test_a_wrapped_all_skip_answer_still_reads_as_a_verdict():
+    answer = (
+        "SKIP: @carol @dave because they are\n"
+        "@eve @frank not worth answering\n"
+    )
+
+    assert triage_skips_everyone(answer) is True
 
 
 def test_the_ranked_form_wins_outright_when_present():

@@ -264,6 +264,32 @@ def test_reply_to_naming_nobody_present_refuses():
         named_selection(people, "just prose")
 
 
+def test_an_all_skip_triage_answer_refuses_with_the_truth():
+    """The live strand of 2026-08-15: GPT answered "SKIP: @TotalAFOL,
+    @TotalAFOL" and the refusal said "No handles were found... paste the
+    triage answer" — accusing the operator of a bad paste when the model
+    had delivered a verdict. The refusal must say what happened and name
+    a way forward."""
+
+    from llm_youtube_comment_generation.application.guided_session import (
+        named_selection,
+    )
+    from llm_youtube_comment_generation.domain.candidates import (
+        ReplyCandidate,
+    )
+    from llm_youtube_comment_generation.domain.errors import (
+        ConfigurationError,
+    )
+
+    people = [ReplyCandidate(author="@TotalAFOL", thread_id="t1")]
+
+    with pytest.raises(ConfigurationError, match="picked nobody") as caught:
+        named_selection(people, "SKIP: @TotalAFOL, @TotalAFOL")
+
+    assert "No handles were found" not in str(caught.value)
+    assert "without triage" in str(caught.value)
+
+
 def test_top_repliers_keeps_the_most_liked_in_scan_order():
     """The legacy --top-repliers: rank by what the room liked, then hand
     the queue back in its own order rather than re-ranking it."""
@@ -749,3 +775,67 @@ def test_the_packet_reaches_the_clipboard(session):
 
     assert session.clipboard.read() == session.current_packet
     assert len(session.clipboard.writes) == 1
+
+
+# --------------------------------------------------------------------------
+# Debug build
+# --------------------------------------------------------------------------
+
+
+def test_a_debug_reply_session_renders_a_complete_bundle():
+    """The Debug build checkbox in reply mode. The window always asked the
+    session for these fields and until 2026-08-15 they did not exist, so
+    the checkbox was live and did nothing — the shipped-disabled-control
+    rule broken quietly."""
+
+    session = _session([
+        _one_thread("t1", "@alice", "actually you are wrong", likes=9),
+    ])
+    session.debug_build = True
+    session.debug_settings = {"mode": "reply", "dials": {}}
+
+    assert session.debug_bundle() != ""    # settings render before any paste
+
+    session.start()
+    session.next_person()
+    session.copy_packet()
+    session.submit(sheet_for(session))
+
+    bundle = session.debug_bundle()
+    assert "Safe build settings" in bundle
+    assert '"mode": "reply"' in bundle
+    assert "# Copy/Paste Replies" in bundle          # the exact response
+    assert "reply to @alice" in bundle               # the saved draft
+    assert "Accepted." in bundle
+
+
+def test_a_refused_debug_paste_is_kept_with_its_reason():
+    """The refused response is the one a bug report needs most."""
+
+    session = _session([
+        _one_thread("t1", "@alice", "actually you are wrong"),
+    ])
+    session.debug_build = True
+    session.start()
+    session.next_person()
+    session.copy_packet()
+
+    result = session.submit("not a sheet at all")
+
+    assert result.status is OperationStatus.REFUSED
+    bundle = session.debug_bundle()
+    assert "not a sheet at all" in bundle
+    assert "Accepted." not in bundle
+
+
+def test_without_the_checkbox_the_bundle_is_empty_and_nothing_is_kept():
+    session = _session([
+        _one_thread("t1", "@alice", "actually you are wrong"),
+    ])
+    session.start()
+    session.next_person()
+    session.copy_packet()
+    session.submit(sheet_for(session))
+
+    assert session.debug_bundle() == ""
+    assert session.debug_response == ""

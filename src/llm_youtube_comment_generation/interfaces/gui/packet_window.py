@@ -2656,6 +2656,21 @@ class PacketWindow:
         from ...domain.errors import ConfigurationError
 
         answer_text = typed or offer.raw
+
+        # An answer that skips everyone is a verdict, not a failed paste.
+        # It hit live: "SKIP: @TotalAFOL" with no ranked lines drew "No
+        # handles were found... paste the triage answer", which reads as
+        # "you pasted the wrong thing" and strands the run at triage.
+        from ...domain.extraction import triage_skips_everyone
+        if triage_skips_everyone(answer_text):
+            self.say(
+                "The triage answer skips everyone — the model thinks "
+                "nobody here needs a reply. Press \"Skip this person\" to "
+                "work through everyone anyway, or Start over to scan "
+                "another video."
+            )
+            return
+
         try:
             named = named_selection(session.targets, answer_text)
             kept = named_thread_selection(session.targets, answer_text)
@@ -2707,6 +2722,12 @@ class PacketWindow:
             return
         self.last_packet = session.current_packet
         self._show_what_they_said(getattr(session, "current_targets", ()))
+        # The bundle-so-far, the moment this thread's packet exists. The
+        # comment path shows its debug packet right after the build; reply
+        # mode showed nothing until a paste came back, which on a live run
+        # read as the checkbox doing nothing at all.
+        if getattr(session, "debug_build", False):
+            self._set_debug_view(session.debug_bundle(), complete=False)
 
     def _copy_current_packet(self, *, auto: bool = False) -> bool:
         """Copy the packet in front of you.

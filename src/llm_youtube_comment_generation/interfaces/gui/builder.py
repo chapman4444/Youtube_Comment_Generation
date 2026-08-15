@@ -411,6 +411,26 @@ def prepare_replies(
         registers=options.registers_for("reply"),
         dials=options.dial_values("reply"),
         packet_characters=options.packet_characters,
+        # The Debug build checkbox is one control across both modes. The
+        # comment path carried it from the start; the reply path shipped
+        # the checkbox live and never passed it, so the Debug tab stayed
+        # empty however it was set (found live 2026-08-15).
+        debug_build=options.debug_build,
+        debug_settings={
+            "mode": "reply",
+            "selected_approaches": list(options.registers_for("reply")),
+            "dials": options.dial_values("reply"),
+            "length": options.length,
+            "retrieval_limits": {
+                "scan_comments": options.reply_scan_comments,
+                "guided_limit": options.guided_limit,
+                "per_thread": bool(options.per_thread),
+                "top_repliers": options.top_repliers,
+            },
+            "since": options.since,
+            "include_answered": bool(options.include_answered),
+            "packet_characters": options.packet_characters,
+        },
     )
     triage = ""
     if triage_for is not None and selected:

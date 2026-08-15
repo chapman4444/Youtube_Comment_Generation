@@ -1697,3 +1697,120 @@ def test_triage_keeps_the_whole_thread_of_a_chosen_person(window):
     assert {t.author for t in window.session.targets} == {"@alice", "@bob"}
     assert "answered whole" in window.status.get() \
         or "covering 2 people" in window.status.get()
+
+
+def test_an_all_skip_triage_answer_does_not_strand_the_run(window):
+    """The live strand of 2026-08-15: an answer that skips everyone must
+    be reported as the model's verdict, with the Skip button named as the
+    way to work through everyone anyway — never as a failed paste, and
+    never by emptying the queue."""
+
+    from fakes import FakeArtifactStore, FakeClipboard, FakeEventSink
+    from llm_youtube_comment_generation.application.guided_session import (
+        GuidedSession,
+    )
+    from llm_youtube_comment_generation.domain.candidates import (
+        build_reply_candidates,
+    )
+    from llm_youtube_comment_generation.domain.threads import OwnerThread
+    from llm_youtube_comment_generation.infrastructure import prompt_resources
+
+    owner = "UC" + "o" * 22
+
+    def msg(cid, author, text, channel=None):
+        return {
+            "comment_id": cid, "author": author, "text": text,
+            "author_channel_id": channel
+            or ("UC" + author.lstrip("@").ljust(22, "z"))[:24],
+            "like_count": 0, "published_at": "2026-07-02T00:00:00Z",
+        }
+
+    replies = [msg("r1", "@alice", "my thoughts exactly")]
+    thread = OwnerThread(
+        comment=msg("mine", "@owner", "my comment", owner), replies=replies)
+    window.session = GuidedSession(
+        targets=build_reply_candidates(owner, "@owner", replies, "mine"),
+        threads={"mine": thread},
+        owner_channel_id=owner,
+        video={"video_id": "gC-J7zwYMAM", "title": "A video"},
+        templates={
+            "reply_workflow.md":
+                prompt_resources.load("reply_workflow.md").text,
+            "reply_final_check.md":
+                prompt_resources.load("reply_final_check.md").text,
+        },
+        artifacts=FakeArtifactStore(), clipboard=FakeClipboard(),
+        events=FakeEventSink(),
+    )
+    window.mode.set("reply")
+    window._mode_changed()
+    window.sequence.people = ("@alice",)
+    window.sequence.advance_to(Step.TRIAGE)
+    window.answer_input.insert("1.0", "SKIP: @alice, @alice\n")
+
+    window.take_triage()
+
+    # The queue survives, the step does not advance, and the message names
+    # the verdict and the way forward rather than blaming the paste.
+    assert [t.author for t in window.session.targets] == ["@alice"]
+    assert window.sequence.step is Step.TRIAGE
+    assert "skips everyone" in window.status.get()
+    assert "Skip this person" in window.status.get()
+    assert "No handles were found" not in window.status.get()
+
+
+def test_a_debug_reply_run_fills_the_debug_tab_when_the_packet_builds(window):
+    """The live report of 2026-08-15: Debug build checked, Reply mode, and
+    the Debug tab stayed empty. The session-side fields now exist, and the
+    tab must fill the moment a thread's packet is built — not only after a
+    paste comes back."""
+
+    from fakes import FakeArtifactStore, FakeClipboard, FakeEventSink
+    from llm_youtube_comment_generation.application.guided_session import (
+        GuidedSession,
+    )
+    from llm_youtube_comment_generation.domain.candidates import (
+        build_reply_candidates,
+    )
+    from llm_youtube_comment_generation.domain.threads import OwnerThread
+    from llm_youtube_comment_generation.infrastructure import prompt_resources
+
+    owner = "UC" + "o" * 22
+
+    def msg(cid, author, text, channel=None):
+        return {
+            "comment_id": cid, "author": author, "text": text,
+            "author_channel_id": channel
+            or ("UC" + author.lstrip("@").ljust(22, "z"))[:24],
+            "like_count": 0, "published_at": "2026-07-02T00:00:00Z",
+        }
+
+    replies = [msg("r1", "@alice", "a challenge")]
+    thread = OwnerThread(
+        comment=msg("mine", "@owner", "my comment", owner), replies=replies)
+    window.session = GuidedSession(
+        targets=build_reply_candidates(owner, "@owner", replies, "mine"),
+        threads={"mine": thread},
+        owner_channel_id=owner,
+        video={"video_id": "gC-J7zwYMAM", "title": "A video"},
+        templates={
+            "reply_workflow.md":
+                prompt_resources.load("reply_workflow.md").text,
+            "reply_final_check.md":
+                prompt_resources.load("reply_final_check.md").text,
+        },
+        artifacts=FakeArtifactStore(), clipboard=FakeClipboard(),
+        events=FakeEventSink(),
+        debug_build=True,
+        debug_settings={"mode": "reply"},
+    )
+    window.mode.set("reply")
+    window._mode_changed()
+    window.sequence.people = ("@alice",)
+    window.sequence.advance_to(Step.PEOPLE)
+
+    window._start_person()
+
+    shown = window.evidence_views["debug"].get("1.0", "end-1c")
+    assert "Safe build settings" in shown
+    assert '"mode": "reply"' in shown
