@@ -34,7 +34,7 @@ from ...application.guided_session import (
     REVIEW_FILENAME,
     GuidedSession,
     every_thread_selection,
-    named_selection,
+    named_thread_selection,
     top_replier_selection,
     whole_thread_selection,
 )
@@ -57,13 +57,14 @@ from ...domain.errors import (
     EXIT_ERROR,
     EXIT_SUCCESS,
     EXIT_VALIDATION,
+    ConfigurationError,
     OperationCancelled,
     PacketError,
     PacketTooLargeError,
     ValidationError,
 )
 from ...domain.extraction import looks_like_packet_text
-from ...domain.ids import find_video_reference
+from ...domain.ids import extract_video_id, find_video_reference
 from ...domain.reply_packet import (
     ReplyEvidence,
     build_reply_packet,
@@ -671,7 +672,12 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
         transcript_available=bool(transcript_text.strip()),
         transcript_provenance=rebuilt_transcript,
         artifact_files=build_comment_packet.PACKET_SUPPORTING_ARTIFACTS,
-        register=measure_comment_register(comments),
+        # Replies included, exactly as the live path measures it
+        # (inspect_video.py). Measuring comments alone gave the rebuild a
+        # different length band, therefore a different instruction cost and
+        # transcript allocation, on a run it claims to reproduce exactly
+        # (harsh-critic review, finding 3).
+        register=measure_comment_register(comments, replies),
         retrieval=outcome,
         stopwords=word_resources.stopwords(),
     )
@@ -707,7 +713,17 @@ def run_rebuild(arguments, configuration, stdout, clipboard) -> int:
             "comment_final_check.md").text,
     )
 
-    video_id = str(saved.get("video", {}).get("video_id") or source.name)
+    # The id came out of a file a hand can edit, and it becomes a directory
+    # name. Every other entry point runs it through the strict pattern; a
+    # traversal-shaped value here wrote a run outside the output directory
+    # (harsh-critic review, finding 13).
+    raw_id = str(saved.get("video", {}).get("video_id") or "")
+    try:
+        video_id = extract_video_id(raw_id) if raw_id else ""
+    except ConfigurationError:
+        video_id = ""
+    if not video_id:
+        video_id = re.sub(r"[^A-Za-z0-9_-]", "_", source.stem)[:24] or "rebuild"
     artifacts = _artifact_store({}, configuration, video_id)
     artifacts.stage("packet.md", packet.text)
     artifacts.stage("evidence.json",
@@ -1804,7 +1820,8 @@ class WindowScan:
     api_operations_used: int = 0
 
 
-def _scan_for_window(*, video, handle, max_comments, youtube, events, clock):
+def _scan_for_window(*, video, handle, max_comments, youtube, events, clock,
+                     since="", only_unanswered=True):
     """One scan, built the way every other caller builds it.
 
     Wrapped rather than called from the gui package directly: the command
@@ -1814,6 +1831,7 @@ def _scan_for_window(*, video, handle, max_comments, youtube, events, clock):
 
     command = ScanMyThreadsCommand(
         video=video, handle=handle or "", max_comments=max_comments,
+        since=since or "", only_unanswered=only_unanswered,
     )
     result = scan_threads.handle(
         command, youtube=youtube, events=events, clock=clock or SystemClock(),
@@ -1962,7 +1980,8 @@ def run_gui(
             "would silently drop people you named. Choose one."
         )
     if getattr(arguments, "reply_to", ""):
-        outstanding = named_selection(outstanding, arguments.reply_to)
+        outstanding = named_thread_selection(
+            outstanding, arguments.reply_to)
     if getattr(arguments, "per_thread", False):
         outstanding = every_thread_selection(outstanding, scan.threads)
     if getattr(arguments, "top_repliers", 0):
@@ -2234,7 +2253,8 @@ def run_guided(
             "would silently drop people you named. Choose one."
         )
     if getattr(arguments, "reply_to", ""):
-        outstanding = named_selection(outstanding, arguments.reply_to)
+        outstanding = named_thread_selection(
+            outstanding, arguments.reply_to)
     if getattr(arguments, "per_thread", False):
         outstanding = every_thread_selection(outstanding, scan.threads)
     if getattr(arguments, "top_repliers", 0):

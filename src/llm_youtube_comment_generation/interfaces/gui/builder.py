@@ -365,6 +365,11 @@ def prepare_replies(
         video=options.video,
         handle=options.my_handle,
         max_comments=options.reply_scan_comments,
+        # The window fields wrote these to the model and nothing
+        # read them back; the CLI passed both all along
+        # (harsh-critic review, finding 10).
+        since=options.since,
+        only_unanswered=not options.include_answered,
         youtube=ports["youtube"],
         events=events,
         clock=clock,

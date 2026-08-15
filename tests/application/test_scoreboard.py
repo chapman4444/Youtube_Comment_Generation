@@ -7,6 +7,38 @@ invalidate every conclusion drawn from these numbers.
 
 from __future__ import annotations
 
+
+def test_no_video_scanned_never_concludes_never_posted():
+    """The module's own docstring calls this the mistake it could most
+    easily make, and it made it on the most natural invocation: with no
+    video id nothing is scanned, and every draft rendered as never posted."""
+
+    from fakes import FakeEventSink, FakeYouTubePort
+    from llm_youtube_comment_generation.application.scoreboard import handle
+    from llm_youtube_comment_generation.domain.statuses import (
+        HistoryMatchStatus,
+    )
+
+    class History:
+        @staticmethod
+        def load():
+            return [{"draft": "a reply I definitely posted",
+                     "video_id": "gC-J7zwYMAM"}]
+
+    result = handle(
+        "",                                # no video id: nothing scanned
+        history=History(),
+        youtube=FakeYouTubePort(videos={}),
+        events=FakeEventSink(),
+        operator_channel_id="UC" + "o" * 22,
+    )
+    board = result.value
+
+    assert board.counted is False
+    assert board.unmatched == []
+    assert all(row["match_status"] == HistoryMatchStatus.AMBIGUOUS
+               for row in board.rows)
+
 from fakes import FakeEventSink, FakeHistoryStore, FakeYouTubePort
 from llm_youtube_comment_generation.application import scoreboard
 from llm_youtube_comment_generation.domain.statuses import (

@@ -79,6 +79,13 @@ class FilesystemArtifactStore:
         self._root = Path(root)
         self._staged: dict[str, str] = {}
         self._committed: list[str] = []
+        # Every file this instance has ever published, with its
+        # digest. The completion marker is rebuilt from this on
+        # every commit: rebuilding it from the *staged* set let a
+        # later draft save shrink the manifest to one file, after
+        # which packet.md was no longer digest-certified at all
+        # (harsh-critic review, finding 2b).
+        self._published_digests: dict[str, str] = {}
 
     @property
     def root(self) -> Path:
@@ -136,6 +143,9 @@ class FilesystemArtifactStore:
 
         if backup and backup.exists():
             shutil.rmtree(backup, ignore_errors=True)
+        for name, content in self._staged.items():
+            self._published_digests[name] = hashlib.sha256(
+                content.encode("utf-8")).hexdigest()
         published = tuple(sorted(self._staged))
         self._committed = list(published)
         self._staged.clear()
@@ -167,16 +177,21 @@ class FilesystemArtifactStore:
             shutil.rmtree(staging, ignore_errors=True)
             raise
 
+        for name, content in self._staged.items():
+            self._published_digests[name] = hashlib.sha256(
+                content.encode("utf-8")).hexdigest()
         published = tuple(sorted(self._staged))
         self._committed = list(published)
         self._staged.clear()
         return published
 
     def _completion_record(self) -> str:
-        files = {
+        files = dict(self._published_digests)
+        files.update({
             name: hashlib.sha256(content.encode("utf-8")).hexdigest()
-            for name, content in sorted(self._staged.items())
-        }
+            for name, content in self._staged.items()
+        })
+        files = dict(sorted(files.items()))
         return json.dumps(
             {"version": 1, "files": files},
             indent=2,

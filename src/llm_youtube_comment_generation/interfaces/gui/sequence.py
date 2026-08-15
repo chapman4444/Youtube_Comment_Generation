@@ -27,6 +27,7 @@ from enum import Enum
 from typing import Sequence
 
 from ...domain.extraction import (
+    extract_hardened_final,
     looks_like_batch_reply_sheet,
     looks_like_packet_text,
     parse_triage_selection,
@@ -180,6 +181,23 @@ def read_clipboard(text: str, *, step: Step, packet: str = "") -> ClipboardOffer
                 payload=", ".join(chosen),
                 raw=held,
             )
+
+    # A comment answer is not a reply sheet: it carries a Hardened final,
+    # not Post-beneath lines. Dropping this branch with the batch change
+    # left the chip calling a perfectly good comment answer "something
+    # else" (harsh-critic review, finding 10).
+    if extract_hardened_final(held):
+        usable = WANTED.get(step) is Holding.ANSWER
+        return ClipboardOffer(
+            Holding.ANSWER,
+            usable=usable,
+            label=("Clipboard: an answer from your model"
+                   if usable else
+                   "Clipboard: an answer, but this step is not waiting for "
+                   "one"),
+            payload=held,
+            raw=held,
+        )
 
     video = find_video_reference(held)
     if video:

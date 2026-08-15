@@ -712,7 +712,11 @@ def allocate(
 
     spent = fixed + description + comment_cost(comment_body) + reply_cost(reply_body)
     transcript = max(FLOORS.transcript, budget - spent)
-    reduced = len(evidence.transcript_text) > transcript
+    # Measured on the neutralized text, mirroring shortened() above: what is
+    # rendered is neutralize(transcript), and neutralize changes length, so
+    # measuring the raw text let the receipt claim reduced-when-complete or
+    # complete-when-reduced inside the delta (harsh-critic review, finding 8).
+    reduced = len(neutralize(evidence.transcript_text).strip()) > transcript
 
     return PacketAllocation(
         comment_body=comment_body,

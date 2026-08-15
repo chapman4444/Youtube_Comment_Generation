@@ -90,6 +90,24 @@ def named_selection(candidates, named: str = ""):
     return kept
 
 
+def named_thread_selection(candidates, named: str = ""):
+    """The named people's whole threads, in queue order.
+
+    The one selection rule for "answer these people", shared by the CLI and
+    the window so they cannot drift: naming anybody selects their whole
+    thread, because one packet answers the thread whole. The window used to
+    re-implement this with its own filter order (harsh-critic review,
+    finding 9).
+    """
+
+    kept_people = named_selection(candidates, named)
+    if kept_people is candidates or not named:
+        return list(candidates)
+    chosen = {str(getattr(c, "thread_id", "") or "") for c in kept_people}
+    return [c for c in candidates
+            if str(getattr(c, "thread_id", "") or "") in chosen]
+
+
 def top_replier_selection(candidates, top: int = 0):
     """The N people whose message the room liked most, one entry each.
 
@@ -305,6 +323,25 @@ class GuidedSession:
 
         root = str(getattr(self.artifacts, "root", "") or "")
         return os.path.join(root, REVIEW_FILENAME) if root else ""
+
+    def previous_person(self) -> ReplyCandidate | None:
+        """Step back one thread and rebuild its packet.
+
+        The window's Back control promised "return to the previous person"
+        while moving only its own rail, leaving the session — and therefore
+        the packet on the clipboard — where it was. Going back is a session
+        move or it is a lie.
+        """
+
+        if self._cursor <= 1:
+            return None
+        # To the state machine, abandoning the packet in front of you is a
+        # skip; going back is that skip plus a rewind of the queue cursor.
+        # No author is added to the skipped ledger — the operator is
+        # revisiting, not declining.
+        skip(self.state)
+        self._cursor -= 2
+        return self.next_person()
 
     def copy_packet(self) -> str:
         """Put the current packet on the clipboard. Never advances."""

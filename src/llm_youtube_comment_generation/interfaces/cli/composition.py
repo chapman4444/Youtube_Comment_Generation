@@ -119,7 +119,8 @@ def default_ports(
         transcript_source = local_transcriber
     else:
         transcript_source = SavedTranscriptFallback(
-            ChainedTranscripts(caption_api, ytdlp_captions),
+            ChainedTranscripts(caption_api, ytdlp_captions,
+                               cancelled=cancelled),
             configuration.get("output_directory", "output"),
             # A saved transcript is checked before asking to spend time on
             # Whisper. "No live captions" is not the same as "no transcript

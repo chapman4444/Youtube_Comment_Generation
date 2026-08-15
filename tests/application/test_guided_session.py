@@ -170,6 +170,49 @@ def test_selection_keeps_whole_threads_under_a_limit():
     assert [c.author for c in selected] == ["@alice", "@bob"]
 
 
+def test_named_thread_selection_is_the_one_shared_rule():
+    """The window used to re-code this with its own filter order; now the
+    CLI and the GUI both call this, so they cannot drift: naming anybody
+    keeps their whole thread."""
+
+    from llm_youtube_comment_generation.application.guided_session import (
+        named_thread_selection,
+    )
+    from llm_youtube_comment_generation.domain.candidates import (
+        ReplyCandidate,
+    )
+
+    people = [
+        ReplyCandidate(author="@alice", thread_id="t1"),
+        ReplyCandidate(author="@bob", thread_id="t1"),
+        ReplyCandidate(author="@carol", thread_id="t2"),
+    ]
+
+    kept = named_thread_selection(people, "@alice")
+
+    assert [c.author for c in kept] == ["@alice", "@bob"]
+    assert named_thread_selection(people, "") == people
+
+
+def test_previous_person_steps_the_session_back_and_rebuilds(session):
+    """Back is a session move or it is a lie: the rail used to step back
+    alone, leaving the next thread's packet on the clipboard under the
+    previous thread's name."""
+
+    session.start()
+    first = session.next_person()
+    first_packet = session.current_packet
+    session.skip_person()
+    second = session.next_person()
+    assert second.author != first.author
+
+    again = session.previous_person()
+
+    assert again.author == first.author
+    assert session.current_packet == first_packet
+    assert session.previous_person() is None      # already at the first
+
+
 def test_reply_to_accepts_a_list_or_a_pasted_triage_answer():
     """The legacy --reply-to. Both shapes are what the operator has to
     hand: handles he typed, or the triage answer on his clipboard."""

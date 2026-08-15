@@ -51,6 +51,11 @@ class AdvancedDialog:                       # pragma: no cover - opens a dialog
         self.top = tk.Toplevel(parent)
         self.top.title("Advanced")
         self.top.transient(parent)
+        # Closing with the title-bar X is the same act as pressing Done.
+        # Without this, edits were copied back only by the Done button and
+        # an X-close silently discarded them (harsh-critic review,
+        # finding 10).
+        self.top.protocol("WM_DELETE_WINDOW", self.close)
         self.variables: dict[str, tk.Variable] = {}
         self._tooltips: list[Tooltip] = []
 

@@ -1847,10 +1847,22 @@ class PacketWindow:
 
     @staticmethod
     def _build_signature(options: PacketOptionsModel, mode: str) -> str:
-        """The inputs that make one packet distinct from another."""
+        """The inputs that make one packet distinct from another.
 
+        The transcript route is excluded: it chooses where the same
+        transcript comes from, not what packet the settings describe.
+        Including it meant every route-button rebuild recorded a signature
+        no ordinary Build could ever match, so the window permanently
+        claimed "video or settings changed" afterwards (harsh-critic
+        review, finding 10).
+        """
+
+        fields = dict(vars(options))
+        for transient in ("transcript_route", "whisper_policy",
+                          "transcribe_locally"):
+            fields.pop(transient, None)
         return json.dumps(
-            {"mode": mode, "options": vars(options)},
+            {"mode": mode, "options": fields},
             sort_keys=True,
             default=str,
         )
@@ -2634,29 +2646,24 @@ class PacketWindow:
             self.say("Paste a triage answer into the box or copy one.")
             return
 
-        wanted = {handle.lstrip("@").casefold()
-                  for handle in parse_triage_selection(typed or offer.raw)}
-        if not wanted:
-            self.say("No handles were found in that answer. The queue is "
-                     "unchanged.")
+        # The one selection rule, shared with the CLI: naming anybody keeps
+        # their whole thread. The window used to re-code this with its own
+        # filter order, which is how the two drifted.
+        from ...application.guided_session import (
+            named_selection,
+            named_thread_selection,
+        )
+        from ...domain.errors import ConfigurationError
+
+        answer_text = typed or offer.raw
+        try:
+            named = named_selection(session.targets, answer_text)
+            kept = named_thread_selection(session.targets, answer_text)
+        except ConfigurationError as refusal:
+            self.say(f"{refusal} The queue is unchanged.")
             return
 
-        named = [t for t in session.targets
-                 if str(getattr(t, "author", "")).lstrip("@").casefold()
-                 in wanted]
-        if not named:
-            self.say(
-                f"That answer named {len(wanted)} people, none of them in "
-                "this queue. The queue is unchanged."
-            )
-            return
-
-        # A thread is answered whole: one packet replies to everybody in
-        # it, so keeping only the named person would still produce replies
-        # for their thread-mates while the label claimed otherwise. Keep
-        # the whole threads and say who came along.
-        chosen_threads = {t.thread_id for t in named}
-        kept = [t for t in session.targets if t.thread_id in chosen_threads]
+        chosen_threads = {t.thread_id for t in kept}
         extras = [t.author for t in kept if t not in named]
         session.targets = kept
         self._clear_answer()
@@ -2736,6 +2743,25 @@ class PacketWindow:
             self.refresh()
             return False
 
+        # "Copied" is a claim about the clipboard, not about our write call.
+        # The CLI verifies by read-back and the clipboard adapter's own
+        # docstring demands it; the window said "copied" unconditionally,
+        # so a failed write sent the operator to paste a stale packet
+        # (harsh-critic review, finding 5).
+        verified = False
+        if self.clipboard is not None:
+            try:
+                verified = self.clipboard.read() == self.last_packet
+            except Exception:               # noqa: BLE001 - reporting only
+                verified = False
+        if not verified:
+            self.say(
+                f"Packet built ({len(self.last_packet):,} characters), but "
+                "the clipboard copy could not be verified. Use Copy again."
+            )
+            self.copy_button.configure(text="Copy packet again")
+            self.refresh()
+            return False
         prefix = "Packet built and copied" if auto else "Copied again"
         self.say(f"{prefix}: {len(self.last_packet):,} characters.")
         self.copy_button.configure(text="Copy packet again")
@@ -2820,7 +2846,21 @@ class PacketWindow:
         try:
             added = session.record_posted(index)
         except Exception as failure:        # noqa: BLE001 - visible refusal
-            self.say(f"The draft was saved, but history was not updated: {failure}")
+            # The message must reflect what actually happened: the history
+            # row is appended before the review file is rewritten, so a
+            # save failure after that point must not claim "not updated" —
+            # that message sent the operator to record the same posting
+            # twice, the exact duplication the history docstring forbids.
+            if getattr(item, "posted_recorded", False):
+                self.say(
+                    "Recorded in history, but the review file could not be "
+                    f"rewritten: {failure}"
+                )
+            else:
+                self.say(
+                    f"The draft was saved, but history was not updated: "
+                    f"{failure}"
+                )
         else:
             remaining = len(self._unrecorded_indexes(session))
             self.say(
@@ -2848,6 +2888,29 @@ class PacketWindow:
         self.record_button.configure(text=label)
 
     def go_back(self) -> None:
+        session = getattr(self, "session", None)
+        if (self.mode.get() == "reply"
+                and self.sequence.step is Step.PEOPLE
+                and session is not None):
+            # Back at the people step is a session move, not a rail move:
+            # decrementing only the rail left the previous thread's packet
+            # on the clipboard under the next thread's name.
+            try:
+                person = session.previous_person()
+            except Exception as refusal:    # noqa: BLE001 - reported
+                self.say(str(refusal))
+                self.refresh()
+                return
+            if person is None:
+                self.say("Already at the first thread.")
+            else:
+                self.sequence.index = max(0, self.sequence.index - 1)
+                self.last_packet = session.current_packet
+                self._show_what_they_said(
+                    getattr(session, "current_targets", ()))
+                self.say(f"Back to {person.author}'s thread.")
+            self.refresh()
+            return
         order = list(Step)
         index = order.index(self.sequence.step)
         if index:

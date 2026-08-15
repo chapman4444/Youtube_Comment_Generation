@@ -25,6 +25,22 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from ..domain.sanitize import inline, safe_token
+
+
+def _inert_title(value: Any) -> str:
+    """A video title is uploader-controlled text.
+
+    The main packet path already learned this lesson (sanitize.py documents
+    it); the diagnostic paths skipped the same defence, which put whatever
+    an uploader typed into the region the packet declares trustworthy — on
+    the one artifact the README says to share. inline() neutralizes fence
+    and boundary forgeries and flattens newlines, so a title cannot close
+    the json fence it is printed inside.
+    """
+
+    return inline(value)
+
 from ..domain.writing_options import (
     CHECK_OVERRIDES,
     DIALS,
@@ -467,8 +483,8 @@ def render_template_logic_audit(
     """Render one self-contained case for an independent auditing model."""
 
     configuration = {
-        "video_id": context.video_id,
-        "video_title": context.video_title,
+        "video_id": safe_token(context.video_id),
+        "video_title": _inert_title(context.video_title),
         "prompt_version": context.prompt_version,
         "selected_variation_keys": list(context.requested_variation_keys),
         "resolved_variation_keys": list(context.resolved_variation_keys),
@@ -722,8 +738,8 @@ def render_debug_packet(
         json.dumps({
             "settings": dict(settings),
             "run": {
-                "video_id": run.get("video_id", ""),
-                "video_title": run.get("video_title", ""),
+                "video_id": safe_token(run.get("video_id", "")),
+                "video_title": _inert_title(run.get("video_title", "")),
                 "variations": run.get("variations", []),
                 "dials": run.get("dials", {}),
                 "packet_characters": run.get("packet_characters", 0),

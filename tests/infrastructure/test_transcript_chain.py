@@ -2,6 +2,43 @@
 
 from __future__ import annotations
 
+
+def test_cancellation_short_circuits_between_sources():
+    """Stop promises "the next safe point"; the gap between two caption
+    sources is one. The chain used to run every source to completion."""
+
+    from llm_youtube_comment_generation.domain.statuses import (
+        TranscriptAvailability,
+        TranscriptResult,
+    )
+    from llm_youtube_comment_generation.infrastructure.transcript_chain \
+        import ChainedTranscripts
+
+    calls = []
+
+    class Source:
+        def __init__(self, name):
+            self.name = name
+
+        def fetch(self, video_id, languages=()):
+            calls.append(self.name)
+            return TranscriptResult(
+                availability=TranscriptAvailability.FETCH_FAILED,
+                source=self.name,
+            )
+
+    flags = iter([False, True])
+    chain = ChainedTranscripts(
+        Source("first"), Source("second"),
+        cancelled=lambda: next(flags, True),
+    )
+
+    result = chain.fetch("gC-J7zwYMAM")
+
+    assert calls == ["first"]
+    assert result.availability is TranscriptAvailability.FETCH_FAILED
+    assert "cancelled" in result.detail
+
 import pytest
 
 from llm_youtube_comment_generation.domain.statuses import (

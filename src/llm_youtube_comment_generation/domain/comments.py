@@ -6,6 +6,7 @@ import html
 import re
 from typing import Any, Iterable, Sequence
 
+from .threads import as_moment
 from .video import as_int
 
 
@@ -81,8 +82,13 @@ def merge_comments(
                     as_int(comment.get(key)) or 0,
                 )
 
-            if str(comment.get("updated_at") or "") > str(
-                existing.get("updated_at") or ""
+            # Parsed moments, never string comparison: "…00.123Z" sorts
+            # before "…00Z" as text because "." precedes "Z", which is the
+            # exact bug threads.as_moment exists to prevent — here it let a
+            # stale pre-edit text win the merge (harsh-critic review,
+            # finding 7).
+            if as_moment(comment.get("updated_at")) > as_moment(
+                existing.get("updated_at")
             ):
                 for key in ("text", "updated_at", "author", "viewer_rating"):
                     if comment.get(key):

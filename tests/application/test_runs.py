@@ -120,6 +120,43 @@ def test_a_reply_run_missing_a_required_artifact_is_named(tmp_path, missing):
     assert f"missing {missing}" in summary.problems
 
 
+def test_an_engage_run_is_a_run_this_tool_produced(tmp_path):
+    """Both post-batch command families were absent from the classifier, so
+    their complete runs validated as 'not a run this tool produced'."""
+
+    directory = tmp_path / "gC-J7zwYMAM_20260815-120000"
+    directory.mkdir(parents=True)
+    (directory / "engage_packet.md").write_text("x" * 400, encoding="utf-8")
+    (directory / "transcript_timestamped.txt").write_text(
+        "[00:00:00] words", encoding="utf-8")
+    (directory / "run.json").write_text(json.dumps({
+        "kind": "engage", "video_id": "gC-J7zwYMAM",
+        "prompt_version": "e8a7d359ad50",
+    }), encoding="utf-8")
+
+    summary = validate_run(directory)
+
+    assert summary.kind == "engage"
+    assert not any("not a run" in p for p in summary.problems)
+    assert not any(p.startswith("missing") for p in summary.problems)
+
+
+def test_a_section_triage_run_is_recognised(tmp_path):
+    directory = tmp_path / "gC-J7zwYMAM_20260815-120001"
+    directory.mkdir(parents=True)
+    (directory / "section_triage_packet.md").write_text(
+        "x" * 400, encoding="utf-8")
+    (directory / "run.json").write_text(json.dumps({
+        "kind": "section_triage", "video_id": "gC-J7zwYMAM",
+        "prompt_version": "e8a7d359ad50",
+    }), encoding="utf-8")
+
+    summary = validate_run(directory)
+
+    assert summary.kind == "section_triage"
+    assert not any("not a run" in p for p in summary.problems)
+
+
 def test_a_healthy_run_reports_no_problems(tmp_path):
     summary = validate_run(make_run(tmp_path))
 

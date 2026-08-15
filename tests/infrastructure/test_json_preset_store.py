@@ -7,6 +7,48 @@ import json
 import pytest
 
 from llm_youtube_comment_generation.domain.errors import ConfigurationError
+from llm_youtube_comment_generation.domain.writing_presets import WritingPreset
+
+
+def test_saving_over_an_unreadable_file_refuses_rather_than_clobbering(
+    tmp_path,
+):
+    """save() rebuilds the file from what _load() returned; treating a
+    corrupt file as empty silently destroyed every other custom preset."""
+
+    from llm_youtube_comment_generation.infrastructure.json_preset_store \
+        import JsonPresetStore
+
+    path = tmp_path / "presets.json"
+    path.write_text("{ not json", encoding="utf-8")
+    store = JsonPresetStore(path)
+
+    assert store.all()          # display still works: built-ins only
+
+    with pytest.raises(ConfigurationError, match="overwrite presets"):
+        store.save(WritingPreset(name="Mine",
+                                 reply_variations=("dry_one_liner",)))
+    assert path.read_text(encoding="utf-8") == "{ not json"
+
+
+def test_a_newer_schema_file_is_never_overwritten(tmp_path):
+    from llm_youtube_comment_generation.infrastructure.json_preset_store \
+        import JsonPresetStore
+
+    path = tmp_path / "presets.json"
+    path.write_text(json.dumps({"schema_version": 99, "presets": []}),
+                    encoding="utf-8")
+    store = JsonPresetStore(path)
+
+    with pytest.raises(ConfigurationError, match="schema_version 99"):
+        store.save(WritingPreset(name="Mine",
+                                 reply_variations=("dry_one_liner",)))
+
+import json
+
+import pytest
+
+from llm_youtube_comment_generation.domain.errors import ConfigurationError
 from llm_youtube_comment_generation.domain.writing_presets import (
     BUILT_IN_PRESETS,
     WritingPreset,

@@ -150,6 +150,19 @@ def test_the_chip_counts_the_people_the_triage_answer_named():
     assert "2 people chosen" in two.label
 
 
+def test_a_comment_answer_is_still_recognised():
+    """A comment answer carries a Hardened final, not Post-beneath lines.
+    The batch change dropped this branch and the chip called a perfectly
+    good comment answer "something else"."""
+
+    answer = "Reasoning.\n\n### Hardened final\nThe comment I would post.\n"
+    offer = read_clipboard(answer, step=Step.PEOPLE)
+
+    assert offer.holding is Holding.ANSWER
+    assert offer.offered
+    assert offer.raw == answer.strip()
+
+
 def test_a_reply_sheet_is_not_a_triage_answer():
     """Even at the triage step, and even though a sheet's own headings can
     carry @handles: the sheet shape wins."""

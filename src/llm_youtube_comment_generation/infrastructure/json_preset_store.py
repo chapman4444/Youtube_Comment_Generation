@@ -32,7 +32,7 @@ class JsonPresetStore:
             )
         custom = {
             existing.key: existing
-            for existing in self._load()
+            for existing in self._load(for_write=True)
         }
         saved = WritingPreset.from_payload(preset.to_payload())
         custom[saved.key] = saved
@@ -43,27 +43,49 @@ class JsonPresetStore:
         if built_in_by_name(name):
             raise ConfigurationError("Built-in presets cannot be deleted.")
         wanted = str(name).casefold()
-        existing = self._load()
+        existing = self._load(for_write=True)
         kept = tuple(preset for preset in existing if preset.key != wanted)
         if len(kept) == len(existing):
             return False
         self._write(kept)
         return True
 
-    def _load(self) -> tuple[WritingPreset, ...]:
+    def _load(self, *, for_write: bool = False) -> tuple[WritingPreset, ...]:
+        """Read the custom presets; a broken file must never be clobbered.
+
+        Reading an unreadable or newer-schema file as "no presets" is fine
+        for display — the built-ins still work. Writing on top of it is
+        not: save() rebuilds the whole file from what _load() returned, so
+        treating corruption as emptiness silently destroyed every other
+        custom preset (harsh-critic review, finding 14). A write against a
+        file this method cannot read refuses instead.
+        """
+
+        def unreadable(reason: str) -> tuple[WritingPreset, ...]:
+            if for_write:
+                raise ConfigurationError(
+                    f"The preset file at {self.path} {reason}, so saving "
+                    "would overwrite presets this version cannot read. "
+                    "Move the file aside (or fix it) and try again."
+                )
+            return ()
+
         if not self.path.is_file():
             return ()
         try:
             payload: Any = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
-            return ()
+            return unreadable("could not be read as JSON")
         if not isinstance(payload, dict):
-            return ()
+            return unreadable("does not hold a preset document")
         if payload.get("schema_version") != PRESET_SCHEMA_VERSION:
-            return ()
+            return unreadable(
+                f"has schema_version {payload.get('schema_version')!r}, "
+                f"not {PRESET_SCHEMA_VERSION}"
+            )
         rows = payload.get("presets", [])
         if not isinstance(rows, list):
-            return ()
+            return unreadable("holds no preset list")
         loaded: list[WritingPreset] = []
         for row in rows:
             if not isinstance(row, dict):

@@ -44,11 +44,15 @@ UNAVAILABLE_STRENGTH = {
 class ChainedTranscripts:
     """Implements TranscriptPort over several sources, in preference order."""
 
-    def __init__(self, *sources, local_fallback=None) -> None:
+    def __init__(self, *sources, local_fallback=None, cancelled=None) -> None:
         if not sources:
             raise ValueError("a transcript chain needs at least one source")
         self._caption_sources = sources
         self._local_fallback = local_fallback
+        # Checked between sources: Stop promised "the next safe point", and
+        # the gap between two caption sources is exactly such a point. The
+        # sources themselves still run to completion once started.
+        self._cancelled = cancelled or (lambda: False)
         # Kept as the complete ordered inventory for diagnostics and existing
         # construction tests.
         self._sources = sources + ((local_fallback,) if local_fallback else ())
@@ -60,6 +64,12 @@ class ChainedTranscripts:
     ) -> TranscriptResult:
         results: list[TranscriptResult] = []
         for source in self._caption_sources:
+            if self._cancelled():
+                return TranscriptResult(
+                    availability=TranscriptAvailability.FETCH_FAILED,
+                    detail="cancelled before this source was tried",
+                    attempts=_attempt_records(results),
+                )
             result = source.fetch(video_id, languages)
             results.append(result)
             if result.availability in TERMINAL_CAPTION_RESULT:

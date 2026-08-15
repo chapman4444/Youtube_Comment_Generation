@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+import contextlib
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,7 +78,7 @@ class SqliteHistoryStore:
     def load(self) -> list[dict[str, Any]]:
         if not self._path.exists():
             return []                       # missing is not corruption
-        with self._connect() as connection:
+        with contextlib.closing(self._connect()) as connection, connection:
             rows = connection.execute(
                 "SELECT event_key, video_id, video_title, target, "
                 "target_comment_id, thread_id, workflow, "
@@ -109,7 +110,7 @@ class SqliteHistoryStore:
         """
 
         added = 0
-        with self._connect() as connection:
+        with contextlib.closing(self._connect()) as connection, connection:
             for entry in entries:
                 draft = str(entry.get("draft") or "").strip()
                 if not draft:
@@ -217,16 +218,16 @@ class SqliteHistoryStore:
             ) from exc
 
     def _backup_v1(self) -> Path:
-        """Copy the final v1 bytes before applying the schema migration."""
+        """Copy the final v1 bytes before applying the schema migration.
+
+        Once. A retried migration used to mint .v1.bak2, .v1.bak3, … on
+        every attempt, copying the whole database each time; the first
+        backup is the pre-migration bytes and is the only one worth having.
+        """
 
         target = self._path.with_suffix(self._path.suffix + ".v1.bak")
-        counter = 1
-        while target.exists():
-            counter += 1
-            target = self._path.with_suffix(
-                self._path.suffix + f".v1.bak{counter}"
-            )
-        shutil.copy2(self._path, target)
+        if not target.exists():
+            shutil.copy2(self._path, target)
         return target
 
 
@@ -304,7 +305,7 @@ def _migrate_v1(connection: sqlite3.Connection) -> None:
         for row in rows:
             entry = dict(row)
             connection.execute(
-                "INSERT INTO drafts_v2 "
+                "INSERT OR IGNORE INTO drafts_v2 "
                 "(id, event_key, video_id, video_title, target, draft, "
                 "match_key, words, their_likes, drafted_at, prompt_version, "
                 "registers, source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",

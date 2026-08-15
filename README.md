@@ -100,7 +100,7 @@ From the project directory:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[transcripts]"
+python -m pip install -e ".[transcripts]" -c constraints/review.txt
 ```
 
 The `transcripts` extra installs both lightweight caption routes:
@@ -108,13 +108,13 @@ The `transcripts` extra installs both lightweight caption routes:
 fallback as well:
 
 ```powershell
-python -m pip install -e ".[local-transcription]"
+python -m pip install -e ".[local-transcription]" -c constraints/review.txt
 ```
 
 For a development checkout with the test and clean-build tools installed:
 
 ```powershell
-python -m pip install -e ".[verify,transcripts]"
+python -m pip install -e ".[verify,transcripts]" -c constraints/review.txt
 ```
 
 Transcript support is optional. Without it, commands that do not need a
@@ -296,8 +296,13 @@ untrusted evidence before it reaches the packet. Run publication is atomic, and
 an interrupted or incomplete run is not presented as a successful one.
 Default section sizes are protected floors rather than permanent ceilings:
 relevant and recent coverage expands while measured candidates still fit the
-packet budget. Candidate packets are never rendered merely to measure them, and
-the live and rebuild paths use the same fitting logic.
+packet budget. On the comment path, candidate packets are never rendered
+merely to measure them, and the live and rebuild paths use the same fitting
+logic. The reply path is the stated exception: its owner comment and target
+bodies are carried exactly at any budget, so it shrinks only the context
+replies, re-rendering the thread at stepped context sizes until it fits —
+a bounded number of extra renders, traded deliberately for the exact-body
+guarantee.
 
 The design notes are intentionally concrete:
 
@@ -328,9 +333,9 @@ Check tracked files for private state, credentials, and personal work notes:
 ytcomment privacy check
 ```
 
-GitHub Actions runs the privacy audit, failure-class lint, test suite,
-transcript-provider imports, two-run determinism gate, and clean-wheel install
-on Windows with Python 3.10, 3.11, and 3.12.
+GitHub Actions runs the privacy audit, failure-class lint, and test suite on
+Windows with Python 3.10, 3.11, and 3.12. The transcript-provider imports,
+two-run determinism gate, and clean-wheel install run on Python 3.12 only.
 
 For ordinary development, use focused tests while editing and one complete
 local test run before pushing a source change. Documentation-only edits need

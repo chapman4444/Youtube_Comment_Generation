@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,13 @@ REPLY_ARTIFACTS = (
     "replies_to_me.csv", "report.md", "run.json",
 )
 GUIDED_ARTIFACTS = ("replies_to_review.md", "run.json")
+# The two paths that do not start from a comment of the operator's. Their
+# producers were added 2026-08-14 and this table was not, so `run validate`
+# called their complete runs "not a run this tool produced" — an integrity
+# gate reporting false failures, the harsh-critic review's finding 2.
+ENGAGE_ARTIFACTS = ("engage_packet.md", "transcript_timestamped.txt",
+                    "run.json")
+SECTION_TRIAGE_ARTIFACTS = ("section_triage_packet.md", "run.json")
 TRIAGE_ARTIFACTS = (
     "reply_triage_packet.md", "evidence.json", "transcript_timestamped.txt",
     "replies_to_me.csv", "report.md", "run.json",
@@ -73,6 +81,10 @@ def classify(names: set[str]) -> str:
         return "reply"
     if "reply_triage_packet.md" in names:
         return "triage"
+    if "engage_packet.md" in names:
+        return "engage"
+    if "section_triage_packet.md" in names:
+        return "section_triage"
     if "packet.md" in names:
         return "comment"
     return "unknown"
@@ -85,6 +97,8 @@ def expected_for(kind: str) -> tuple[str, ...]:
         "reply": REPLY_ARTIFACTS,
         "guided": GUIDED_ARTIFACTS,
         "triage": TRIAGE_ARTIFACTS,
+        "engage": ENGAGE_ARTIFACTS,
+        "section_triage": SECTION_TRIAGE_ARTIFACTS,
     }.get(kind, ())
 
 
@@ -440,15 +454,28 @@ def _check_transcript_provenance(value: object) -> list[str]:
 
 
 def list_runs(root: Path | str) -> list[RunSummary]:
-    """Every run under a directory, newest first."""
+    """Every run under a directory, newest first.
+
+    Newest by the timestamp in the directory name, not by the name as a
+    whole: run directories are ``{video_id}_{stamp}``, so sorting the raw
+    names ordered them reverse-alphabetically by video id — "newest first"
+    was only true within one video (harsh-critic review, finding 15).
+    """
 
     root = Path(root)
     if not root.is_dir():
         return []
-    summaries = [
-        validate_run(entry) for entry in sorted(root.iterdir()) if entry.is_dir()
-    ]
-    return list(reversed(summaries))
+
+    def stamp_of(entry: Path) -> str:
+        match = re.search(r"_(\d{8}-\d{6})(?:_\d+)?$", entry.name)
+        return match.group(1) if match else ""
+
+    entries = sorted(
+        (entry for entry in root.iterdir() if entry.is_dir()),
+        key=lambda entry: (stamp_of(entry), entry.name),
+        reverse=True,
+    )
+    return [validate_run(entry) for entry in entries]
 
 
 def render_list(summaries: list[RunSummary]) -> str:

@@ -149,15 +149,21 @@ def select_packet_sections(
     ) -> tuple[list[dict[str, Any]], int]:
         chosen: list[dict[str, Any]] = []
         eligible = 0
+        # Deduplicated while iterating, not after: the source lists are
+        # unmerged page dumps, and a page-repeat (the condition
+        # PAGE_TOKEN_LOOP exists to model) put the same id in one list
+        # twice — selected twice, rendered twice under two indices, and
+        # double-counted as eligible (harsh-critic review, finding 7).
+        seen: set[str] = set()
         for comment in source:
             comment_id = comment.get("comment_id", "")
-            if not comment_id or comment_id in used:
+            if not comment_id or comment_id in used or comment_id in seen:
                 continue
+            seen.add(comment_id)
             eligible += 1
             if len(chosen) < limit:
                 chosen.append(by_id.get(comment_id, comment))
-        for comment in chosen:
-            used.add(comment.get("comment_id", ""))
+                used.add(comment_id)
         return chosen, eligible
 
     # Most-liked is taken first. When relevance went first it consumed the

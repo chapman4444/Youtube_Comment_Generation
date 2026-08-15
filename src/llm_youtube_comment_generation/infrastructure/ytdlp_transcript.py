@@ -263,8 +263,13 @@ class YtDlpTranscriptAdapter:
         """
 
         message = str(exc).lower()
-        if "private" in message or "unavailable" in message:
+        if "private" in message:
             return TranscriptAvailability.NOT_PUBLIC
         if "age" in message and "restrict" in message:
             return TranscriptAvailability.NOT_PUBLIC
+        # "unavailable" is ambiguous and must stay retryable: a transient
+        # "503 Service Unavailable" or a bot-check "Video unavailable" was
+        # being presented as "this video is private", which is terminal and
+        # disabled the saved-transcript and Whisper fallbacks the message
+        # least applies to (harsh-critic review, finding 15).
         return TranscriptAvailability.FETCH_FAILED

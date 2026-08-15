@@ -289,3 +289,28 @@ def test_unicode_punctuation_and_emoji_are_written_as_utf8(tmp_path):
     raw = (tmp_path / "run" / "comment_drafts.md").read_bytes()
     assert raw == text.encode("utf-8")
     assert raw.decode("utf-8") == text
+
+
+def test_a_later_commit_keeps_the_manifest_cumulative(tmp_path):
+    """The GUI saves a draft into the same store after the build commits.
+    Rebuilding the marker from the staged set alone shrank it to one file,
+    after which packet.md was no longer digest-certified at all."""
+
+    from llm_youtube_comment_generation.infrastructure.filesystem_artifacts \
+        import COMPLETION_MARKER, FilesystemArtifactStore
+
+    store = FilesystemArtifactStore(tmp_path / "run")
+    store.stage("packet.md", "the packet")
+    store.stage("run.json", "{}")
+    store.commit()
+
+    store.stage("comment_drafts.md", "the saved draft")
+    store.commit()
+
+    marker = json.loads(
+        (tmp_path / "run" / COMPLETION_MARKER).read_text(encoding="utf-8"))
+
+    assert set(marker["files"]) == {
+        "packet.md", "run.json", "comment_drafts.md"}
+    assert marker["files"]["packet.md"] == hashlib.sha256(
+        b"the packet").hexdigest()

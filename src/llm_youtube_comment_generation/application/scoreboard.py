@@ -98,6 +98,21 @@ def handle(
 
     rows = score_history(posted, drafts, video_id)
 
+    # No scan at all is the extreme case of an incomplete scan. With no
+    # video id nothing was fetched, `_worst([])` defaults to COMPLETE, and
+    # every draft rendered as "never posted" — a confident false negative
+    # over the one dataset this project calls irreplaceable, on the
+    # command's most natural invocation (harsh-critic review, finding 4).
+    scanned_anything = bool(video_id) and bool(outcomes)
+    if not scanned_anything:
+        retrieval = RetrievalOutcome(
+            status=RetrievalStatus.CANCELLED,
+            retrieved=0,
+            api_operations_used=retrieval.api_operations_used,
+            notes=("no video was scanned, so nothing can be said about "
+                   "whether any draft was posted",),
+        )
+
     # The load-bearing refusal. An incomplete scan cannot distinguish "this
     # reply was never posted" from "I did not look far enough", and reporting
     # the first when only the second is known is how the measurement lies.
