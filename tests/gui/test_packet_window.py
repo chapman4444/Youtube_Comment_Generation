@@ -1574,6 +1574,73 @@ def test_choosing_a_person_from_the_list_fills_answer_one(window):
     assert window.answer_one_var.get() == "@bob"
 
 
+def test_m4_the_what_they_said_panel_shows_every_target(window):
+    """Judge the thread without opening the packet. The legacy window had
+    this panel; the rebuild dropped it until 2026-08-15."""
+
+    from types import SimpleNamespace
+
+    targets = (
+        SimpleNamespace(response_number=1, author_display_name="@alice",
+                        relationship="direct", like_count=9,
+                        text="actually you are wrong about the costs order"),
+        SimpleNamespace(response_number=2, author_display_name="@bob",
+                        relationship="nested", like_count=0,
+                        text="@alice she has a point"),
+    )
+
+    window._show_what_they_said(targets)
+    shown = window.their_text.get("1.0", "end-1c")
+
+    assert "@alice" in shown and "@bob" in shown
+    assert "direct" in shown and "nested" in shown
+    assert "costs order" in shown
+    assert str(window.their_text.cget("state")) == "disabled"
+
+
+def test_m4_an_empty_thread_says_so_rather_than_going_blank(window):
+    window._show_what_they_said(())
+
+    assert "no responses" in window.their_text.get("1.0", "end-1c")
+
+
+def test_m3_pressing_copy_again_is_harmless(window):
+    """Re-copy buttons are fixed per step; pressing one twice must not
+    advance anything or change what is on the clipboard."""
+
+    window.mode.set("comment")
+    window._mode_changed()
+    window.last_packet = "the packet text"
+
+    window.do_copy()
+    first = window.clipboard.read()
+    step_before = window.sequence.step
+    window.do_copy()
+    window.do_copy()
+
+    assert window.clipboard.read() == first == "the packet text"
+    assert window.sequence.step is step_before
+
+
+def test_m8_the_watcher_never_overwrites_a_typed_video(window):
+    """The clipboard is machine-shared. Filling an empty field is help;
+    replacing what he typed is destruction."""
+
+    window.video.set("gC-J7zwYMAM")
+    window.clipboard.write("https://www.youtube.com/watch?v=U4orV3jBFRc")
+
+    window.poll_clipboard()
+
+    assert window.video.get() == "gC-J7zwYMAM"
+    assert "available" in window.clip_label.get()
+
+    # An empty field is filled, which is the half that helps.
+    window.video.set("")
+    window.poll_clipboard()
+
+    assert window.video.get() == "U4orV3jBFRc"
+
+
 def test_triage_keeps_the_whole_thread_of_a_chosen_person(window):
     """The second review's probe: choosing Alice while Bob shares her
     thread must keep Bob — the packet answers the thread whole — and the

@@ -1953,6 +1953,14 @@ def run_gui(
 
     scan = result.value
     outstanding = [c for c in scan.candidates if c.outstanding]
+    if getattr(arguments, "reply_to", "") and getattr(
+            arguments, "top_repliers", 0):
+        raise ConfigurationError(
+            "--reply-to and --top-repliers answer different "
+            "questions: one names the people to answer, the other "
+            "ranks the queue by what the room liked. Applying both "
+            "would silently drop people you named. Choose one."
+        )
     if getattr(arguments, "reply_to", ""):
         outstanding = named_selection(outstanding, arguments.reply_to)
     if getattr(arguments, "per_thread", False):
@@ -2217,6 +2225,14 @@ def run_guided(
 
     scan = result.value
     outstanding = [c for c in scan.candidates if c.outstanding]
+    if getattr(arguments, "reply_to", "") and getattr(
+            arguments, "top_repliers", 0):
+        raise ConfigurationError(
+            "--reply-to and --top-repliers answer different "
+            "questions: one names the people to answer, the other "
+            "ranks the queue by what the room liked. Applying both "
+            "would silently drop people you named. Choose one."
+        )
     if getattr(arguments, "reply_to", ""):
         outstanding = named_selection(outstanding, arguments.reply_to)
     if getattr(arguments, "per_thread", False):

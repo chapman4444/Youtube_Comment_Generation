@@ -202,6 +202,35 @@ def test_the_packet_submitted_as_its_own_answer_is_refused(tmp_path, ports):
     assert record["accepted"] < 2
 
 
+def test_reply_to_and_top_repliers_refuse_to_run_together(tmp_path, ports):
+    """One names the people to answer, the other ranks the queue by what the
+    room liked. Applied together, the ranking silently drops people the
+    operator named."""
+
+    source = answers_file(tmp_path, answer("One reply.", cid="r1"))
+
+    code, out, err = run(
+        ["reply", "guided", VIDEO, "--answers-from", source,
+         "--reply-to", "alice", "--top-repliers", "1"],
+        tmp_path, ports,
+    )
+
+    assert code != 0
+    assert "different questions" in (out + err)
+
+
+def test_top_repliers_narrows_the_queue_by_likes(tmp_path, ports):
+    source = answers_file(tmp_path, answer("One reply.", cid="r1"))
+
+    _, out, _ = run(
+        ["reply", "guided", VIDEO, "--answers-from", source,
+         "--top-repliers", "1"],
+        tmp_path, ports,
+    )
+
+    assert "1 threads to work through" in out
+
+
 def test_the_limit_caps_how_many_people_are_offered(tmp_path, ports):
     source = answers_file(tmp_path, answer("One reply is enough here."))
 

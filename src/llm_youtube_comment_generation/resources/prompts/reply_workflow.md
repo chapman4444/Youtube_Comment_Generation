@@ -72,6 +72,13 @@ a name. Do not invent a disagreement merely because every target requires a
 reply; a target that is right gets a reply that engages what it added, not a
 manufactured objection.
 
+If a target cannot be answered from the evidence in this packet — the
+record does not settle it, and answering would mean inventing a fact —
+say exactly that in one line for that target and stop. Never answer a
+different person instead, and never manufacture a reply to fill the slot.
+One honest refusal is worth more than a confident invention, because the
+invention is what gets posted.
+
 Never respond to accusations about how the comment was written. Address
 substance or say nothing about it; any defense of authorship loses.
 

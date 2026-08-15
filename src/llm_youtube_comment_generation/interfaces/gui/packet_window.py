@@ -869,6 +869,32 @@ class PacketWindow:
         self._enable(buttons["open_packet"], bool(self.last_packet))
         self.reply_face_hint.set(view.progress or "Press 1 to begin.")
 
+    def _show_what_they_said(self, targets: Any) -> None:
+        """Fill the panel from the packet's own targets.
+
+        Read from the targets rather than re-derived from the thread: the
+        panel must show exactly who the packet answers, or it becomes a
+        second opinion about the queue.
+        """
+
+        widget = getattr(self, "their_text", None)
+        if widget is None:
+            return
+        lines = []
+        for target in targets or ():
+            body = " ".join(str(getattr(target, "text", "")).split())
+            lines.append(
+                f"{target.response_number}. "
+                f"{getattr(target, 'author_display_name', '')} "
+                f"({getattr(target, 'relationship', '')}, "
+                f"{getattr(target, 'like_count', 0):,} likes)\n"
+                f"   {body[:240]}"
+            )
+        self._set_text(
+            widget,
+            "\n\n".join(lines) or "This thread has no responses to answer.",
+        )
+
     def _open_finished_replies(self) -> None:
         session = getattr(self, "session", None)
         if session is None:
@@ -1125,7 +1151,7 @@ class PacketWindow:
         self.output_tabs.add(card, text="Paste answer")
         self.answer_tab = card
         card.columnconfigure(0, weight=1)
-        card.rowconfigure(3, weight=1)
+        card.rowconfigure(4, weight=1)
 
         self.card_title = ttk.Label(card, text="", font=("TkDefaultFont", 10, "bold"))
         self.card_title.grid(row=0, column=0, sticky="w")
@@ -1133,8 +1159,27 @@ class PacketWindow:
                                      justify="left", foreground="#444444")
         self.card_detail.grid(row=1, column=0, sticky="ew", pady=(4, 6))
 
+        # What the thread actually said, so the operator can judge whether a
+        # packet is worth spending without opening it. The legacy window had
+        # this panel and the rebuild dropped it (spec M4).
+        theirs = ttk.LabelFrame(card, text="What they said")
+        theirs.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        theirs.columnconfigure(0, weight=1)
+        self.their_text = tk.Text(
+            theirs, height=5, width=35, wrap="word", state="disabled",
+            relief="flat", background="#f6f6f6",
+        )
+        self.their_text.grid(row=0, column=0, sticky="nsew")
+        self._add_text_context_menu(self.their_text)
+        self._tip(
+            self.their_text,
+            "Every response this packet answers, newest last. Judge the "
+            "thread from here rather than opening the packet.",
+        )
+        self._set_text(self.their_text, "No thread has been built yet.")
+
         saved = ttk.LabelFrame(card, text="Saved final draft")
-        saved.grid(row=2, column=0, sticky="nsew", pady=(0, 6))
+        saved.grid(row=3, column=0, sticky="nsew", pady=(0, 6))
         saved.columnconfigure(0, weight=1)
         self.said = tk.Text(
             saved,
@@ -1154,7 +1199,7 @@ class PacketWindow:
         self._set_text(self.said, "No answer has been saved yet.")
 
         answer = ttk.LabelFrame(card, text="Model answer")
-        answer.grid(row=3, column=0, sticky="nsew", pady=(0, 6))
+        answer.grid(row=4, column=0, sticky="nsew", pady=(0, 6))
         answer.columnconfigure(0, weight=1)
         answer.rowconfigure(0, weight=1)
         self.answer_input = tk.Text(
@@ -1178,7 +1223,7 @@ class PacketWindow:
         )
 
         actions = ttk.Frame(card)
-        actions.grid(row=4, column=0, sticky="ew")
+        actions.grid(row=5, column=0, sticky="ew")
         self.primary = ttk.Button(actions, text="", command=self.do_primary)
         self.primary.pack(side="left")
         self._tip(
@@ -2654,6 +2699,7 @@ class PacketWindow:
             self.say("Every thread in the queue is done.")
             return
         self.last_packet = session.current_packet
+        self._show_what_they_said(getattr(session, "current_targets", ()))
 
     def _copy_current_packet(self, *, auto: bool = False) -> bool:
         """Copy the packet in front of you.

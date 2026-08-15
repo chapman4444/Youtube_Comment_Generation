@@ -133,6 +133,15 @@ def handle(
         events.emit(ProgressEvent(EventKind.PROGRESS, step="threads",
                                   current=index, total=len(mine)))
 
+    # Ranked by replies aimed at the owner, not by audience volume. A thread
+    # where forty people argue with each other under one of his comments is
+    # louder than one where three people asked him something directly, and
+    # ordering by volume put the side-argument first. Stable, so threads with
+    # equal counts keep the order the scan found them in.
+    threads.sort(
+        key=lambda thread: len(thread.direct_replies(owner)), reverse=True,
+    )
+
     truncated = [t for t in threads if t.truncated]
     if truncated:
         outcomes.append(RetrievalOutcome(
