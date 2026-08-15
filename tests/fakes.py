@@ -126,24 +126,44 @@ class FakeHistoryStore:
         return [dict(e) for e in self._entries]
 
     def append(self, entries: Sequence[dict[str, Any]]) -> int:
-        from llm_youtube_comment_generation.domain.history import normalise_for_match
-
-        known = {
-            (e.get("video_id"), normalise_for_match(e.get("draft", "")))
-            for e in self.load()
-        }
+        # Identity mirrors SqliteHistoryStore._event_key: the exact event —
+        # raw draft plus its identifying metadata — never normalized text.
+        # This fake used to dedupe on normalise_for_match, which asserted a
+        # fuzzy uniqueness the real v2 store deliberately removed (its
+        # migration docstring says why: it merged genuinely distinct
+        # events). A contract test in test_real_adapters_honor_the_contracts
+        # holds the two implementations to the same answer.
+        if self.corrupt:
+            raise HistoryCorruptionError(
+                "the history file could not be read as a list of records"
+            )
+        known = {self._event_key(e) for e in self._entries}
         added = 0
         for entry in entries:
             draft = str(entry.get("draft") or "").strip()
             if not draft:
                 continue
-            key = (entry.get("video_id"), normalise_for_match(draft))
+            key = self._event_key(entry)
             if key in known:
                 continue
             known.add(key)
             self._entries.append(dict(entry))
             added += 1
         return added
+
+    @staticmethod
+    def _event_key(entry: dict[str, Any]) -> tuple[str, ...]:
+        supplied = str(
+            entry.get("event_key") or entry.get("event_id") or ""
+        ).strip()
+        if supplied:
+            return (supplied,)
+        return tuple(
+            str(entry.get(field) or "")
+            for field in ("video_id", "workflow", "target",
+                          "target_comment_id", "thread_id", "run_id",
+                          "drafted_at", "source")
+        ) + (str(entry.get("draft") or "").strip(),)
 
     def quarantine(self) -> str:
         # Once per corruption, never once per draft.

@@ -1,50 +1,50 @@
-"""Phase 2's acceptance criterion, stated as a test.
+"""The shipped use cases run end-to-end on fakes, with no I/O.
 
-"A use case can be written against fakes with no I/O." This composes every
-port into one read-only flow and runs it. It is not the real use case — that
-is Phase 3 — it is proof that the seams hold.
+This file started life as Phase 2's acceptance test, with a toy use case
+defined inside the test because the real ones did not exist yet. The real
+ones landed and the toy stayed, so seven green tests were asserting nothing
+about shipped code while counting toward the pass tally — the harsh-critic
+review's stale-use-case finding. What runs here now is the application
+layer itself: ``scan_threads.handle`` (who under my comment is owed a
+reply) and ``inspect_video.handle`` (retrieve a video and report honestly),
+composed over the same fakes.
 
-The "no I/O" half needs no assertion of its own. The harness forbids sockets,
-subprocesses and desktop launches by default and fails any test that reaches
-for them, so this test passing IS the proof: if composing the ports touched
+The "no I/O" half needs no assertion of its own. The harness forbids
+sockets, subprocesses and desktop launches by default and fails any test
+that reaches for them, so these passing IS the proof: if a handler touched
 the network, it would error rather than pass.
 """
 
 from __future__ import annotations
 
 from fakes import (
-    FakeArtifactStore,
-    FakeClipboard,
     FakeClock,
     FakeEventSink,
-    FakeHistoryStore,
-    FakeSettingsStore,
     FakeTranscriptPort,
     FakeYouTubePort,
 )
-from llm_youtube_comment_generation.domain.candidates import (
-    candidates_across_threads,
+from llm_youtube_comment_generation.application.commands import (
+    InspectVideoCommand,
 )
-from llm_youtube_comment_generation.domain.comments import merge_comments
-from llm_youtube_comment_generation.domain.section_profile import (
-    length_rule_for,
-    measure_comment_register,
+from llm_youtube_comment_generation.application.inspect_video import (
+    handle as inspect_video,
+)
+from llm_youtube_comment_generation.application.scan_threads import (
+    ScanMyThreadsCommand,
+    handle as scan_threads,
 )
 from llm_youtube_comment_generation.domain.statuses import (
-    OperationResult,
     OperationStatus,
-    RetrievalStatus,
     TranscriptAvailability,
     WarningCode,
 )
-from llm_youtube_comment_generation.domain.threads import OwnerThread, parse_since
-from llm_youtube_comment_generation.ports.events import EventKind, ProgressEvent
+from llm_youtube_comment_generation.ports.events import EventKind
 
 OWNER = "UC" + "o" * 22
 VIDEO = "gC-J7zwYMAM"
 
 
-def build_ports(**overrides):
+def build_youtube(**overrides):
     comments = [
         {"comment_id": "c1", "author": "@owner", "author_channel_id": OWNER,
          "text": "my top level comment", "like_count": 40,
@@ -67,115 +67,51 @@ def build_ports(**overrides):
          "text": "you did not address the second half of it",
          "like_count": 3, "published_at": "2026-07-05T00:00:00Z"},
     ]}
-    ports = {
-        "youtube": FakeYouTubePort(
-            videos={VIDEO: {"video_id": VIDEO, "title": "A video",
-                            "channel_id": "UC" + "z" * 22}},
-            comments=comments,
-            replies=replies,
-            handles={"@owner": OWNER},
-        ),
-        "transcripts": FakeTranscriptPort(),
-        "clock": FakeClock(),
-        "clipboard": FakeClipboard(),
-        "artifacts": FakeArtifactStore(),
-        "history": FakeHistoryStore(),
-        "settings": FakeSettingsStore(),
-        "events": FakeEventSink(),
+    options = {
+        "videos": {VIDEO: {"video_id": VIDEO, "title": "A video",
+                           "channel_id": "UC" + "z" * 22}},
+        "comments": comments,
+        "replies": replies,
+        "handles": {"@owner": OWNER},
     }
-    ports.update(overrides)
-    return ports
+    options.update(overrides)
+    return FakeYouTubePort(**options)
 
 
-def find_outstanding(ports) -> OperationResult:
-    """A read-only use case: who under my comment is still owed a reply.
-
-    Written the way Phase 3 onward will write them — every dependency is a
-    port, every branch on external state is a typed status, and the return is
-    an OperationResult carrying warnings that are not errors.
-    """
-
-    youtube, events = ports["youtube"], ports["events"]
-    result = OperationResult()
-
-    events.emit(ProgressEvent(EventKind.STARTED, step="inspect"))
-    owner_channel = youtube.channel_id_for_handle("@owner")
-    youtube.video(VIDEO)
-
-    pages = [youtube.comment_threads(VIDEO, order=order, maximum=100)
-             for order in ("relevance", "time")]
-    for page in pages:
-        if not page.outcome.is_complete:
-            result.warn(
-                WarningCode.RETRIEVAL_INCOMPLETE,
-                f"retrieved {page.outcome.retrieved:,} of "
-                f"{page.outcome.reported_total:,}",
-            )
-    comments = merge_comments([page.comments for page in pages])
-
-    transcript = ports["transcripts"].fetch(VIDEO)
-    if not transcript.available:
-        result.warn(WarningCode.TRANSCRIPT_UNAVAILABLE, transcript.detail)
-
-    mine = [c for c in comments if c.get("author_channel_id") == owner_channel]
-    threads = []
-    for comment in mine:
-        page = youtube.replies(comment["comment_id"], maximum=100)
-        if not page.outcome.is_complete:
-            result.warn(WarningCode.RETRIEVAL_INCOMPLETE, "thread truncated")
-        threads.append(OwnerThread(
-            comment=comment,
-            replies=page.comments,
-            reported_reply_count=comment.get("total_reply_count", 0),
-        ))
-
-    candidates = candidates_across_threads(owner_channel, threads)
-    register = measure_comment_register(comments)
-
-    events.emit(ProgressEvent(
-        EventKind.FINISHED, step="inspect",
-        current=len(candidates), total=len(candidates),
-    ))
-
-    result.value = {
-        "candidates": candidates,
-        "outstanding": [c for c in candidates if c.outstanding],
-        "length_rule": length_rule_for(register),
-        "api_operations_used": youtube.api_operations_used,
-        "cutoff": parse_since("7", now=ports["clock"].now()),
-    }
-    result.metrics = {
-        "comments": len(comments),
-        "api_operations": youtube.api_operations_used,
-    }
-    return result
+def scan(youtube=None, **command_overrides):
+    options = {"video": VIDEO, "handle": "@owner"}
+    options.update(command_overrides)
+    return scan_threads(
+        ScanMyThreadsCommand(**options),
+        youtube=youtube or build_youtube(),
+        events=FakeEventSink(),
+        clock=FakeClock(),
+    )
 
 
-def test_a_use_case_runs_end_to_end_on_fakes_alone():
-    """Phase 2 acceptance. No network, no filesystem, no display."""
+def test_the_scan_use_case_runs_end_to_end_on_fakes_alone():
+    """No network, no filesystem, no display — and it is the real handler,
+    so what this proves is the shipped composition, not a stand-in."""
 
-    result = find_outstanding(build_ports())
+    result = scan()
 
     assert result.ok
     assert result.status is OperationStatus.SUCCEEDED
     assert result.warnings == []
 
-    outstanding = result.value["outstanding"]
+    outstanding = [c for c in result.value.candidates if c.outstanding]
     assert [c.author for c in outstanding] == ["@alice"]
     assert outstanding[0].replied_again is True
-    assert result.value["cutoff"] == "2026-07-20T12:00:00Z"
-    assert result.metrics["comments"] == 2
+    assert result.metrics["outstanding"] == 1
+    assert result.value.scanned_comments == 2
 
 
-def test_the_use_case_reports_incomplete_retrieval_as_a_warning_not_a_failure():
-    """Warnings are not errors.
+def test_incomplete_retrieval_is_a_warning_not_a_failure():
+    """A truncated scan still produces a useful queue; it just must not be
+    presented as proof that nobody else is waiting."""
 
-    A truncated scan still produces a useful answer; it just must not be
-    presented as a complete one.
-    """
-
-    ports = build_ports()
-    ports["youtube"].comments.extend(
+    youtube = build_youtube()
+    youtube.comments.extend(
         {"comment_id": f"filler{i}", "author": "@x",
          "author_channel_id": "UC" + "x" * 22, "text": "f",
          "like_count": 0, "total_reply_count": 0,
@@ -183,70 +119,77 @@ def test_the_use_case_reports_incomplete_retrieval_as_a_warning_not_a_failure():
         for i in range(200)
     )
 
-    result = find_outstanding(ports)
+    result = scan(youtube=youtube, max_comments=100)
 
     assert result.ok is True
     assert result.status is OperationStatus.SUCCEEDED_WITH_WARNINGS
-    assert any(w.code is WarningCode.RETRIEVAL_INCOMPLETE for w in result.warnings)
+    assert any(w.code is WarningCode.RETRIEVAL_INCOMPLETE
+               for w in result.warnings)
+    assert not result.value.retrieval.may_conclude_absence
 
 
-def test_a_missing_transcript_warns_and_the_run_still_succeeds():
-    ports = build_ports(
-        transcripts=FakeTranscriptPort(
-            availability=TranscriptAvailability.NOT_PUBLISHED
-        )
-    )
+def test_the_since_cutoff_is_measured_by_the_clock_port():
+    """--since 7 with a frozen clock at 2026-07-27 puts the cutoff at
+    2026-07-20, which is after every reply in the fixture — so none are
+    new, while a 60-day window catches all three."""
 
-    result = find_outstanding(ports)
+    week = scan(since="7")
+    assert week.value.threads[0].new_replies == []
 
-    assert result.ok is True
-    assert [w.code for w in result.warnings] == [WarningCode.TRANSCRIPT_UNAVAILABLE]
-    assert result.value["outstanding"]
+    two_months = scan(since="60")
+    assert len(two_months.value.threads[0].new_replies) == 3
 
 
 def test_the_use_case_reports_the_quota_it_spent():
-    """Quota is finite; a use case that cannot say what it cost is unusable."""
+    """Quota is finite; a use case that cannot say what it cost is
+    unusable. One handle lookup, two orderings, one reply thread."""
 
-    result = find_outstanding(build_ports())
+    result = scan()
 
-    # handle + video + two orderings + one reply thread
-    assert result.value["api_operations_used"] == 5
-    assert result.metrics["api_operations"] == 5
+    assert result.value.api_operations_used == 4
+    assert result.metrics["api_operations"] == 4
 
 
 def test_the_events_describe_the_run_in_facts():
-    ports = build_ports()
-    find_outstanding(ports)
+    events = FakeEventSink()
+    scan_threads(
+        ScanMyThreadsCommand(video=VIDEO, handle="@owner"),
+        youtube=build_youtube(), events=events, clock=FakeClock(),
+    )
 
-    assert ports["events"].kinds() == [EventKind.STARTED, EventKind.FINISHED]
-    assert ports["events"].steps() == ["inspect", "inspect"]
-    assert ports["events"].events[-1].fraction == 1.0
+    kinds = events.kinds()
+    assert kinds[0] is EventKind.STARTED
+    assert kinds[-1] is EventKind.FINISHED
+    assert "scan" in events.steps()
 
 
-def test_nothing_in_the_use_case_touched_the_clipboard_or_the_history():
-    """A read-only use case must be observably read-only.
+def test_a_missing_transcript_warns_and_the_inspection_still_succeeds():
+    """The transcript-bearing use case, on the same fakes: an absent
+    transcript is an ordinary outcome, not a failed run."""
 
-    The harness already forbids the network and the desktop; this covers the
-    two stateful ports it does not, so "read-only" is asserted rather than
-    assumed from the absence of a failure.
-    """
+    result = inspect_video(
+        InspectVideoCommand(video=VIDEO),
+        youtube=build_youtube(),
+        transcripts=FakeTranscriptPort(
+            availability=TranscriptAvailability.NOT_PUBLISHED
+        ),
+        events=FakeEventSink(),
+    )
 
-    ports = build_ports()
-    find_outstanding(ports)
-
-    assert ports["clipboard"].writes == []
-    assert ports["history"].load() == []
-    assert ports["artifacts"].committed_names() == ()
-    assert ports["artifacts"].staged_names() == ()
+    assert result.ok is True
+    assert [w.code for w in result.warnings] == [
+        WarningCode.TRANSCRIPT_UNAVAILABLE
+    ]
+    assert result.value.comments
 
 
 def test_the_same_fakes_give_the_same_answer_twice():
-    """Determinism is what makes these usable for the phases that follow."""
+    """Determinism is what makes these usable as a harness for everything
+    built above them."""
 
-    first = find_outstanding(build_ports())
-    second = find_outstanding(build_ports())
+    first = scan()
+    second = scan()
 
-    assert [c.author for c in first.value["outstanding"]] == \
-           [c.author for c in second.value["outstanding"]]
-    assert first.value["length_rule"] == second.value["length_rule"]
+    assert [c.author for c in first.value.candidates] == \
+           [c.author for c in second.value.candidates]
     assert first.metrics == second.metrics

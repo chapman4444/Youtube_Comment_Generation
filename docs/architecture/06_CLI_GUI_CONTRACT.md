@@ -134,8 +134,9 @@ history beside the old output directory are copied forward on first use; the
 legacy files are left untouched.
 
 `ytcomment privacy check` audits Git's publishable file set. Review-package
-creation runs the same audit against the staged allowlisted copy before
-WinRAR is allowed to create the archive.
+creation stages the committed tree with `git archive HEAD` — never an
+allowlisted copy of the working directory — and runs the same audit inside
+that stage before WinRAR is allowed to create the archive.
 
 ## Global capabilities
 

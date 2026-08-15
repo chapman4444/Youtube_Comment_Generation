@@ -1,8 +1,12 @@
 """The behaviour every implementation of a port must satisfy.
 
-These are written against the fakes now and must be run against the real
-adapters as each one lands. That is the point of a contract test: it is the
-shared definition of correct, not a test of one implementation.
+These run against the fakes; test_real_adapters_honor_the_contracts.py in
+this directory runs the same rules against every real adapter that can be
+exercised without a network or a display. That is the point of a contract
+test: it is the shared definition of correct, not a test of one
+implementation — and for a year this file's own docstring promised the
+real-adapter half while nothing ran it, which is how the fake history
+store drifted a whole uniqueness rule away from the real one.
 
 Where a rule exists because getting it wrong destroyed something, the test
 says which thing.
@@ -267,11 +271,21 @@ def test_recording_the_same_draft_twice_adds_one_row():
     assert len(store.load()) == 1
 
 
-def test_a_draft_that_was_lightly_edited_is_still_the_same_draft():
+def test_a_lightly_edited_draft_is_a_new_event_not_a_duplicate():
+    """Persistence identity is the exact event; fuzzy matching is not it.
+
+    The v1 store deduplicated on normalized text and merged genuinely
+    distinct postings, which is why the v2 migration removed that rule.
+    Normalized text lives on in match_key for the scoreboard to match likes
+    with — matching is its job, identity is not. This fake asserted the v1
+    rule for a year after the real store dropped it, precisely because no
+    contract test ran against the real adapter.
+    """
+
     store = FakeHistoryStore()
     store.append([{"video_id": "v1", "draft": "The Same Reply Text!"}])
 
-    assert store.append([{"video_id": "v1", "draft": "the same reply text"}]) == 0
+    assert store.append([{"video_id": "v1", "draft": "the same reply text"}]) == 1
 
 
 def test_an_empty_draft_is_never_recorded():
