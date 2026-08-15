@@ -144,3 +144,66 @@ def test_an_empty_packet_says_which_kind_of_empty_it_is(tmp_path):
     assert "--limit held back all 1 people still waiting" in out
     assert "Nobody in this scan is waiting" not in packet
     assert "do not read it as nobody being owed an answer" in packet
+
+
+# --------------------------------------------------------------------------
+# Per-thread packet files and the combined document
+# --------------------------------------------------------------------------
+
+
+def test_per_thread_writes_one_packet_file_for_each_thread(tmp_path):
+    """The legacy directory of reply_to_NN_handle.md files, restored: two
+    of the operator's comments drew responses, so a packet is written for
+    each alongside the deliverable, plus one combined document."""
+
+    code, out, root = run(
+        ["reply", "build", VIDEO, "--handle-of", "bob", "--per-thread"],
+        tmp_path,
+    )
+    directory = next(root.iterdir())
+    names = sorted(p.name for p in directory.iterdir() if p.is_file())
+
+    assert code == 0, out
+    per_thread = [n for n in names if n.startswith("reply_to_")]
+    assert len(per_thread) == 2, names
+    assert "reply_combined_packet.md" in names
+    # The deliverable is still the file the operator pastes.
+    assert "reply_packet.md" in names
+    assert "per thread" in out
+
+
+def test_the_combined_packet_holds_every_thread_in_order(tmp_path):
+    _, _, root = run(
+        ["reply", "build", VIDEO, "--handle-of", "bob", "--per-thread"],
+        tmp_path,
+    )
+    directory = next(root.iterdir())
+    combined = (directory / "reply_combined_packet.md").read_text(
+        encoding="utf-8")
+
+    from llm_youtube_comment_generation.domain.sanitize import (
+        SOURCE_BOUNDARY_CLOSE,
+        SOURCE_BOUNDARY_OPEN,
+    )
+
+    assert combined.startswith("# Reply packets for this video")
+    assert "2 threads" in combined
+    assert combined.count("## Packet ") == 2
+    # Each packet keeps its own boundary rather than being merged. The
+    # phrase also appears inside each packet's own rules, so the real
+    # markers are counted, not the words.
+    assert combined.count(SOURCE_BOUNDARY_OPEN) == 2
+    assert combined.count(SOURCE_BOUNDARY_CLOSE) == 2
+
+
+def test_the_filename_is_safe_for_any_display_name():
+    from llm_youtube_comment_generation.domain.reply_packet import (
+        reply_packet_filename,
+    )
+
+    assert reply_packet_filename(1, "@alice") == "reply_to_01_alice.md"
+    assert reply_packet_filename(12, "@bob") == "reply_to_12_bob.md"
+    assert reply_packet_filename(3, "../../etc/passwd") \
+        == "reply_to_03_.._.._etc_passwd.md"
+    assert reply_packet_filename(4, "") == "reply_to_04_unknown.md"
+    assert reply_packet_filename(5, "@a b/c:d") == "reply_to_05_a_b_c_d.md"

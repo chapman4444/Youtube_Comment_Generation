@@ -19,7 +19,11 @@ from llm_youtube_comment_generation.interfaces.gui.sequence import (
     read_clipboard,
 )
 
-ANSWER = "Some reasoning.\n\n### Hardened final\nThe reply I would send.\n"
+ANSWER = (
+    "# Copy/Paste Replies\n\n"
+    "**Post beneath comment ID:** AAA.111\n\n"
+    "```text\nThe reply I would send.\n```\n"
+)
 PACKET = (
     "## BEGIN UNTRUSTED SOURCE MATERIAL\nstuff\n"
     "### Hardened final\nwrite one here\n"
@@ -101,24 +105,28 @@ def test_our_own_packet_is_recognised_before_it_is_read_as_an_answer():
     assert not offer.offered
 
 
-def test_an_answer_is_reduced_only_far_enough_to_recognise_it():
+def test_a_sheet_is_recognised_by_shape_not_validated_here():
+    """The session owns validation against the packet's target ids; this
+    only decides whether to offer."""
+
     offer = read_clipboard(ANSWER, step=Step.PEOPLE)
 
-    assert offer.payload == "The reply I would send."
+    assert offer.holding is Holding.ANSWER
+    assert offer.offered
 
 
 def test_the_untouched_clipboard_is_kept_for_whoever_acts_on_it():
-    """Extracting here and submitting the result meant the session extracted
-    a second time, from text whose "### Hardened final" heading had already
-    been consumed -- so every answer was refused for having no heading. Two
-    implementations of one rule, and they disagreed."""
+    """Extracting here and submitting the result once meant the session
+    parsed a second time, from text already consumed -- two implementations
+    of one rule, and they disagreed. The sheet must survive intact for the
+    session to parse."""
 
     offer = read_clipboard(ANSWER, step=Step.PEOPLE)
 
     # Surrounding whitespace goes; nothing that carries meaning does. The
-    # heading is what the session looks for, so the heading has to survive.
+    # id lines are what the session parses, so they have to survive.
     assert offer.raw == ANSWER.strip()
-    assert "### Hardened final" in offer.raw
+    assert "Post beneath comment ID" in offer.raw
 
 
 def test_a_triage_answer_is_a_list_of_handles_not_a_hardened_final():
@@ -142,7 +150,10 @@ def test_the_chip_counts_the_people_the_triage_answer_named():
     assert "2 people chosen" in two.label
 
 
-def test_a_hardened_final_is_not_a_triage_answer():
+def test_a_reply_sheet_is_not_a_triage_answer():
+    """Even at the triage step, and even though a sheet's own headings can
+    carry @handles: the sheet shape wins."""
+
     offer = read_clipboard(ANSWER, step=Step.TRIAGE)
 
     assert offer.holding is Holding.ANSWER

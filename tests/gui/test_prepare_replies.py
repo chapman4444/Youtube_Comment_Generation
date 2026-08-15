@@ -28,8 +28,10 @@ from llm_youtube_comment_generation.interfaces.gui.worker import (
 
 
 class Person:
-    def __init__(self, author):
+    def __init__(self, author, thread_id=None):
         self.author = author
+        # Distinct threads by default; a shared id models thread-mates.
+        self.thread_id = thread_id if thread_id is not None else author
 
 
 class Scan:
@@ -97,14 +99,19 @@ def test_the_triage_packet_names_the_people_the_queue_will_offer():
 
     seen = {}
 
-    def triage(candidates, maximum_characters):
+    def triage(candidates, maximum_characters, video=None, threads=()):
         seen["candidates"] = list(candidates)
+        seen["video"] = video
         return "packet"
 
     result = run(triage_for=triage)
 
     assert [p.author for p in seen["candidates"]] == list(result.people)
     assert [p.author for p in result.session.targets] == list(result.people)
+    # The scan's video record reaches the triage builder — without it the
+    # packet lists replies to a comment it never shows, on a video it never
+    # names, and the reader has no ground for any verdict.
+    assert seen["video"], "triage_for was not handed the video record"
 
 
 def test_nobody_waiting_means_no_triage_packet():
@@ -125,6 +132,93 @@ def test_no_triage_builder_is_allowed_and_skips_that_step():
 
 
 # -- what it tells the operator --------------------------------------------
+
+
+def test_the_guided_limit_bounds_session_triage_and_run_alike():
+    """The limit is resolved once. The review caught triage ranking people
+    the limit had withheld from the session, so acting on the ranking
+    targeted somebody with no packet."""
+
+    seen = {}
+
+    def triage(candidates, **kwargs):
+        seen["candidates"] = list(candidates)
+        return "triage"
+
+    result = run(
+        waiting=[Person("@alice"), Person("@bob"), Person("@carol")],
+        model=options(guided_limit=2),
+        triage_for=triage,
+    )
+
+    offered = result.session.kwargs["waiting"]
+    assert [p.author for p in offered] == ["@alice", "@bob"]
+    assert [p.author for p in seen["candidates"]] == ["@alice", "@bob"]
+    assert result.people == ("@alice", "@bob")
+
+
+def test_top_repliers_narrows_the_run_to_the_most_liked():
+    people = [
+        Person("@quiet", thread_id="t1"),
+        Person("@loud", thread_id="t2"),
+    ]
+    people[0].reply = {"like_count": 1}
+    people[1].reply = {"like_count": 40}
+
+    result = run(waiting=people, model=options(top_repliers=1))
+
+    assert result.people == ("@loud",)
+
+
+def test_per_thread_widens_the_run_to_every_answered_thread():
+    class ThreadStub:
+        def __init__(self, comment_id, replies):
+            self.comment_id = comment_id
+            self.replies = replies
+
+    found = Scan([Person("@alice", thread_id="t1")])
+    found.threads = [
+        ThreadStub("t1", [{"author": "@alice"}]),
+        ThreadStub("t2", [{"author": "@dave", "comment_id": "x1"}]),
+    ]
+
+    result = run(scan=lambda **kwargs: found, model=options(per_thread=True))
+
+    assert [p.thread_id for p in result.session.kwargs["waiting"]] \
+        == ["t1", "t2"]
+
+
+def test_reply_runs_fall_back_on_dials_the_batch_contract_cannot_carry():
+    """A preset is a bundle, not a per-run instruction: "Evidence first"
+    carries grounding=summary for comments, and refusing the whole reply
+    build over it would strand the operator."""
+
+    model = options()
+    model.dials = {"grounding": "summary", "person": "to_author"}
+
+    result = run(model=model)
+
+    dials = result.session.kwargs["dials"]
+    assert dials["grounding"] != "summary"
+    assert dials["person"] != "to_author"
+
+
+def test_the_limit_counts_threads_and_never_splits_one():
+    """Alice and Bob share a thread: the packet answers both, so a limit
+    that dropped Bob would lie. The limit bounds threads, whole."""
+
+    result = run(
+        waiting=[
+            Person("@alice", thread_id="t1"),
+            Person("@bob", thread_id="t1"),
+            Person("@carol", thread_id="t2"),
+        ],
+        model=options(guided_limit=1),
+    )
+
+    offered = result.session.kwargs["waiting"]
+    assert [p.author for p in offered] == ["@alice", "@bob"]
+    assert result.people == ("@alice", "@bob")
 
 
 def test_it_counts_the_waiting_against_everyone_found():
@@ -181,12 +275,16 @@ def test_a_cancel_during_the_scan_stops_before_the_transcript():
 
 
 def test_the_chosen_registers_and_dials_reach_the_session():
+    """Every dial the batch reply contract can carry arrives untouched; the
+    ones it cannot are covered by the fall-back test above."""
+
     result = run(model=options(reply_variations=("dry_one_liner",),
                                reply_approach_mode="custom",
-                               dials={"grounding": "summary"}))
+                               dials={"humor": "none", "ending": "flat"}))
 
     assert result.session.kwargs["registers"] == ("dry_one_liner",)
-    assert result.session.kwargs["dials"]["grounding"] == "summary"
+    assert result.session.kwargs["dials"]["humor"] == "none"
+    assert result.session.kwargs["dials"]["ending"] == "flat"
 
 
 def test_no_register_chosen_still_sends_the_reply_defaults():

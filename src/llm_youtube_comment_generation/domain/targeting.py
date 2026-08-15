@@ -108,6 +108,28 @@ def annotate_reply_targets(
     if owner_handle:
         known.append(owner_handle)
 
+    # Display names are not unique. Map each name to the distinct stable
+    # identities using it, so a mention of a shared name is recognised as
+    # ambiguous instead of being resolved to whoever happened to come first.
+    # The owner is one more identity under their handle; a missing channel
+    # id is itself a distinct unknown identity, keyed by position, because
+    # two id-less accounts sharing a name cannot be proved to be one person.
+    identities: dict[str, set[str]] = {}
+    for index, reply in enumerate(replies):
+        name = handle_of(reply).casefold()
+        if name:
+            channel = str(reply.get("author_channel_id") or "")
+            identities.setdefault(name, set()).add(
+                channel or f"anonymous:{index}"
+            )
+    if owner_handle:
+        identities.setdefault(owner_handle.casefold(), set()).add(
+            owner_channel_id or "owner:"
+        )
+
+    def unambiguous(name: str) -> bool:
+        return len(identities.get(name.casefold(), set())) <= 1
+
     annotated: list[dict[str, Any]] = []
     for reply in replies:
         record = dict(reply)
@@ -123,7 +145,9 @@ def annotate_reply_targets(
         )
         # Three states, not two. A mention naming somebody not in this thread
         # cannot be classified either way, and guessing "side exchange" made
-        # legitimate replies disappear from the queue.
+        # legitimate replies disappear from the queue. A mention naming a
+        # display name that several identities share is the same kind of
+        # uncertainty, surfaced the same way.
         if record["is_owner_reply"]:
             record["responds_to_author"] = target
             record["target_state"] = "owner_reply"
@@ -131,6 +155,9 @@ def annotate_reply_targets(
             # No mention: YouTube's Reply button on the owner's comment.
             record["responds_to_author"] = ""
             record["target_state"] = "owner"
+        elif resolved and not unambiguous(target):
+            record["responds_to_author"] = target
+            record["target_state"] = "unknown"
         elif target.casefold() == owner_handle.casefold():
             record["responds_to_author"] = owner_handle
             record["target_state"] = "owner"

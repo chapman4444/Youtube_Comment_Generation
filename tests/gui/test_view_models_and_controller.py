@@ -41,8 +41,21 @@ def message(cid, author, text, when, *, channel=None, likes=0):
     }
 
 
-def answer(text="the finished reply"):
-    return f"### Hardened final\n{text}\n"
+def answer(controller, text="the finished reply"):
+    """A well-formed reply sheet for whatever packet is in front of us."""
+
+    parts = ["# Copy/Paste Replies", "", "## Direct replies to your comment",
+             ""]
+    for target in controller.session.current_targets:
+        parts.extend([
+            f"**Post beneath comment ID:** {target.comment_id}",
+            "",
+            "```text",
+            text,
+            "```",
+            "",
+        ])
+    return "\n".join(parts)
 
 
 @pytest.fixture
@@ -182,7 +195,8 @@ def test_submitting_an_answer_accepts_and_saves_it(controller):
     controller.submit(Intent.START)
     controller.submit(Intent.NEXT_PERSON)
 
-    controller.submit(Intent.SUBMIT_PERSON_ANSWER, answer("a real reply"))
+    controller.submit(Intent.SUBMIT_PERSON_ANSWER,
+                      answer(controller, "a real reply"))
 
     assert controller.session.state.phase is Phase.DRAFT_ACCEPTED
     assert "a real reply" in controller.session.artifacts.read(REVIEW_FILENAME)
@@ -193,11 +207,12 @@ def test_submitting_reads_the_clipboard_when_no_text_is_given(controller):
 
     controller.submit(Intent.START)
     controller.submit(Intent.NEXT_PERSON)
-    controller.session.clipboard.write(answer("from the clipboard"))
+    controller.session.clipboard.write(answer(controller, "from the clipboard"))
 
     controller.submit(Intent.SUBMIT_PERSON_ANSWER)
 
-    assert len(controller.session.accepted) == 1
+    # One sheet, both targets in the thread: two drafts accepted.
+    assert len(controller.session.accepted) == 2
     assert controller.session.accepted[0].draft == "from the clipboard"
 
 
@@ -228,7 +243,7 @@ def test_skip_moves_on_without_recording_a_draft(controller):
 def test_cancel_stops_and_keeps_what_was_accepted(controller):
     controller.submit(Intent.START)
     controller.submit(Intent.NEXT_PERSON)
-    controller.submit(Intent.SUBMIT_PERSON_ANSWER, answer("kept"))
+    controller.submit(Intent.SUBMIT_PERSON_ANSWER, answer(controller, "kept"))
 
     controller.submit(Intent.CANCEL)
 
@@ -239,7 +254,7 @@ def test_cancel_stops_and_keeps_what_was_accepted(controller):
 def test_save_finishes_the_run(controller):
     controller.submit(Intent.START)
     controller.submit(Intent.NEXT_PERSON)
-    controller.submit(Intent.SUBMIT_PERSON_ANSWER, answer())
+    controller.submit(Intent.SUBMIT_PERSON_ANSWER, answer(controller))
 
     controller.submit(Intent.SAVE)
 
@@ -249,7 +264,7 @@ def test_save_finishes_the_run(controller):
 def test_open_review_never_advances_the_run(controller):
     controller.submit(Intent.START)
     controller.submit(Intent.NEXT_PERSON)
-    controller.submit(Intent.SUBMIT_PERSON_ANSWER, answer())
+    controller.submit(Intent.SUBMIT_PERSON_ANSWER, answer(controller))
     controller.submit(Intent.SAVE)
     phase = controller.session.state.phase
 

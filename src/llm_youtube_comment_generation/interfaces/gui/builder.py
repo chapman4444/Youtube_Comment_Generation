@@ -26,6 +26,11 @@ from typing import Any, Callable
 
 from ...application import build_comment_packet
 from ...application.build_comment_packet import BuildCommentPacketCommand
+from ...application.guided_session import (
+    every_thread_selection,
+    top_replier_selection,
+    whole_thread_selection,
+)
 from ...application.debug_build import TemplateLogicAuditContext
 from ...domain.errors import OperationCancelled
 from ...domain.section_profile import parse_length
@@ -374,36 +379,65 @@ def prepare_replies(
     job.check_cancelled()
 
     artifacts = artifacts_for(found.video_id, options.output_directory)
+    # The limit is resolved exactly once, and it keeps whole threads. The
+    # session, the triage packet and the visible run must all describe the
+    # same people: the first review caught triage ranking candidates the
+    # limit had withheld, and the second caught a person-count limit
+    # splitting a thread whose dropped people still got replies.
+    waiting = list(found.waiting)
+    if options.per_thread:
+        # Every thread that drew a response, not only the ones with somebody
+        # still owed an answer.
+        waiting = every_thread_selection(waiting, found.threads)
+    if options.top_repliers:
+        waiting = top_replier_selection(waiting, options.top_repliers)
+        job.say(
+            f"Top repliers: {len(waiting)} of {len(found.waiting)} by likes.",
+            0.7,
+        )
+    selected = whole_thread_selection(waiting, options.guided_limit)
     session = session_factory(
         found=found,
-        waiting=found.waiting[:options.guided_limit],
+        waiting=selected,
         transcript=transcript,
         templates=templates,
         artifacts=artifacts,
         events=events,
         registers=options.registers_for("reply"),
-        dials=options.dial_values(),
+        dials=options.dial_values("reply"),
         packet_characters=options.packet_characters,
     )
-    # Built from the same list the session was given, so the triage packet and
-    # the queue can never name different people.
     triage = ""
-    if triage_for is not None and found.waiting:
+    if triage_for is not None and selected:
         triage = triage_for(
-            candidates=found.waiting,
+            candidates=selected,
             maximum_characters=options.packet_characters,
+            # The triage template promises the owner's comment and the video;
+            # a packet listing replies with neither is undecidable. The scan
+            # already fetched the video record, so no second API call.
+            video=found.video,
+            threads=found.threads,
         )
 
-    job.say(f"Ready: {len(found.waiting)} people.", 1.0)
+    job.say(
+        f"Ready: {len(selected)} of {len(found.waiting)} people.", 1.0,
+    )
     return ReplyRun(
         session=session,
         triage_packet=triage,
-        people=tuple(getattr(c, "author", "") for c in found.waiting),
+        people=tuple(getattr(c, "author", "") for c in selected),
         transcript=transcript,
         receipt={
             "video": dict(found.video),
             "total": found.total,
             "waiting": len(found.waiting),
+            "retrieval": {
+                "status": getattr(
+                    getattr(getattr(found, "retrieval", None), "status", None),
+                    "value", "unknown"),
+                "notes": [str(note) for note in getattr(
+                    getattr(found, "retrieval", None), "notes", ()) or ()],
+            },
             "api_operations_used": int(
                 getattr(found, "api_operations_used", 0) or 0
             ),

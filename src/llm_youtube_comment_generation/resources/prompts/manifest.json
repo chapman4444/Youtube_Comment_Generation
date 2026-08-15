@@ -53,5 +53,25 @@
   "reply_triage.md": {
     "placeholders": [],
     "required": false
+  },
+  "engage_workflow.md": {
+    "placeholders": [
+      "check_count",
+      "output_directives",
+      "variation_specs"
+    ],
+    "required": false
+  },
+  "section_triage.md": {
+    "placeholders": [],
+    "required": false
+  },
+  "acknowledge_workflow.md": {
+    "placeholders": [
+      "check_count",
+      "output_directives",
+      "variation_specs"
+    ],
+    "required": false
   }
 }

@@ -38,7 +38,11 @@ from llm_youtube_comment_generation.infrastructure.json_preset_store import (
 )
 
 VIDEO_URL = "https://www.youtube.com/watch?v=gC-J7zwYMAM"
-ANSWER = "Reasoning.\n\n### Hardened final\nThe reply I would send.\n"
+ANSWER = (
+    "# Copy/Paste Replies\n\n"
+    "**Post beneath comment ID:** AAA.111\n\n"
+    "```text\nThe reply I would send.\n```\n"
+)
 
 
 class FakeClipboard:
@@ -850,7 +854,10 @@ def test_reply_build_auto_copies_the_first_person_packet(window):
             self.state.phase.value = "targets_selected"
 
         def next_person(self):
+            # None means the queue is exhausted, so a live thread must be
+            # returned — the window clears the packet otherwise.
             self.current_packet = "reply packet"
+            return self.targets[0]
 
         def copy_packet(self):
             window.clipboard.write(self.current_packet)
@@ -1479,3 +1486,147 @@ def test_a_saved_answer_replaces_an_earlier_refusal_in_the_panel(window):
     window.take_comment_answer()
 
     assert window.said.get("1.0", "end-1c") == "The saved comment."
+
+
+# -- the reply face: the old application's tab, restored -------------------
+
+
+def test_the_reply_face_shows_the_numbered_steps(window):
+    """The operator's screenshot: username on the face, then 1-4 in a
+    "Do these in order" panel, then recovery buttons. Every button drives
+    the session machinery; none is decoration."""
+
+    for key in ("build", "copy_triage", "paste_triage", "copy_reply",
+                "paste_reply", "open_finished", "skip", "start_over",
+                "open_so_far", "open_packet", "find"):
+        assert key in window.reply_step_buttons, key
+    assert window.reply_step_buttons["build"].cget("text") \
+        == "Build and find who needs a reply"
+    assert window.reply_step_buttons["open_finished"].cget("text") \
+        == "Open the finished replies"
+    assert "Press 1 to begin." in window.reply_face_hint.get()
+
+
+def test_the_reply_face_appears_only_in_reply_mode(window):
+    window.mode.set("comment")
+    window._mode_changed()
+    assert window.reply_face.grid_info() == {}
+
+    window.mode.set("reply")
+    window._mode_changed()
+    assert window.reply_face.grid_info() != {}
+
+
+def test_the_username_field_writes_the_shared_setting(window):
+    window.my_handle_var.set("@goss4444")
+
+    assert window.options.my_handle == "@goss4444"
+
+
+def test_no_control_advertises_unfinished_work(window):
+    """A disabled control whose tooltip says "still being ported" is a
+    promise the window cannot keep. Controls appear when they work."""
+
+    import pathlib
+
+    source = pathlib.Path(
+        window.__class__.__module__.replace(".", "/") + ".py")
+    if not source.exists():                       # installed layout
+        import llm_youtube_comment_generation.interfaces.gui.packet_window \
+            as module
+        source = pathlib.Path(module.__file__)
+    text = source.read_text(encoding="utf-8")
+
+    for phrase in ("still being ported", "Not restored yet",
+                   "not restored yet", "coming soon"):
+        assert phrase not in text, phrase
+
+
+def test_nothing_on_the_reply_face_advances_without_a_press(window):
+    """Wired and removed the same day at the operator's direction. The
+    checkboxes are gone and no code path submits an answer or starts a
+    build off the clipboard poll."""
+
+    assert not hasattr(window, "auto_run_var")
+    assert not hasattr(window, "auto_watch_var")
+    assert not hasattr(window, "_maybe_auto_advance")
+
+
+def test_step_buttons_follow_the_sequence(window):
+    """Step 2 and 3 buttons are dead until their step is in front of you."""
+
+    window.mode.set("reply")
+    window._mode_changed()
+    window.refresh()
+
+    assert str(window.reply_step_buttons["copy_triage"].cget("state")) \
+        == "disabled"
+    assert str(window.reply_step_buttons["paste_reply"].cget("state")) \
+        == "disabled"
+    assert str(window.reply_step_buttons["build"].cget("state")) == "normal"
+
+
+def test_choosing_a_person_from_the_list_fills_answer_one(window):
+    window.reply_people_box["values"] = ("@alice", "@bob")
+    window.reply_people_box.set("@bob")
+    window._person_chosen_from_list()
+
+    assert window.answer_one_var.get() == "@bob"
+
+
+def test_triage_keeps_the_whole_thread_of_a_chosen_person(window):
+    """The second review's probe: choosing Alice while Bob shares her
+    thread must keep Bob — the packet answers the thread whole — and the
+    window must say so instead of labelling it a one-person run."""
+
+    from fakes import FakeArtifactStore, FakeClipboard, FakeEventSink
+    from llm_youtube_comment_generation.application.guided_session import (
+        GuidedSession,
+    )
+    from llm_youtube_comment_generation.domain.candidates import (
+        build_reply_candidates,
+    )
+    from llm_youtube_comment_generation.domain.threads import OwnerThread
+    from llm_youtube_comment_generation.infrastructure import prompt_resources
+
+    owner = "UC" + "o" * 22
+
+    def msg(cid, author, text, channel=None):
+        return {
+            "comment_id": cid, "author": author, "text": text,
+            "author_channel_id": channel
+            or ("UC" + author.lstrip("@").ljust(22, "z"))[:24],
+            "like_count": 0, "published_at": "2026-07-02T00:00:00Z",
+        }
+
+    replies = [
+        msg("r1", "@alice", "a challenge"),
+        msg("r2", "@bob", "a separate question"),
+    ]
+    thread = OwnerThread(
+        comment=msg("mine", "@owner", "my comment", owner), replies=replies)
+    window.session = GuidedSession(
+        targets=build_reply_candidates(owner, "@owner", replies, "mine"),
+        threads={"mine": thread},
+        owner_channel_id=owner,
+        video={"video_id": "gC-J7zwYMAM", "title": "A video"},
+        templates={
+            "reply_workflow.md":
+                prompt_resources.load("reply_workflow.md").text,
+            "reply_final_check.md":
+                prompt_resources.load("reply_final_check.md").text,
+        },
+        artifacts=FakeArtifactStore(), clipboard=FakeClipboard(),
+        events=FakeEventSink(),
+    )
+    window.mode.set("reply")
+    window._mode_changed()
+    window.sequence.people = ("@alice", "@bob")
+    window.sequence.advance_to(Step.TRIAGE)
+    window.answer_input.insert("1.0", "@alice | 1 | worth answering\n")
+
+    window.take_triage()
+
+    assert {t.author for t in window.session.targets} == {"@alice", "@bob"}
+    assert "answered whole" in window.status.get() \
+        or "covering 2 people" in window.status.get()

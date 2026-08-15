@@ -334,7 +334,8 @@ def test_critique_and_final_reject_unsupported_repeated_analysis():
 def test_reply_specs_use_the_same_dimension_semantics_as_comments():
     specs = reply_variation_specs(None)
 
-    assert specs.startswith("Then output exactly these five variation sections")
+    assert specs.startswith(
+        "For each target, output exactly these five variation sections")
     assert "Do not force different dimensions to answer with the same point" \
         in specs
     assert "differ by REGISTER" not in specs
@@ -345,7 +346,8 @@ def test_a_reply_can_be_asked_for_a_different_register_set():
 
     rendered = reply_variation_specs(chosen)
 
-    assert "Then output exactly these three variation sections" in rendered
+    assert ("For each target, output exactly these three variation sections"
+            in rendered)
     assert "The three follow the current user direction" in rendered
     assert "### 1. Agreeable" in rendered
     assert "### 3. Summary" in rendered

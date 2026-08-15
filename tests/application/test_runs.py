@@ -68,6 +68,58 @@ def make_run(root, name="gC-J7zwYMAM_20260727-120000", *, packet="x" * 500,
     return directory
 
 
+def make_reply_run(root, *, packet_name="reply_packet.md", omit=()):
+    """A reply or triage run with the producer's full six-file set."""
+
+    directory = root / f"{packet_name.split('.')[0]}_20260813-120000"
+    directory.mkdir(parents=True)
+    files = {
+        packet_name: "x" * 500,
+        "run.json": json.dumps({
+            "kind": "triage" if "triage" in packet_name else "reply",
+            "video_id": "gC-J7zwYMAM",
+            "video_title": "A video",
+            "prompt_version": "e8a7d359ad50",
+        }, indent=2),
+        "evidence.json": "{}",
+        "transcript_timestamped.txt": "[00:00:00] words",
+        "replies_to_me.csv": "comment_id,text\r\nr1,hello\r\n",
+        "report.md": "# report\n",
+    }
+    for name, content in files.items():
+        if name not in omit:
+            (directory / name).write_text(content, encoding="utf-8")
+    return directory
+
+
+def test_a_complete_reply_run_validates(tmp_path):
+    summary = validate_run(make_reply_run(tmp_path))
+
+    assert summary.kind == "reply"
+    assert not [p for p in summary.problems if p.startswith("missing")]
+
+
+def test_a_complete_triage_run_validates(tmp_path):
+    summary = validate_run(
+        make_reply_run(tmp_path, packet_name="reply_triage_packet.md"))
+
+    assert summary.kind == "triage"
+    assert not [p for p in summary.problems if p.startswith("missing")]
+
+
+@pytest.mark.parametrize("missing", [
+    "evidence.json", "transcript_timestamped.txt", "replies_to_me.csv",
+    "report.md",
+])
+def test_a_reply_run_missing_a_required_artifact_is_named(tmp_path, missing):
+    """The producer refuses to commit without these; a validator that
+    blessed their absence was not a gate."""
+
+    summary = validate_run(make_reply_run(tmp_path, omit=(missing,)))
+
+    assert f"missing {missing}" in summary.problems
+
+
 def test_a_healthy_run_reports_no_problems(tmp_path):
     summary = validate_run(make_run(tmp_path))
 

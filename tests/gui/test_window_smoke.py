@@ -119,7 +119,9 @@ def test_a_whole_guided_run_works_through_the_window(window):
     window.on_intent(Intent.COPY_CURRENT_PACKET)
 
     window.controller.session.clipboard.write(
-        "### Hardened final\nthe reply I am sending\n"
+        "# Copy/Paste Replies\n\n"
+        "**Post beneath comment ID:** r1\n\n"
+        "```text\nthe reply I am sending\n```\n"
     )
     window.on_intent(Intent.SUBMIT_PERSON_ANSWER)
     view = window.on_intent(Intent.SAVE)
@@ -173,7 +175,9 @@ def finish_a_run(window):
     window.on_intent(Intent.NEXT_PERSON)
     window.on_intent(Intent.COPY_CURRENT_PACKET)
     window.controller.session.clipboard.write(
-        "### Hardened final\nthe reply I am sending\n"
+        "# Copy/Paste Replies\n\n"
+        "**Post beneath comment ID:** r1\n\n"
+        "```text\nthe reply I am sending\n```\n"
     )
     window.on_intent(Intent.SUBMIT_PERSON_ANSWER)
     view = window.on_intent(Intent.SAVE)

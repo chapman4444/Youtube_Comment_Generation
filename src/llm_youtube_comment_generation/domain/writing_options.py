@@ -103,10 +103,20 @@ VARIATION_LIBRARY: dict[str, VariationDefinition] = {
         # On a section whose comments run eleven words it ordered a comment
         # twice the local length, and the rule above already carries the real
         # number for this video.
-        "Understatement or a light joke that lands the point sideways. The "
-        "shortest of the set, at the bottom of the length rule above. This "
-        "register earns the most likes in comment threads by a wide margin, "
-        "so write it properly rather than treating it as the throwaway.",
+        #
+        # The "earns the most likes by a wide margin" line was removed on
+        # 2026-08-14: nothing in this project measured it, and the same
+        # unsupported claim was struck from the workflow prompt the day
+        # before. Write it properly because it is a real option, not
+        # because of a number nobody produced.
+        "Understatement, restrained sarcasm, or a light joke that lands the "
+        "position sideways. One compact observation, at the bottom of the "
+        "length rule above, with the humor arising from a fact or a "
+        "contradiction the thread actually contains — specific enough that "
+        "it could not sit under an unrelated video. Not a full argument "
+        "joined by commas, not a canned sarcastic phrase, and not a shorter "
+        "copy of another variation. Sardonic is sharper and Deadpan is "
+        "flatter; this one is light.",
         dimension=ApproachDimension.TONE,
         requires_humor=True,
     ),
@@ -123,14 +133,24 @@ VARIATION_LIBRARY: dict[str, VariationDefinition] = {
         # contains both, so the collision cannot reach a packet and the
         # default reply headings do not change.
         "One concrete thing",
-        "Build the whole reply around a single specific detail: a number, a "
-        "name, a timestamp, a document, a mechanism. Abstract nouns are what "
-        "make a reply forgettable.",
+        "Build the whole reply around exactly one load-bearing detail: a "
+        "number, a name, a timestamp, a document, a quotation from the "
+        "record, a physical fact, or a mechanism. Say why that detail "
+        "matters and let it carry the conclusion, keeping every other piece "
+        "of context subordinate to it. Not a list of facts, not a summary "
+        "with a number bolted on, and not Numbers only — ordinary prose is "
+        "welcome here, organised around the one anchor.",
     ),
     "agree_and_add": VariationDefinition(
         "Agree and add",
-        "Concede their point in a few words and immediately add one fact or "
-        "consequence they did not have. Agreement alone is worth nothing.",
+        "Concede in a few words the fact they got right, keep your own "
+        "position clear in the first sentence, and immediately add the "
+        "fact, mechanism, or consequence they did not supply. Concede "
+        "facts, never actors, and only what the evidence carries. Never "
+        "open with \"You're right\", \"Fair point\", or \"I agree\". The "
+        "added material has to be worth more than the agreement. This "
+        "accepts a supported part of their point; Correction replaces a "
+        "false claim, which is a different move.",
         dimension=ApproachDimension.STANCE,
     ),
     "full_answer": VariationDefinition(
@@ -368,6 +388,40 @@ VARIATION_LIBRARY: dict[str, VariationDefinition] = {
         dimension=ApproachDimension.STANCE,
         waives_analysis=True,
     ),
+    # The third path: entering a thread the owner did not start. Both are
+    # moves only a newcomer to a thread can make, which is why neither has
+    # an equivalent above.
+    "answer_the_question": VariationDefinition(
+        "Answer the question",
+        "They asked; the record answers. Give the answer they actually "
+        "asked for, in one move, naming where it comes from. No lecture "
+        "wrapped around it.",
+        dimension=ApproachDimension.FUNCTION,
+        waives_analysis=True,
+    ),
+    "back_them_up": VariationDefinition(
+        "Back them up",
+        "Take the side of the person the thread is piling on and bring the "
+        "evidence that settles it. Only worth writing when they are "
+        "actually right.",
+        dimension=ApproachDimension.STANCE,
+    ),
+    # Presence. The operator's stated goal is engagement, not only argument:
+    # this one answers the people the argument registers were built to skip.
+    "warm_acknowledgment": VariationDefinition(
+        "Warm acknowledgment",
+        "For a responder already on your side. Open with the specific fact, "
+        "phrase, or experience they contributed, connect it to what the "
+        "thread is arguing about, and keep the language warmer than the "
+        "argument registers. Never open with \"Thanks\", \"Thank you\", "
+        "\"Great point\", \"I agree\", or \"Exactly\", and never "
+        "manufacture a disagreement to have something to say. A nod that "
+        "could sit under any supportive comment is worth less than silence. "
+        "Its value is relational rather than analytical, which is why the "
+        "analysis test is waived for it and for nothing else it must obey.",
+        dimension=ApproachDimension.STANCE,
+        waives_analysis=True,
+    ),
 }
 
 
@@ -567,8 +621,8 @@ def reply_variation_specs(
     )
     total = count_word(len(keys))
     shown = headings_by_key(keys)
-    lines = [f"Then output exactly these {total} variation sections, in this "
-             "order:", ""]
+    lines = [f"For each target, output exactly these {total} variation "
+             "sections, in this order:", ""]
     for index, key in enumerate(keys, 1):
         lines.extend([f"### {index}. {shown[key]}", ""])
     lines.extend([
@@ -1353,9 +1407,12 @@ def render_final_check(
         .replace("{check_waiver}", waiver)
     )
     if default == DEFAULT_REPLY_VARIATIONS:
-        return rendered.replace(
-            "{check_option_overrides}", check_option_overrides(selections)
-        )
+        # No numbered override texts here: they amend the *comment* check by
+        # item number, and the reply check numbers its items differently, so
+        # a leaked override would point the model at the wrong rule. Reply
+        # packets state every non-default dial in their Output options block
+        # instead, and refuse the dial values their contract cannot carry.
+        return rendered.replace("{check_option_overrides}", "")
     spec = resolve_prompt_spec(keys, selections)
     return (
         rendered.replace("{structure_check}", spec.structure_check)

@@ -214,12 +214,30 @@ def select_target(
     if comment_id:
         matches = [c for c in scan.candidates
                    if str(c.reply.get("comment_id")) == comment_id]
-        if not matches:
+        if matches:
+            return matches[0]
+        # A candidate holds one representative message per person, but the
+        # packet answers every response in the thread — so any retrieved
+        # response id, or the owner comment's own id, selects its thread.
+        for thread in scan.threads:
+            held = (str(thread.comment_id) == comment_id
+                    or any(str(r.get("comment_id")) == comment_id
+                           for r in thread.replies))
+            if not held:
+                continue
+            owners = [c for c in scan.candidates
+                      if c.thread_id == thread.comment_id]
+            if owners:
+                return owners[0]
             raise ConfigurationError(
-                f"No candidate is holding comment {comment_id}. Run "
-                "`reply scan-mine` to see the ids."
+                f"Comment {comment_id} is in one of your threads, but "
+                "nobody there is outstanding. Use --all to include people "
+                "you already answered."
             )
-        return matches[0]
+        raise ConfigurationError(
+            f"No retrieved comment matches {comment_id}. Run "
+            "`reply scan-mine` to see the ids."
+        )
 
     if not handle:
         raise ConfigurationError("Choose a target by --comment-id or --handle.")

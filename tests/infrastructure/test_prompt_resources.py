@@ -27,6 +27,11 @@ from llm_youtube_comment_generation.infrastructure.prompt_resources import (
 TEMPLATES = [
     "comment_workflow.md", "comment_final_check.md",
     "reply_workflow.md", "reply_final_check.md", "reply_triage.md",
+    "engage_workflow.md", "section_triage.md", "acknowledge_workflow.md",
+]
+
+DRAFTED = [
+    "engage_workflow.md", "section_triage.md", "acknowledge_workflow.md",
 ]
 
 
@@ -78,6 +83,24 @@ def test_a_template_that_no_longer_matches_the_legacy_text_says_so(
 
     assert entry["migrated_sha256"] != entry["sha256"]
     assert entry.get("changed"), f"{name} diverged with no reason recorded"
+
+
+@pytest.mark.parametrize("name", DRAFTED)
+def test_a_template_born_in_this_repository_records_its_drafting(
+    name, recorded
+):
+    """Two provenances exist, and both leave a record.
+
+    A migrated template proves its origin with a migration checksum. A
+    template drafted in this repository has no legacy bytes to diverge from,
+    so its record carries "drafted" instead: who wrote it, when, and on whose
+    direction. Nothing in prompts/ is allowed an unexplained origin.
+    """
+
+    entry = recorded[name]
+
+    assert entry.get("drafted"), f"{name} has no drafting record"
+    assert "migrated_sha256" not in entry
 
 
 @pytest.mark.parametrize("name", TEMPLATES)

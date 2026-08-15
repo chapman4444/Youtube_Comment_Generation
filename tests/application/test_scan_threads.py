@@ -238,13 +238,25 @@ def test_a_target_can_be_chosen_by_handle():
     assert select_target(result.value, handle="@alice").author == "@alice"
 
 
+def test_any_retrieved_response_id_selects_its_thread():
+    """A candidate holds one representative message per person, but the
+    packet answers the whole thread — so a non-representative response id,
+    the owner's own reply id, or the owner comment id all select it."""
+
+    result = scan()
+
+    for identifier in ("r3", "r2", "mine"):
+        candidate = select_target(result.value, comment_id=identifier)
+        assert candidate.thread_id == "mine", identifier
+
+
 def test_an_unknown_target_refuses():
     result = scan()
 
     with pytest.raises(ConfigurationError, match="Nobody called"):
         select_target(result.value, handle="@nobody")
 
-    with pytest.raises(ConfigurationError, match="No candidate is holding"):
+    with pytest.raises(ConfigurationError, match="No retrieved comment"):
         select_target(result.value, comment_id="does-not-exist")
 
 

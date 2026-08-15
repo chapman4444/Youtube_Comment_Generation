@@ -318,6 +318,153 @@ BUILT_IN_PRESETS: tuple[WritingPreset, ...] = (
         length="long",
         builtin=True,
     ),
+    # The presence presets. Added 2026-08-13 with the operator's stated goal
+    # in front of them: grow the channel by answering people, not only by
+    # winning arguments. Every earlier preset selects for being right; these
+    # three select for the reply that keeps somebody in the thread, and they
+    # are the only ones that reach the registers written that same day
+    # (warm_acknowledgment, answer_the_question, back_them_up).
+    WritingPreset(
+        name="Keep them talking",
+        description=(
+            "Answer the people already on your side so they stay in the "
+            "thread. Warmth carried by the specific thing they said."
+        ),
+        comment_variations=(
+            "one_concrete_thing", "agreeable", "humane", "delighted",
+        ),
+        reply_variations=(
+            "warm_acknowledgment", "agree_and_add", "one_concrete_detail",
+            "dry_one_liner",
+        ),
+        dials=(
+            # humor stays unset: a warm reply may land a light joke, and
+            # forbidding it here would flatten the one register that is
+            # allowed to be funny back at somebody.
+            ("aggression", "never"),
+        ),
+        length="short",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Answer the question",
+        description=(
+            "Somebody asked something the record answers. Give the answer, "
+            "name where it comes from, and stop."
+        ),
+        comment_variations=(
+            "one_concrete_thing", "timestamp_callout", "correction",
+        ),
+        reply_variations=(
+            "answer_the_question", "one_concrete_detail", "timestamp_callout",
+            "full_answer",
+        ),
+        dials=(
+            ("humor", "none"),
+            ("hedging", "none"),
+            ("ending", "flat"),
+        ),
+        length="short",
+        builtin=True,
+    ),
+    # Coverage presets. Twelve registers in the library could not be reached
+    # from any preset at all, which made them effectively invisible to
+    # anybody who works from the dropdown. These four select every one of
+    # them: heat, detachment, first-hand evidence, and the section itself.
+    WritingPreset(
+        name="Angry and specific",
+        description=(
+            "Plain anger aimed at something the evidence shows, not at the "
+            "room. Heat with a fact under it."
+        ),
+        comment_variations=(
+            "furious", "indignant", "scorched_earth", "one_concrete_thing",
+        ),
+        reply_variations=(
+            "furious", "indignant", "hostile", "one_concrete_detail",
+        ),
+        dials=(
+            ("humor", "none"),
+            ("hedging", "none"),
+            ("ending", "flat"),
+        ),
+        length="short",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Cold and dissenting",
+        description=(
+            "No attitude at all: take the opposite position and let the "
+            "evidence carry it. Fatigue and dismissal where they fit."
+        ),
+        comment_variations=(
+            "cold_analyst", "dissenting", "weary", "numbers_only",
+        ),
+        reply_variations=(
+            "cold_analyst", "dissenting", "contemptuous",
+            "flat_contradiction",
+        ),
+        dials=(
+            ("humor", "none"),
+            ("hedging", "none"),
+        ),
+        length="medium",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="From experience",
+        description=(
+            "What you have seen yourself, and the detail only somebody who "
+            "does this for a living would flag."
+        ),
+        comment_variations=(
+            "personal_anecdote", "domain_expertise", "one_concrete_thing",
+            "correction",
+        ),
+        reply_variations=(
+            "personal_anecdote", "domain_expertise", "one_concrete_detail",
+            "agree_and_add",
+        ),
+        dials=(("humor", "none"),),
+        length="medium",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Read the room",
+        description=(
+            "About the comment section and the audience rather than the "
+            "video, with a clean restatement for whoever did not watch."
+        ),
+        comment_variations=(
+            "meta", "summary", "dry_observation", "one_concrete_thing",
+        ),
+        reply_variations=(
+            "meta", "summary", "dry_one_liner", "one_concrete_detail",
+        ),
+        dials=(("ending", "flat"),),
+        length="short",
+        builtin=True,
+    ),
+    WritingPreset(
+        name="Take their side",
+        description=(
+            "Somebody right is being piled on. Back them with the evidence "
+            "that settles it."
+        ),
+        comment_variations=(
+            "endorsing", "one_concrete_thing", "numbers_only", "humane",
+        ),
+        reply_variations=(
+            "back_them_up", "one_concrete_detail", "numbers_only",
+            "flat_contradiction",
+        ),
+        dials=(
+            ("humor", "none"),
+            ("hedging", "none"),
+        ),
+        length="medium",
+        builtin=True,
+    ),
 )
 
 

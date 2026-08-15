@@ -30,10 +30,19 @@ from ...application import (
 )
 from ...application.build_comment_packet import BuildCommentPacketCommand
 from ...application.commands import InspectVideoCommand
-from ...application.guided_session import REVIEW_FILENAME, GuidedSession
+from ...application.guided_session import (
+    REVIEW_FILENAME,
+    GuidedSession,
+    every_thread_selection,
+    named_selection,
+    top_replier_selection,
+    whole_thread_selection,
+)
+from ...application.runs import REPLY_ARTIFACTS, TRIAGE_ARTIFACTS
 from ...application.scan_threads import ScanMyThreadsCommand
 from ...domain.statuses import (
     OperationStatus,
+    RetrievalOutcome,
     TranscriptResult,
     transcript_provenance,
 )
@@ -50,17 +59,25 @@ from ...domain.errors import (
     EXIT_VALIDATION,
     OperationCancelled,
     PacketError,
+    PacketTooLargeError,
+    ValidationError,
 )
 from ...domain.extraction import looks_like_packet_text
 from ...domain.ids import find_video_reference
 from ...domain.reply_packet import (
     ReplyEvidence,
     build_reply_packet,
+    build_engage_packet,
+    build_section_triage_packet,
     build_triage_packet,
+    render_combined_reply_packets,
+    render_replies_csv,
+    render_reply_report,
+    reply_packet_filename,
     triage_selection,
 )
 from ...domain.section_profile import measure_comment_register, parse_length
-from ...domain.video import format_timestamp
+from ...domain.video import as_int, format_timestamp
 from ...domain.writing_options import (
     format_dial_listing,
     format_register_listing,
@@ -188,11 +205,13 @@ def build_parser() -> argparse.ArgumentParser:
     reply_sub = reply.add_subparsers(dest="action")
     for name, help_text in (
         ("scan-mine", "find your threads and who is owed a reply"),
-        ("target-comment", "show one person, chosen by their comment id"),
-        ("target-reply", "show one person, chosen by their handle"),
-        ("build", "assemble a reply packet for one person"),
+        ("target-comment", "show one thread, chosen by any comment id in it"),
+        ("target-reply", "show one thread, chosen by a person's handle"),
+        ("build", "assemble one packet answering a whole thread"),
+        ("engage", "assemble a packet answering somebody else's thread"),
+        ("section-triage", "ask the model to read the whole section and decide"),
         ("triage", "assemble a packet asking who is worth answering"),
-        ("guided", "work through several people, saving as you go"),
+        ("guided", "work through several threads, saving as you go"),
     ):
         sub = reply_sub.add_parser(name, help=help_text)
         sub.add_argument("video", nargs="?", default=None, help=VIDEO_HELP)
@@ -209,14 +228,22 @@ def build_parser() -> argparse.ArgumentParser:
             sub.add_argument("--comment-id", required=True, dest="comment_id")
         if name == "target-reply":
             sub.add_argument("--handle-of", required=True, dest="target_handle")
-        if name == "build":
+        if name in ("build", "engage"):
             sub.add_argument("--comment-id", default=None, dest="comment_id")
             sub.add_argument("--handle-of", default=None, dest="target_handle")
+            sub.add_argument("--per-thread", action="store_true",
+                             dest="per_thread",
+                             help="also write one packet file per thread of "
+                                  "yours that drew a response, plus a "
+                                  "combined file holding them all")
             sub.add_argument("--registers", default=None)
             sub.add_argument("--dial", action="append", default=None,
                              metavar="NAME=VALUE")
             sub.add_argument("--packet-characters", type=int, default=None,
                              dest="packet_characters")
+            sub.add_argument("--output-dir", default=None,
+                             dest="output_directory")
+        if name == "section-triage":
             sub.add_argument("--output-dir", default=None,
                              dest="output_directory")
         if name == "triage":
@@ -230,7 +257,19 @@ def build_parser() -> argparse.ArgumentParser:
                              metavar="NAME=VALUE")
             sub.add_argument("--limit", type=int, default=10,
                              dest="guided_limit",
-                             help="how many people to work through")
+                             help="how many threads to work through")
+            sub.add_argument("--reply-to", default="",
+                             dest="reply_to",
+                             help="answer only these people: a comma-separated list of handles, or the pasted triage answer")
+            sub.add_argument("--top-repliers", type=int, default=0,
+                             dest="top_repliers",
+                             help="keep only the N people whose message the "
+                                  "room liked most")
+            sub.add_argument("--per-thread", action="store_true",
+                             dest="per_thread",
+                             help="include every thread of yours that drew a "
+                                  "response, not only those with somebody "
+                                  "still owed an answer")
             sub.add_argument("--output-dir", default=None,
                              dest="output_directory")
             sub.add_argument("--answers-from", default=None,
@@ -1051,6 +1090,175 @@ def _write_check(root: Path) -> tuple[bool, str]:
         return False, f"{root} is NOT writable ({exc.strerror or exc})"
 
 
+def _run_section_action(
+    arguments, configuration, api_key, events, stdout, build_ports
+) -> int:
+    """The two paths that do not start from a comment of the operator's.
+
+    `engage` answers somebody else's thread; `section-triage` asks which of
+    those threads is worth entering at all. Both read the whole section.
+    """
+
+    from ...domain.errors import ConfigurationError
+    from ...domain.ids import extract_video_id
+
+    factory = build_ports or default_ports
+    ports = factory(configuration, api_key, events)
+    video_id = extract_video_id(arguments.video or "")
+    if not video_id:
+        raise ConfigurationError(
+            "Give the video as a URL or an 11-character id."
+        )
+    youtube = ports["youtube"]
+    video_record = youtube.video(video_id)
+    maximum = (arguments.max_comments
+               if arguments.max_comments is not None
+               else configuration.get("reply_scan_comments", 3000))
+    threads = _fetch_section(youtube, video_id, maximum=maximum)
+    if not threads:
+        raise ConfigurationError(
+            f"No comments were retrieved for {video_id}."
+        )
+    owner_channel_id = (
+        arguments.channel_id or configuration.get("my_channel_id", "") or ""
+    )
+    handle = arguments.handle or configuration.get("my_handle", "")
+    if handle and not owner_channel_id:
+        owner_channel_id = youtube.channel_id_for_handle(handle)
+
+    transcript = ports["transcripts"].fetch(video_id)
+    transcript_text = "\n".join(
+        f"[{format_timestamp(entry.get('start'))}] {entry.get('text', '')}"
+        for entry in transcript.entries
+    )
+    artifacts = _artifact_store(ports, configuration, video_id)
+    staged: set = set()
+
+    def put(name: str, content: str) -> None:
+        artifacts.stage(name, content)
+        staged.add(name)
+
+    if arguments.action == "section-triage":
+        packet = build_section_triage_packet(
+            prompt_resources.load("section_triage.md").text,
+            video_record,
+            threads,
+            owner_channel_id=owner_channel_id,
+            transcript_text=transcript_text,
+            maximum_characters=configuration.get("packet_characters"),
+        )
+        put("section_triage_packet.md", packet)
+        mine = sum(1 for t in threads
+                   if owner_channel_id
+                   and t.comment.get("author_channel_id") == owner_channel_id)
+        _stage_run_record(
+            artifacts, kind="section_triage", video=video_record,
+            transcript=transcript,
+            extra={
+                "threads": len(threads),
+                "replies": sum(len(t.replies) for t in threads),
+                "own_threads": mine,
+                "packet_characters": len(packet),
+            },
+        )
+        artifacts.commit()
+        print(
+            f"Section triage packet written: {len(packet):,} characters\n"
+            f"  section    {len(threads)} threads, "
+            f"{sum(len(t.replies) for t in threads)} replies"
+            f"{f', {mine} of them yours' if mine else ''}\n"
+            f"  directory  {getattr(artifacts, 'root', '')}",
+            file=stdout,
+        )
+        copy_to_clipboard(ports, packet, stdout)
+        return EXIT_SUCCESS
+
+    # engage
+    wanted = getattr(arguments, "comment_id", "") or ""
+    if not wanted:
+        raise ConfigurationError(
+            "Choose the comment to answer with --comment-id. Run "
+            "`reply section-triage` first if you do not know which."
+        )
+    thread = next(
+        (t for t in threads
+         if t.comment_id == wanted
+         or any(str(r.get("comment_id")) == wanted for r in t.replies)),
+        None,
+    )
+    if thread is None:
+        raise ConfigurationError(
+            f"No retrieved comment matches {wanted}."
+        )
+    packet = build_engage_packet(
+        ReplyEvidence(
+            thread=thread,
+            owner_channel_id=owner_channel_id,
+            video=video_record,
+            transcript_text=transcript_text,
+            register=measure_comment_register(thread.replies),
+        ),
+        workflow_template=prompt_resources.load("engage_workflow.md").text,
+        final_check_template=prompt_resources.load(
+            "reply_final_check.md").text,
+        variations=(parse_registers(arguments.registers)
+                    if arguments.registers else ()),
+        dials=parse_dials(arguments.dial or []),
+        maximum_characters=configuration.get("packet_characters"),
+    )
+    put("engage_packet.md", packet.text)
+    put("transcript_timestamped.txt", transcript_text)
+    _stage_run_record(
+        artifacts, kind="engage", video=video_record, transcript=transcript,
+        extra={
+            "thread_comment_id": thread.comment_id,
+            "target_comment_ids": list(packet.target_comment_ids),
+            "targets": len(packet.targets),
+            "variations": list(packet.variations),
+            "packet_characters": len(packet),
+        },
+    )
+    artifacts.commit()
+    print(
+        f"Engage packet written: {len(packet):,} characters\n"
+        f"  thread     {thread.comment_id} by "
+        f"{thread.comment.get('author', 'unknown')}\n"
+        f"  answering  {len(packet.targets)} responses\n"
+        f"  registers  {', '.join(packet.variations)}\n"
+        f"  directory  {getattr(artifacts, 'root', '')}",
+        file=stdout,
+    )
+    copy_to_clipboard(ports, packet.text, stdout)
+    return EXIT_SUCCESS
+
+
+def _fetch_section(youtube, video_id: str, *, maximum: int) -> list:
+    """The whole comment section as threads, replies included.
+
+    Neither the engage path nor the section router needs the operator to
+    have commented, so neither can use the owner scan — that one refuses
+    outright when it finds no comment of his, which is correct for reply
+    mode and wrong for these two.
+    """
+
+    from ...domain.threads import OwnerThread
+
+    page = youtube.comment_threads(video_id, order="relevance",
+                                   maximum=maximum)
+    threads = []
+    for comment in page.comments:
+        identifier = str(comment.get("comment_id") or "")
+        replies: list = []
+        if as_int(comment.get("total_reply_count")):
+            replies = list(youtube.replies(identifier, maximum=100).comments)
+        threads.append(OwnerThread(
+            comment=dict(comment),
+            replies=replies,
+            reported_reply_count=as_int(comment.get("total_reply_count")) or 0,
+        ))
+    return threads
+
+
 def run_reply(
     arguments, configuration, api_key, events, stdout, build_ports
 ) -> int:
@@ -1062,6 +1270,11 @@ def run_reply(
         raise ConfigurationError(
             "No API key was found. Set "
             f"{' or '.join(API_KEY_VARIABLES)}."
+        )
+
+    if arguments.action in ("engage", "section-triage"):
+        return _run_section_action(
+            arguments, configuration, api_key, events, stdout, build_ports
         )
 
     command = ScanMyThreadsCommand(
@@ -1095,6 +1308,67 @@ def run_reply(
 
     as_json = configuration.get("output_format") == "json"
 
+    def _evidence_json(
+        video_record: dict,
+        thread_comment_id: str = "",
+        target_comment_ids: tuple = (),
+    ) -> str:
+        """The whole scan, so a reply run can be rebuilt and audited offline.
+
+        Comment runs have carried their evidence from the start; reply runs
+        wrote two files and were unreviewable after the fact. Saved before
+        the packet is trusted, like every other evidence set in this tool.
+
+        Version 2: a packet answers every response in one thread, so the
+        record carries the thread and the full target id list instead of a
+        single marked target.
+        """
+
+        scan = result.value
+        return json.dumps({
+            "kind": "reply",
+            "evidence_schema_version": 2,
+            "video": video_record,
+            "owner_channel_id": scan.owner_channel_id,
+            "since": command.since or "",
+            "retrieval": {
+                "status": scan.retrieval.status.value,
+                "retrieved": scan.retrieval.retrieved,
+                "reported_total": scan.retrieval.reported_total,
+                "notes": list(scan.retrieval.notes),
+            },
+            "threads": [
+                {
+                    "comment": thread.comment,
+                    "reported_reply_count": thread.reported_reply_count,
+                    "replies": thread.replies,
+                    "new_replies": thread.new_replies,
+                }
+                for thread in scan.threads
+            ],
+            "thread_comment_id": thread_comment_id,
+            "target_comment_ids": list(target_comment_ids),
+        }, indent=2, ensure_ascii=False)
+
+    def _reply_required(packet_name: str) -> tuple:
+        # One definition of complete, shared with `runs validate`. The
+        # review caught the validator blessing directories this producer
+        # refuses to commit.
+        return (TRIAGE_ARTIFACTS
+                if packet_name == "reply_triage_packet.md"
+                else REPLY_ARTIFACTS)
+
+    def _refuse_incomplete(staged: set, required: tuple) -> None:
+        # Refusing beats committing a partial set. A directory that looks
+        # complete and is not gets trusted, which is how the two-file era
+        # lasted as long as it did.
+        missing = sorted(set(required) - staged)
+        if missing:
+            raise PacketError(
+                "Output set is incomplete, refusing to commit: "
+                + ", ".join(missing)
+            )
+
     if arguments.action == "scan-mine":
         if as_json:
             print(json.dumps(formatters.scan_as_dict(result), indent=2,
@@ -1109,9 +1383,16 @@ def run_reply(
                           stdout)
 
     if arguments.action == "triage":
+        video_record = ports["youtube"].video(command.video_id)
         packet = build_triage_packet(
             prompt_resources.load("reply_triage.md").text,
             result.value.candidates,
+            # The template promises the reader the owner's comment and the
+            # video. A triage packet without them once shipped one orphaned
+            # reply and nothing else, and the model reading it had no ground
+            # for any verdict at all.
+            video=video_record,
+            threads=result.value.threads,
             limit=arguments.triage_limit,
             maximum_characters=configuration.get("packet_characters"),
         )
@@ -1122,17 +1403,46 @@ def run_reply(
         listed = triage_selection(found, limit=arguments.triage_limit)
         waiting = [c for c in found if c.outstanding]
 
+        transcript = ports["transcripts"].fetch(command.video_id)
+        transcript_text = "\n".join(
+            f"[{format_timestamp(e.get('start'))}] {e.get('text','')}"
+            for e in transcript.entries
+        )
+        register = measure_comment_register(
+            [r for t in result.value.threads for r in t.replies]
+        )
         artifacts = _artifact_store(ports, configuration, command.video_id)
         triage_text = packet
-        artifacts.stage("reply_triage_packet.md", packet)
+        staged: set = set()
+
+        def put(name: str, content: str) -> None:
+            artifacts.stage(name, content)
+            staged.add(name)
+
+        put("reply_triage_packet.md", packet)
+        put("evidence.json", _evidence_json(video_record))
+        put("transcript_timestamped.txt", transcript_text)
+        put("replies_to_me.csv", render_replies_csv(result.value.threads))
+        put("report.md", render_reply_report(
+            video_record,
+            result.value.threads,
+            found,
+            register,
+            result.value.owner_channel_id,
+            command.since,
+            result.value.retrieval.notes,
+        ))
         _stage_run_record(
             artifacts, kind="triage",
-            video={"video_id": command.video_id},
+            video=video_record,
+            transcript=transcript,
             extra={"candidates_found": len(found),
                    "candidates_waiting": len(waiting),
                    "candidates_listed": len(listed),
                    "packet_characters": len(packet)},
         )
+        staged.add("run.json")
+        _refuse_incomplete(staged, _reply_required("reply_triage_packet.md"))
         published = artifacts.commit()
         print(f"Triage packet written: {len(packet):,} characters\n"
               f"  files      {', '.join(published)}\n"
@@ -1155,15 +1465,17 @@ def run_reply(
             None,
         )
         transcript = ports["transcripts"].fetch(command.video_id)
+        video_record = ports["youtube"].video(command.video_id)
+        transcript_text = "\n".join(
+            f"[{format_timestamp(e.get('start'))}] {e.get('text','')}"
+            for e in transcript.entries
+        )
         evidence = ReplyEvidence(
             thread=thread,
-            target=candidate,
+            selected=candidate,
             owner_channel_id=result.value.owner_channel_id,
-            video=ports["youtube"].video(command.video_id),
-            transcript_text="\n".join(
-                f"[{format_timestamp(e.get('start'))}] {e.get('text','')}"
-                for e in transcript.entries
-            ),
+            video=video_record,
+            transcript_text=transcript_text,
             register=measure_comment_register(thread.replies if thread else []),
             retrieval=result.value.retrieval,
         )
@@ -1177,14 +1489,89 @@ def run_reply(
             maximum_characters=configuration.get("packet_characters"),
         )
         artifacts = _artifact_store(ports, configuration, command.video_id)
-        artifacts.stage("reply_packet.md", packet.text)
+        staged: set = set()
+
+        def put(name: str, content: str) -> None:
+            artifacts.stage(name, content)
+            staged.add(name)
+
+        put("reply_packet.md", packet.text)
+
+        # One file per thread, plus the combined document. A single thread
+        # needs neither: the deliverable is reply_packet.md, and writing a
+        # second copy of it under another name is how the legacy tool once
+        # shipped the wrong file.
+        per_thread_files: list[str] = []
+        if getattr(arguments, "per_thread", False):
+            built: list[tuple[str, Any]] = []
+            for other in result.value.threads:
+                if not other.replies:
+                    continue
+                if other.comment_id == packet.thread_comment_id:
+                    author, made = candidate.author, packet
+                else:
+                    owners = [c for c in result.value.candidates
+                              if c.thread_id == other.comment_id]
+                    author = owners[0].author if owners else str(
+                        other.replies[0].get("author") or "")
+                    try:
+                        made = build_reply_packet(
+                            ReplyEvidence(
+                                thread=other,
+                                owner_channel_id=result.value.owner_channel_id,
+                                video=video_record,
+                                transcript_text=transcript_text,
+                                register=measure_comment_register(
+                                    other.replies),
+                                retrieval=result.value.retrieval,
+                            ),
+                            workflow_template=prompt_resources.load(
+                                "reply_workflow.md").text,
+                            final_check_template=prompt_resources.load(
+                                "reply_final_check.md").text,
+                            variations=(parse_registers(arguments.registers)
+                                        if arguments.registers else ()),
+                            dials=parse_dials(arguments.dial or []),
+                            maximum_characters=configuration.get(
+                                "packet_characters"),
+                        )
+                    except (ValidationError, PacketTooLargeError) as refusal:
+                        # One unbuildable thread must not lose the others.
+                        print(f"  skipped a thread: {refusal}", file=stdout)
+                        continue
+                built.append((author, made))
+            if len(built) > 1:
+                for position, (author, made) in enumerate(built, 1):
+                    name = reply_packet_filename(position, author)
+                    put(name, made.text)
+                    per_thread_files.append(name)
+                put("reply_combined_packet.md",
+                    render_combined_reply_packets(built))
+                per_thread_files.append("reply_combined_packet.md")
+
+        put("evidence.json",
+            _evidence_json(video_record, packet.thread_comment_id,
+                           packet.target_comment_ids))
+        put("transcript_timestamped.txt", transcript_text)
+        put("replies_to_me.csv", render_replies_csv(result.value.threads))
+        put("report.md", render_reply_report(
+            video_record,
+            result.value.threads,
+            result.value.candidates,
+            evidence.register,
+            result.value.owner_channel_id,
+            command.since,
+            result.value.retrieval.notes,
+        ))
         _stage_run_record(
             artifacts, kind="reply", video=evidence.video,
             transcript=transcript,
             extra={
-                "target": candidate.author,
-                "target_comment_id": packet.target_comment_id,
-                "target_status": candidate.status.value,
+                "selected_by": candidate.author,
+                "selected_status": candidate.status.value,
+                "thread_comment_id": packet.thread_comment_id,
+                "target_comment_ids": list(packet.target_comment_ids),
+                "targets": len(packet.targets),
                 "variations": list(packet.variations),
                 "variation_headings": list(packet.headings),
                 "packet_characters": len(packet),
@@ -1196,13 +1583,24 @@ def run_reply(
                 },
             },
         )
+        staged.add("run.json")
+        _refuse_incomplete(staged, _reply_required("reply_packet.md"))
         published = artifacts.commit()
+        relationships = ", ".join(
+            f"{target.response_number}:{target.relationship}"
+            for target in packet.targets
+        )
         print(
             f"Reply packet written: {len(packet):,} characters\n"
-            f"  answering  {candidate.author} ({candidate.status.value})\n"
-            f"  target id  {packet.target_comment_id}\n"
+            f"  thread     {packet.thread_comment_id} "
+            f"(located by {candidate.author})\n"
+            f"  answering  {len(packet.targets)} responses "
+            f"({relationships})\n"
             f"  registers  {', '.join(packet.variations)}\n"
-            f"  files      {', '.join(published)}\n"
+            + (f"  per thread {len(per_thread_files) - 1} packet files "
+               f"plus reply_combined_packet.md\n"
+               if per_thread_files else "")
+            + f"  files      {', '.join(published)}\n"
             f"  directory  {getattr(artifacts, 'root', '')}",
             file=stdout,
         )
@@ -1317,10 +1715,13 @@ def run_packet_window(
                     prompt_version=prompt_resources.prompt_version(),
                 ),
                 scan=_scan_for_window,
-                triage_for=lambda candidates, maximum_characters: (
+                triage_for=lambda candidates, maximum_characters,
+                video=None, threads=(): (
                     build_triage_packet(
                         prompt_resources.load("reply_triage.md").text,
                         candidates,
+                        video=video,
+                        threads=threads,
                         maximum_characters=maximum_characters,
                     )
                 ),
@@ -1399,6 +1800,7 @@ class WindowScan:
     waiting: list = field(default_factory=list)
     total: int = 0
     owner_channel_id: str = ""
+    retrieval: Any = None
     api_operations_used: int = 0
 
 
@@ -1425,6 +1827,7 @@ def _scan_for_window(*, video, handle, max_comments, youtube, events, clock):
         waiting=[c for c in found.candidates if c.outstanding],
         total=len(found.candidates),
         owner_channel_id=found.owner_channel_id,
+        retrieval=found.retrieval,
         api_operations_used=int(
             getattr(youtube, "api_operations_used", 0) or 0
         ),
@@ -1437,11 +1840,14 @@ def _guided_session_for(
 ):
     """A guided session over the people a window's scan just found."""
 
+    scan_retrieval = getattr(found, "retrieval", None)
     return GuidedSession(
         targets=list(waiting),
         threads={t.comment_id: t for t in found.threads},
         owner_channel_id=found.owner_channel_id,
         video=found.video,
+        retrieval=(scan_retrieval if scan_retrieval is not None
+                   else RetrievalOutcome()),
         transcript_text="\n".join(
             f"[{format_timestamp(entry.get('start'))}] {entry.get('text', '')}"
             for entry in transcript.entries
@@ -1547,6 +1953,13 @@ def run_gui(
 
     scan = result.value
     outstanding = [c for c in scan.candidates if c.outstanding]
+    if getattr(arguments, "reply_to", ""):
+        outstanding = named_selection(outstanding, arguments.reply_to)
+    if getattr(arguments, "per_thread", False):
+        outstanding = every_thread_selection(outstanding, scan.threads)
+    if getattr(arguments, "top_repliers", 0):
+        outstanding = top_replier_selection(
+            outstanding, arguments.top_repliers)
     if not outstanding:
         # Two different situations, and telling the operator the wrong one
         # sends him to fix the wrong thing. No threads at all means he never
@@ -1579,9 +1992,10 @@ def run_gui(
     dials = parse_dials(arguments.dial or [])
 
     session = GuidedSession(
-        targets=outstanding[:arguments.guided_limit],
+        targets=whole_thread_selection(outstanding, arguments.guided_limit),
         threads={t.comment_id: t for t in scan.threads},
         owner_channel_id=scan.owner_channel_id,
+        retrieval=scan.retrieval,
         video=ports["youtube"].video(command.video_id),
         transcript_text="\n".join(
             f"[{format_timestamp(e.get('start'))}] {e.get('text','')}"
@@ -1803,15 +2217,23 @@ def run_guided(
 
     scan = result.value
     outstanding = [c for c in scan.candidates if c.outstanding]
+    if getattr(arguments, "reply_to", ""):
+        outstanding = named_selection(outstanding, arguments.reply_to)
+    if getattr(arguments, "per_thread", False):
+        outstanding = every_thread_selection(outstanding, scan.threads)
+    if getattr(arguments, "top_repliers", 0):
+        outstanding = top_replier_selection(
+            outstanding, arguments.top_repliers)
     if not outstanding:
         print("Nobody in this scan is waiting for an answer.", file=stdout)
         return EXIT_SUCCESS
 
     transcript = ports["transcripts"].fetch(command.video_id)
     session = GuidedSession(
-        targets=outstanding[:arguments.guided_limit],
+        targets=whole_thread_selection(outstanding, arguments.guided_limit),
         threads={t.comment_id: t for t in scan.threads},
         owner_channel_id=scan.owner_channel_id,
+        retrieval=scan.retrieval,
         video=ports["youtube"].video(command.video_id),
         transcript_text="\n".join(
             f"[{format_timestamp(e.get('start'))}] {e.get('text','')}"
@@ -1844,14 +2266,19 @@ def run_guided(
         ]
 
     session.start()
-    print(f"{len(session.targets)} people to work through.\n", file=stdout)
+    print(
+        f"{len(session.thread_queue())} threads to work through, covering "
+        f"{len(session.targets)} people.\n",
+        file=stdout,
+    )
 
     index = 0
     while session.next_person() is not None:
         person = session.current
         packet = session.copy_packet()
-        print(f"[{session.state.current_index}/{len(session.targets)}] "
-              f"{person.author} ({person.status.value})", file=stdout)
+        print(f"[{session.state.current_index}/{len(session.thread_queue())}] "
+              f"thread of {person.author}, "
+              f"{len(session.current_targets)} responses", file=stdout)
         print(f"    {person.reason}", file=stdout)
 
         if not answers:
@@ -2035,6 +2462,36 @@ def run_comment_build(
     return EXIT_SUCCESS
 
 
+def _console_stream(stream):
+    """Let a real console print text the operator did not choose.
+
+    The reply queue prints YouTube handles and reply bodies verbatim, and both
+    routinely contain emoji. On Windows the console encoding is cp1252, where a
+    single astral character raises UnicodeEncodeError and takes the command
+    down before it prints anything at all. Reply mode was reported broken for
+    months on exactly this: the queue logic underneath was intact and had been
+    verified against the legacy implementation, but nobody ever saw its output.
+
+    `errors="replace"` is deliberate rather than lazy. This is a display path,
+    and degrading one glyph to a question mark is always better than losing the
+    whole queue. Encoding failures must never be able to hide the answer.
+
+    Only streams the caller did not supply reach this function, so injected
+    test doubles are left exactly as they were.
+    """
+
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:                 # not a TextIOWrapper
+        return stream
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except (ValueError, OSError):
+        # Detached, already-wrapped, or redirected in a way that refuses.
+        # Printing degraded beats refusing to start.
+        pass
+    return stream
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -2045,8 +2502,8 @@ def main(
     settings: dict[str, Any] | None = None,
     clipboard=None,
 ) -> int:
-    stdout = stdout if stdout is not None else sys.stdout
-    stderr = stderr if stderr is not None else sys.stderr
+    stdout = stdout if stdout is not None else _console_stream(sys.stdout)
+    stderr = stderr if stderr is not None else _console_stream(sys.stderr)
     parser = build_parser()
     arguments = parser.parse_args(list(argv) if argv is not None else None)
 

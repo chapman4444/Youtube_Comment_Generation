@@ -77,8 +77,18 @@ def answers_file(tmp_path, *blocks):
     return str(path)
 
 
-def answer(text):
-    return f"### 1. Dry one-liner\n\n{text}\n\n### Hardened final\n\n{text}"
+def answer(text, cid="r1"):
+    """A one-target reply sheet, as the model returns for a one-reply thread.
+
+    No "---" anywhere: the answers file separates blocks with it.
+    """
+
+    return (
+        "# Copy/Paste Replies\n\n"
+        "## Direct replies to your comment\n\n"
+        f"**Post beneath comment ID:** {cid}\n\n"
+        f"```text\n{text}\n```"
+    )
 
 
 def artifacts(tmp_path):
@@ -91,15 +101,17 @@ def artifacts(tmp_path):
 def test_a_whole_session_runs_from_a_file(tmp_path, ports):
     source = answers_file(
         tmp_path,
-        answer("Deloitte audited the entity, which is a claim about the firm."),
-        answer("The filing names the firm, not the person you are naming."),
+        answer("Deloitte audited the entity, which is a claim about the firm.",
+               cid="r1"),
+        answer("The filing names the firm, not the person you are naming.",
+               cid="r2"),
     )
 
     code, out, _ = run(
         ["reply", "guided", VIDEO, "--answers-from", source], tmp_path, ports)
 
     assert code == 0
-    assert "2 people to work through" in out
+    assert "2 threads to work through, covering 2 people" in out
     assert out.count("accepted and saved") == 2
     assert "2 replies ready to review, 0 skipped" in out
 
@@ -108,8 +120,11 @@ def test_every_accepted_draft_is_recorded_in_the_run(tmp_path, ports):
     """Saved as they are accepted, not at the end. Stopping must not lose
     work already done."""
 
-    source = answers_file(tmp_path, answer("A first reply worth keeping."),
-                          answer("A second reply worth keeping."))
+    source = answers_file(
+        tmp_path,
+        answer("A first reply worth keeping.", cid="r1"),
+        answer("A second reply worth keeping.", cid="r2"),
+    )
 
     run(["reply", "guided", VIDEO, "--answers-from", source], tmp_path, ports)
     _, record, review = artifacts(tmp_path)
@@ -195,7 +210,7 @@ def test_the_limit_caps_how_many_people_are_offered(tmp_path, ports):
         tmp_path, ports)
     _, record, _ = artifacts(tmp_path)
 
-    assert "1 people to work through" in out
+    assert "1 threads to work through, covering 1 people" in out
     assert record["targets_offered"] == 1
 
 

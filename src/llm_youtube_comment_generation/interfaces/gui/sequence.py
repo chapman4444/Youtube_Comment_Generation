@@ -27,7 +27,7 @@ from enum import Enum
 from typing import Sequence
 
 from ...domain.extraction import (
-    extract_hardened_final,
+    looks_like_batch_reply_sheet,
     looks_like_packet_text,
     parse_triage_selection,
 )
@@ -147,9 +147,28 @@ def read_clipboard(text: str, *, step: Step, packet: str = "") -> ClipboardOffer
             label="Clipboard: the packet this tool copied",
         )
 
-    # Before the hardened-final check, and only where it is wanted: a triage
-    # answer is prose with handles in it, and prose is exactly what would
-    # otherwise fall through to "something else".
+    # Before the triage branch: a reply sheet is unambiguous (its Post
+    # beneath lines appear in nothing else), and a sheet naming handles in
+    # its own headings must not read as a triage list. Shape only — the
+    # session validates the sheet against the packet's target ids when it
+    # is submitted; deciding that here would mean two places owning one
+    # rule.
+    if looks_like_batch_reply_sheet(held):
+        usable = WANTED.get(step) is Holding.ANSWER
+        return ClipboardOffer(
+            Holding.ANSWER,
+            usable=usable,
+            label=("Clipboard: a reply sheet from your model"
+                   if usable else
+                   "Clipboard: a reply sheet, but this step is not waiting "
+                   "for one"),
+            payload=held,
+            raw=held,
+        )
+
+    # Only where it is wanted: a triage answer is prose with handles in it,
+    # and prose is exactly what would otherwise fall through to "something
+    # else".
     if WANTED.get(step) is Holding.TRIAGE_ANSWER:
         chosen = parse_triage_selection(held)
         if chosen:
@@ -161,19 +180,6 @@ def read_clipboard(text: str, *, step: Step, packet: str = "") -> ClipboardOffer
                 payload=", ".join(chosen),
                 raw=held,
             )
-
-    draft = extract_hardened_final(held)
-    if draft:
-        usable = WANTED.get(step) is Holding.ANSWER
-        return ClipboardOffer(
-            Holding.ANSWER,
-            usable=usable,
-            label=("Clipboard: an answer from your model"
-                   if usable else
-                   "Clipboard: an answer, but this step is not waiting for one"),
-            payload=draft,
-            raw=held,
-        )
 
     video = find_video_reference(held)
     if video:

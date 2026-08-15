@@ -29,9 +29,22 @@ COMMENT_ARTIFACTS = (
 # run.json is required of every kind. Without it a run is a directory of
 # markdown with no way to say which prompt version produced it, which is
 # exactly the question asked when something looks wrong.
-REPLY_ARTIFACTS = ("reply_packet.md", "run.json")
+#
+# Reply and triage runs carry the full evidence set their producer refuses
+# to commit without. The commissioned review caught this validator blessing
+# two-file directories the CLI itself calls incomplete: a gate that accepts
+# what the producer refuses is not a gate. Guided runs have their own,
+# deliberately smaller set — the session writes the review file and the run
+# record, and its packet evidence lives in the reply run that preceded it.
+REPLY_ARTIFACTS = (
+    "reply_packet.md", "evidence.json", "transcript_timestamped.txt",
+    "replies_to_me.csv", "report.md", "run.json",
+)
 GUIDED_ARTIFACTS = ("replies_to_review.md", "run.json")
-TRIAGE_ARTIFACTS = ("reply_triage_packet.md", "run.json")
+TRIAGE_ARTIFACTS = (
+    "reply_triage_packet.md", "evidence.json", "transcript_timestamped.txt",
+    "replies_to_me.csv", "report.md", "run.json",
+)
 MAX_RECORDED_INTEGER = (1 << 63) - 1
 COMPLETION_MARKER = ".artifacts-complete.json"
 

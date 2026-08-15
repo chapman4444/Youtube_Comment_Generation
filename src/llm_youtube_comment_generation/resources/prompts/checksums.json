@@ -1,4 +1,10 @@
 {
+  "acknowledge_workflow.md": {
+    "characters": 9030,
+    "drafted": "2026-08-13, by Claude at the operator's direction, the day he stated the goal outright (grow the channel's presence: likes, replies, and answering the people the argument rules skip): the acknowledgment path, warmth through specificity, one reply that earns a reply back. The operator edits freely, and an edit is recorded by updating this checksum.",
+    "lines": 207,
+    "sha256": "1f6fb684c2c6368a29fca6d89fec684084e6ddcdb8fdd639420ee877c1c53980"
+  },
   "comment_final_check.md": {
     "changed": "2026-07-30, after a measured packet response: added explicit diversity and plain-URL checks.",
     "characters": 1076,
@@ -19,13 +25,19 @@
     "source_constant": "COMMENT_WORKFLOW_TEMPLATE",
     "source_module": "youtube_video_comment"
   },
+  "engage_workflow.md": {
+    "characters": 13047,
+    "drafted": "2026-08-13, by Claude at the operator's direction ('why can't you build a new set of registers specifically for replies'): the third path, replying in a thread the owner did not start. Written to the migrated reply prompts' own rules; the operator edits freely, and an edit is recorded by updating this checksum.",
+    "lines": 281,
+    "sha256": "21d9a34d6c48ce5f04b9d8d44e2afc4e2211262272274b88384b932c67dc21f0"
+  },
   "reply_final_check.md": {
-    "changed": "2026-07-28, at the operator's request: added the {check_option_overrides} placeholder so a run's dials can amend the checks instead of contradicting them. No existing check was reworded.",
-    "characters": 1257,
-    "lines": 24,
+    "changed": "2026-07-28, at the operator's request: added the {check_option_overrides} placeholder so a run's dials can amend the checks instead of contradicting them. No existing check was reworded. 2026-08-13, at the operator's direction: reply mode became one thread-level batch packet, so the checks now verify the Copy/Paste Replies sheet (grouping, per-target coverage by comment id, one text code block per target) and the per-target audit package. Length, stance, register and fingerprint checks kept their meaning per finished reply.",
+    "characters": 1945,
+    "lines": 33,
     "migrated_characters": 1233,
     "migrated_sha256": "dd57fbc9e190e1b10bc92105ea04ec4a19bd8b165d44c3d0b569f9c3e6001696",
-    "sha256": "1e798fd831a56652cc6574960cbb29e7ae2352f1327f353a94b1793d120830f7",
+    "sha256": "44f68f2d9b7ce0d24b30df2a17542727aaa0e993dd5a4a8dfac9c80b7a0df937",
     "source_constant": "FINAL_OUTPUT_CHECK_TEMPLATE",
     "source_module": "youtube_video_reply"
   },
@@ -37,10 +49,19 @@
     "source_module": "youtube_video_reply"
   },
   "reply_workflow.md": {
-    "characters": 11724,
-    "lines": 253,
-    "sha256": "2f21a811507188d910e0ae7c0274c7fd865a91046c0cd74b8073e767f449a39f",
+    "changed": "2026-08-13, at the operator's direction: converted from one selected-response packet to one thread-level batch packet. Every non-owner response is an independent target with identity and relationship fields; the chat deliverable is a Copy/Paste Replies sheet with one text code block per target, backed by a per-target audit package the receiving model creates. The source boundary, evidence rules, length rules, stance rules, and AI-fingerprint scrub were carried over unchanged; the singular target marker and the single thread-serving reply were removed. Aligned same day with the operator-approved expected example (local_notes/EXPECTED_MULTI_RESPONSE_REPLY_PACKET.md): target ids enumerated in the run contract, isolation-between-targets rules, enumerated audit/index/README sections, final delivery order, and the unmeasured length claim dropped. Correction, same day: the earlier note overstated the length edit - only the 'measured' attribution had been removed while the comparative likes claim stayed. The commissioned review flagged it; the claim is now labelled a style rule, in this file and in engage_workflow.md. Same day: the exact_nested_target_comment_id field is now rendered per target (always UNAVAILABLE, per the original specification and the expected example) instead of being described only in prose. Second review, same day: audit wording made truthful - values are kept exactly as the packet carries them (defanged hostile syntax is the record, never to be reconstructed), and the ZIP is stated as the operator's own record that the application never collects.",
+    "characters": 15399,
+    "lines": 318,
+    "migrated_characters": 11724,
+    "migrated_sha256": "2f21a811507188d910e0ae7c0274c7fd865a91046c0cd74b8073e767f449a39f",
+    "sha256": "f13cb8ece0c95bb19137ff941980d8ccb4fcb37faf9d3e23d5f649264f2d9272",
     "source_constant": "REPLY_WORKFLOW_TEMPLATE",
     "source_module": "youtube_video_reply"
+  },
+  "section_triage.md": {
+    "characters": 3136,
+    "drafted": "2026-08-13, by Claude at the operator's direction: the whole-section router, deciding between a fresh comment, engaging specific people, or both, with evidence-tied targets. The operator edits freely, and an edit is recorded by updating this checksum.",
+    "lines": 74,
+    "sha256": "67cab87a7695935337c30802f965211c3f65601726e64ea12787a26bd66faba4"
   }
 }

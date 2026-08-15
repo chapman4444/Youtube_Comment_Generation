@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import tkinter as tk
 from tkinter import ttk
 from typing import Any, Callable
@@ -412,8 +413,10 @@ class PacketWindow:
             "Open retrieval, transcript, account, and output settings.",
         )
 
+        self._build_reply_face(left)
+
         presets = ttk.LabelFrame(left, text="Writing preset")
-        presets.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        presets.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         presets.columnconfigure(0, weight=1)
         self.preset_box = ttk.Combobox(
             presets,
@@ -455,7 +458,7 @@ class PacketWindow:
         )
 
         approaches = ttk.LabelFrame(left, text="Registers and approaches")
-        approaches.grid(row=2, column=0, sticky="ew")
+        approaches.grid(row=3, column=0, sticky="ew")
         approaches.columnconfigure(0, weight=1)
         search = ttk.Frame(approaches)
         search.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 0))
@@ -535,7 +538,7 @@ class PacketWindow:
         ).grid(row=4, column=0, sticky="ew", padx=4, pady=(2, 4))
 
         dials = ttk.LabelFrame(left, text="How the answer is written")
-        dials.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        dials.grid(row=4, column=0, sticky="ew", pady=(8, 0))
         dials.columnconfigure(1, weight=1)
         self.dial_boxes: dict[str, ttk.Combobox] = {}
         self.dial_labels: dict[str, ttk.Label] = {}
@@ -571,7 +574,7 @@ class PacketWindow:
                 ))
 
         length = ttk.LabelFrame(left, text="Length")
-        length.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        length.grid(row=5, column=0, sticky="ew", pady=(8, 0))
         row = ttk.Frame(length)
         row.pack(fill="x", padx=4, pady=(4, 0))
         for value, label in LENGTH_CHOICES:
@@ -607,6 +610,296 @@ class PacketWindow:
             fill="x", padx=4, pady=(0, 4))
 
         return left
+
+    def _build_reply_face(self, left: ttk.Frame) -> None:
+        """The old application's reply tab, on the reply mode of this window.
+
+        Same layout the operator worked with for a year: username on the
+        face, the numbered do-these-in-order buttons, the recovery row, the
+        two automation checkboxes, and the manual controls. Every button
+        drives the guided session machinery that already runs this flow; the
+        panel adds no second implementation of any rule.
+        """
+
+        face = ttk.Frame(left)
+        face.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        face.columnconfigure(0, weight=1)
+        self.reply_face = face
+
+        handle_row = ttk.Frame(face)
+        handle_row.grid(row=0, column=0, sticky="ew")
+        handle_row.columnconfigure(1, weight=1)
+        ttk.Label(handle_row, text="Your @username:").grid(
+            row=0, column=0, sticky="w")
+        self.my_handle_var = tk.StringVar(
+            value=str(getattr(self.options, "my_handle", "") or ""))
+        self.my_handle_var.trace_add(
+            "write",
+            lambda *_args: setattr(
+                self.options, "my_handle", self.my_handle_var.get().strip()
+            ),
+        )
+        self.my_handle_entry = ttk.Entry(
+            handle_row, textvariable=self.my_handle_var)
+        self.my_handle_entry.grid(row=0, column=1, sticky="ew", padx=(6, 0))
+        ttk.Label(
+            face,
+            text="for example @goss4444 - how the script knows which "
+                 "comments are yours",
+            foreground="#666666",
+        ).grid(row=1, column=0, sticky="w", pady=(0, 4))
+
+        steps = ttk.LabelFrame(face, text="Do these in order")
+        steps.grid(row=2, column=0, sticky="ew")
+        steps.columnconfigure(2, weight=1)
+        self.reply_step_markers: list[ttk.Label] = []
+        self.reply_step_buttons: dict[str, ttk.Button] = {}
+
+        def step_row(row: int, number: str) -> ttk.Frame:
+            marker = ttk.Label(steps, text=" ", width=2)
+            marker.grid(row=row, column=0, sticky="w", padx=(4, 0))
+            self.reply_step_markers.append(marker)
+            ttk.Label(steps, text=number, width=3).grid(
+                row=row, column=1, sticky="w")
+            holder = ttk.Frame(steps)
+            holder.grid(row=row, column=2, sticky="ew", pady=1)
+            return holder
+
+        def step_button(holder, key, text, command, tip):
+            button = ttk.Button(holder, text=text, command=command)
+            button.pack(side="left", padx=(0, 6))
+            self.reply_step_buttons[key] = button
+            self._tip(button, tip)
+
+        one = step_row(0, "1.")
+        step_button(
+            one, "build", "Build and find who needs a reply",
+            self.build_packet,
+            "Scan this video for your comments and everyone still owed a "
+            "reply, then prepare the triage template.",
+        )
+        two = step_row(1, "2.")
+        step_button(
+            two, "copy_triage", "Copy triage template", self.do_copy,
+            "Copy the triage packet asking which people are worth answering.",
+        )
+        step_button(
+            two, "paste_triage", "Paste GPT answer from the triage template",
+            self.take_triage,
+            "Take the triage answer from the box or the clipboard and narrow "
+            "the queue to the people it chose.",
+        )
+        three = step_row(2, "3.")
+        step_button(
+            three, "copy_reply", "Copy reply template", self.do_copy,
+            "Copy this thread's reply packet. One packet now covers every "
+            "response in the thread.",
+        )
+        step_button(
+            three, "paste_reply", "Paste GPT answer for each person",
+            self.take_answer,
+            "Take the reply sheet from the box or the clipboard. One paste "
+            "carries the reply for every person in the thread.",
+        )
+        four = step_row(3, "4.")
+        step_button(
+            four, "open_finished", "Open the finished replies",
+            self._open_finished_replies,
+            "Open the saved file of paste-ready replies. Nothing is posted.",
+        )
+
+        self.reply_face_hint = tk.StringVar(value="Press 1 to begin.")
+        ttk.Label(steps, textvariable=self.reply_face_hint).grid(
+            row=4, column=0, columnspan=3, sticky="w", padx=4, pady=(4, 2))
+
+        recovery = ttk.Frame(steps)
+        recovery.grid(row=5, column=0, columnspan=3, sticky="ew", padx=2,
+                      pady=(0, 4))
+        step_button(
+            recovery, "skip", "Skip this person", self.skip,
+            "Skip the current thread without saving a reply.",
+        )
+        step_button(
+            recovery, "start_over", "Start over", self.reset_all,
+            "Return the whole window to its opening state.",
+        )
+        step_button(
+            recovery, "open_so_far", "Open replies so far",
+            self._open_finished_replies,
+            "Open what has been accepted so far. Nothing is posted.",
+        )
+        step_button(
+            recovery, "open_packet", "Open this person's packet",
+            self._open_person_packet,
+            "Show the packet for the thread in front of you.",
+        )
+
+        # No automation checkboxes. Wired 2026-08-13 and removed the same
+        # day at the operator's direction: nothing advances a step without a
+        # press. The clipboard still auto-captures a video link into an
+        # empty slot, and a built packet still lands on the clipboard by
+        # itself — those are fills, not advances.
+        manual = ttk.LabelFrame(
+            face, text="Manual controls, not needed for the steps above")
+        manual.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        manual.columnconfigure(1, weight=1)
+
+        ttk.Label(manual, text="Answer one person:").grid(
+            row=0, column=0, sticky="w", padx=4)
+        self.answer_one_var = tk.StringVar()
+        answer_one = ttk.Entry(manual, textvariable=self.answer_one_var)
+        answer_one.grid(row=0, column=1, columnspan=3, sticky="ew",
+                        padx=(4, 4), pady=2)
+        self._tip(answer_one, "Type a handle, then press step 1: the run "
+                              "goes straight to that person's thread.")
+
+        find_button = ttk.Button(
+            manual, text="Find who needs a reply", command=self.build_packet)
+        find_button.grid(row=1, column=0, sticky="w", padx=4, pady=2)
+        self.reply_step_buttons["find"] = find_button
+        self._tip(find_button, "The same scan as step 1.")
+        self.reply_people_box = ttk.Combobox(manual, state="readonly")
+        self.reply_people_box.grid(row=1, column=1, columnspan=3,
+                                   sticky="ew", padx=(4, 4), pady=2)
+        self.reply_people_box.bind(
+            "<<ComboboxSelected>>", self._person_chosen_from_list)
+        self._tip(self.reply_people_box,
+                  "Everyone the scan found waiting. Choosing somebody fills "
+                  "Answer one person for the next step 1.")
+
+        ttk.Label(manual, text="Only replies since:").grid(
+            row=2, column=0, sticky="w", padx=4)
+        self.since_var = tk.StringVar(
+            value=str(getattr(self.options, "since", "") or ""))
+        self.since_var.trace_add(
+            "write",
+            lambda *_args: setattr(
+                self.options, "since", self.since_var.get().strip()),
+        )
+        since_entry = ttk.Entry(manual, textvariable=self.since_var, width=8)
+        since_entry.grid(row=2, column=1, sticky="w", padx=(4, 4), pady=2)
+        self._tip(since_entry,
+                  "A day count, an ISO date, or an ISO datetime.")
+
+        ttk.Label(manual, text="Or top repliers:").grid(
+            row=2, column=2, sticky="e")
+        self.top_repliers_var = tk.StringVar(
+            value=str(int(getattr(self.options, "top_repliers", 0) or 0)))
+
+        def _store_top(*_args):
+            try:
+                self.options.top_repliers = max(
+                    0, int(self.top_repliers_var.get() or 0))
+            except ValueError:
+                self.options.top_repliers = 0
+
+        self.top_repliers_var.trace_add("write", _store_top)
+        top_spin = ttk.Spinbox(manual, from_=0, to=99, width=4,
+                               textvariable=self.top_repliers_var)
+        top_spin.grid(row=2, column=3, sticky="w", padx=(4, 4))
+        self._tip(top_spin,
+                  "Keep only the N people whose message the room liked "
+                  "most. 0 keeps everybody.")
+
+        self.per_thread_var = tk.BooleanVar(
+            value=bool(getattr(self.options, "per_thread", False)))
+        per_thread = ttk.Checkbutton(
+            manual,
+            text="Also write a separate packet for each of my comments",
+            variable=self.per_thread_var,
+            command=lambda: setattr(
+                self.options, "per_thread", self.per_thread_var.get()),
+        )
+        per_thread.grid(row=3, column=0, columnspan=4, sticky="w", padx=4)
+        self._tip(per_thread,
+                  "Include every thread of yours that drew a response, not "
+                  "only the ones where somebody is still owed an answer.")
+
+        self.include_answered_var = tk.BooleanVar(
+            value=bool(getattr(self.options, "include_answered", False)))
+        include_answered = ttk.Checkbutton(
+            manual, text="Include people I already answered",
+            variable=self.include_answered_var,
+            command=lambda: setattr(
+                self.options, "include_answered",
+                self.include_answered_var.get()),
+        )
+        include_answered.grid(row=4, column=0, columnspan=4, sticky="w",
+                              padx=4, pady=(0, 4))
+        self._tip(include_answered,
+                  "Step 1 also lists people whose replies you already "
+                  "answered.")
+
+        if self.mode.get() != "reply":
+            face.grid_remove()
+
+    def _refresh_reply_face(self, view: Any) -> None:
+        face = getattr(self, "reply_face", None)
+        if face is None:
+            return
+        step = self.sequence.step
+        session = getattr(self, "session", None)
+        building = self.job.running
+        for index, marker in enumerate(self.reply_step_markers):
+            entry = view.rail[index] if index < len(view.rail) else None
+            if entry is None:
+                marker.configure(text=" ")
+            elif entry.current:
+                marker.configure(text=">")
+            elif entry.done:
+                marker.configure(text="*")
+            else:
+                marker.configure(text=" ")
+        buttons = self.reply_step_buttons
+        self._enable(buttons["build"], not building)
+        self._enable(buttons["find"], not building)
+        at_triage = session is not None and step is Step.TRIAGE
+        at_people = session is not None and step is Step.PEOPLE
+        self._enable(buttons["copy_triage"], at_triage)
+        self._enable(buttons["paste_triage"], at_triage)
+        self._enable(buttons["copy_reply"], at_people)
+        self._enable(buttons["paste_reply"], at_people)
+        accepted = bool(session is not None and getattr(
+            session, "accepted", ()))
+        self._enable(buttons["open_finished"],
+                     accepted or step is Step.FINISH)
+        self._enable(buttons["open_so_far"], accepted)
+        self._enable(buttons["skip"], view.can_skip)
+        self._enable(buttons["start_over"], True)
+        self._enable(buttons["open_packet"], bool(self.last_packet))
+        self.reply_face_hint.set(view.progress or "Press 1 to begin.")
+
+    def _open_finished_replies(self) -> None:
+        session = getattr(self, "session", None)
+        if session is None:
+            self.say("Nothing has been built yet. Press 1 to begin.")
+            return
+        # The session names its own review file; this window only opens
+        # what it is handed, falling back to the run folder.
+        path_of = getattr(session, "review_path", None)
+        review = path_of() if callable(path_of) else ""
+        target = (review if review and os.path.isfile(review)
+                  else str(getattr(session.artifacts, "root", "") or ""))
+        if not target:
+            self.say("No replies have been saved yet.")
+            return
+        message = self._open_path(target)
+        if message:
+            self.say(message)
+
+    def _open_person_packet(self) -> None:
+        if not self.last_packet:
+            self.say("No packet has been built yet. Press 1 to begin.")
+            return
+        self._set_text(self.packet_preview, self.last_packet)
+        self.output_tabs.select(self.packet_tab)
+
+    def _person_chosen_from_list(self, _event=None) -> None:
+        chosen = self.reply_people_box.get().strip()
+        if not chosen:
+            return
+        self.answer_one_var.set(chosen)
+        self.say(f"Step 1 will go straight to {chosen}'s thread.")
 
     def _build_right(self, parent: ttk.Frame) -> ttk.Frame:
         right = ttk.Frame(parent)
@@ -1388,6 +1681,12 @@ class PacketWindow:
         self._store_approaches(old_mode)
         self._display_mode = self.mode.get()
         self._fill_approaches()
+        face = getattr(self, "reply_face", None)
+        if face is not None:
+            if self.mode.get() == "reply":
+                face.grid()
+            else:
+                face.grid_remove()
         self.refresh()
 
     def _store_approaches(self, mode: str | None = None) -> None:
@@ -1591,6 +1890,7 @@ class PacketWindow:
             self.progress_label.configure(text=view.progress)
             self._enable(self.back_button, view.can_go_back)
             self._enable(self.skip_button, view.can_skip)
+            self._refresh_reply_face(view)
         else:
             waiting = getattr(self, "comment_session", None) is not None
             saved = bool(
@@ -2051,12 +2351,18 @@ class PacketWindow:
             return
 
         self.sequence.accepted = len(session.accepted)
-        if session.accepted:
-            self._show_saved_draft(
-                str(getattr(session.accepted[-1], "draft", "") or "")
-            )
+        batch = len(getattr(session, "current_targets", ()) or ()) or 1
+        drafts = list(session.accepted)[-batch:]
+        if drafts:
+            self._show_saved_draft("\n\n----\n\n".join(
+                f"{getattr(d, 'author', '')}:\n{getattr(d, 'draft', '')}"
+                for d in drafts
+            ))
         self._clear_answer()
-        self.say(f"Saved. {len(session.accepted)} so far.")
+        self.say(
+            f"Saved {len(drafts)} repl{'ies' if len(drafts) != 1 else 'y'} "
+            f"for this thread; {len(session.accepted)} in total."
+        )
         self.sequence.next_person()
         if self.sequence.step is Step.PEOPLE:
             self._start_person()
@@ -2147,6 +2453,28 @@ class PacketWindow:
         )
         self.refresh()
 
+    @staticmethod
+    def _thread_labels(candidates: Any) -> tuple[str, ...]:
+        """One rail entry per owner thread, named by its people.
+
+        The session walks threads. A rail counting people advanced out of
+        step with it — the commissioned review reproduced a window that
+        showed a second person while the session was already finished, still
+        holding the previous thread's packet.
+        """
+
+        grouped: dict[str, list[str]] = {}
+        for candidate in candidates:
+            thread_id = str(getattr(candidate, "thread_id", "") or "")
+            grouped.setdefault(thread_id, []).append(
+                str(getattr(candidate, "author", "") or "") or "someone"
+            )
+        return tuple(
+            authors[0] if len(authors) == 1
+            else f"{authors[0]} +{len(authors) - 1} more"
+            for authors in grouped.values()
+        )
+
     def _adopt_session(self, run: Any) -> None:
         """Take the session and the triage packet a reply scan produced."""
 
@@ -2162,11 +2490,62 @@ class PacketWindow:
                 if isinstance(receipt, dict)
                 else {}
             )
-        self._show_evidence({"video": receipt.get("video", {})})
+        threads = list(getattr(run.session, "threads", {}).values())
+        self._show_evidence({
+            "video": receipt.get("video", {}),
+            # The evidence tabs must show what the build gathered; a reply
+            # run gathered the owner's comments and every reply in their
+            # threads, and showing an empty pane instead reads as a failed
+            # scan.
+            "comments": [t.comment for t in threads
+                         if getattr(t, "comment", None)],
+            "replies": [reply for t in threads
+                        for reply in getattr(t, "replies", ())],
+        })
         self._show_transcript(transcript)
         self.triage_packet = run.triage_packet
         people = [getattr(t, "author", "") for t in run.session.targets]
-        self.sequence = ReplySequence(people=tuple(people))
+
+        # "Answer one person" narrows the run to that handle's thread and
+        # skips triage: naming somebody is the answer triage would give.
+        wanted = ""
+        entry_var = getattr(self, "answer_one_var", None)
+        if entry_var is not None:
+            wanted = entry_var.get().strip().lstrip("@").casefold()
+        if wanted and people:
+            named = [
+                t for t in run.session.targets
+                if str(getattr(t, "author", "")).lstrip("@").casefold()
+                == wanted
+            ]
+            if named:
+                # Their whole thread, said plainly: the packet answers
+                # every response in it, and pretending otherwise is how a
+                # one-person label produced replies for two people.
+                chosen = {t.thread_id for t in named}
+                kept = [t for t in run.session.targets
+                        if t.thread_id in chosen]
+                run.session.targets = kept
+                people = [getattr(t, "author", "") for t in kept]
+                self.triage_packet = ""
+                others = [p for p in people
+                          if p.lstrip("@").casefold() != wanted]
+                self.say(
+                    f"Answering {named[0].author}'s whole thread"
+                    + (f", which also covers {', '.join(others)}."
+                       if others else ".")
+                )
+            else:
+                self.say(
+                    f"@{wanted} is not among the {len(people)} people "
+                    "waiting, so everyone is shown."
+                )
+
+        box = getattr(self, "reply_people_box", None)
+        if box is not None:
+            box["values"] = people
+        self.sequence = ReplySequence(
+            people=self._thread_labels(run.session.targets))
 
         if not people:
             self.sequence.advance_to(Step.FINISH)
@@ -2217,25 +2596,47 @@ class PacketWindow:
                      "unchanged.")
             return
 
-        kept = [t for t in session.targets
-                if str(getattr(t, "author", "")).lstrip("@").casefold() in wanted]
-        if not kept:
+        named = [t for t in session.targets
+                 if str(getattr(t, "author", "")).lstrip("@").casefold()
+                 in wanted]
+        if not named:
             self.say(
                 f"That answer named {len(wanted)} people, none of them in "
                 "this queue. The queue is unchanged."
             )
             return
 
+        # A thread is answered whole: one packet replies to everybody in
+        # it, so keeping only the named person would still produce replies
+        # for their thread-mates while the label claimed otherwise. Keep
+        # the whole threads and say who came along.
+        chosen_threads = {t.thread_id for t in named}
+        kept = [t for t in session.targets if t.thread_id in chosen_threads]
+        extras = [t.author for t in kept if t not in named]
         session.targets = kept
         self._clear_answer()
-        self.sequence = ReplySequence(
-            people=tuple(getattr(t, "author", "") for t in kept))
+        self.sequence = ReplySequence(people=self._thread_labels(kept))
         self.sequence.advance_to(Step.PEOPLE)
-        self.say(f"Working through {len(kept)} of {len(wanted)} chosen.")
+        message = (
+            f"Working through {len(chosen_threads)} "
+            f"thread{'s' if len(chosen_threads) != 1 else ''} covering "
+            f"{len(kept)} people."
+        )
+        if extras:
+            message += (
+                " A thread is answered whole, so this also covers "
+                + ", ".join(extras) + "."
+            )
+        self.say(message)
         self._start_person()
 
     def _start_person(self) -> None:
-        """Move the session to the person the rail is showing."""
+        """Move the session to the thread the rail is showing.
+
+        The rail advances only when the session does. At exhaustion the
+        stale packet is cleared — the review reproduced a window that showed
+        the next name while copying the previous thread's packet.
+        """
 
         session = getattr(self, "session", None)
         if session is None:
@@ -2243,10 +2644,16 @@ class PacketWindow:
         try:
             if session.state.phase.value == "idle":
                 session.start()
-            session.next_person()
-            self.last_packet = session.current_packet
+            person = session.next_person()
         except Exception as refusal:        # noqa: BLE001 - reported, not raised
             self.say(str(refusal))
+            return
+        if person is None:
+            self.last_packet = ""
+            self.sequence.advance_to(Step.FINISH)
+            self.say("Every thread in the queue is done.")
+            return
+        self.last_packet = session.current_packet
 
     def _copy_current_packet(self, *, auto: bool = False) -> bool:
         """Copy the packet in front of you.
@@ -2318,8 +2725,22 @@ class PacketWindow:
         self.say("Stopping at the next safe point...")
         self.refresh()
 
+    @staticmethod
+    def _unrecorded_indexes(session: Any) -> list[int]:
+        return [
+            index
+            for index, item in enumerate(
+                list(getattr(session, "accepted", ()) or ()))
+            if not getattr(item, "posted_recorded", False)
+        ]
+
     def record_posted(self) -> None:
-        """Explicitly mark the latest accepted draft as manually posted."""
+        """Mark the next unrecorded accepted draft as manually posted.
+
+        One row per posted reply, in acceptance order. A batch accepts
+        several drafts at once, and recording only the last one left every
+        earlier reply unrecordable — the review's finding.
+        """
 
         session = (
             getattr(self, "session", None) if self.mode.get() == "reply"
@@ -2329,14 +2750,20 @@ class PacketWindow:
             self.say("There is no accepted draft to record.")
             self.refresh()
             return
-        item = session.accepted[-1]
+        pending = self._unrecorded_indexes(session)
+        if not pending:
+            self.say("Every accepted draft is already recorded.")
+            self.refresh()
+            return
+        index = pending[0]
+        item = session.accepted[index]
         draft = str(getattr(item, "draft", "") or "")
         target = str(getattr(item, "author", "") or "")
         preview = " ".join(draft.split())[:320]
         target_line = f"\n\nTarget: {target}" if target else ""
         prompt = (
-            f"Record the latest accepted "
-            f"{'reply' if target else 'comment'} as posted?"
+            f"Record accepted {'reply' if target else 'comment'} "
+            f"{index + 1} of {len(session.accepted)} as posted?"
             f"{target_line}\n\n{preview}"
             "\n\nThis updates local history only. It does not post to YouTube."
         )
@@ -2345,32 +2772,34 @@ class PacketWindow:
             self.refresh()
             return
         try:
-            added = session.record_posted()
+            added = session.record_posted(index)
         except Exception as failure:        # noqa: BLE001 - visible refusal
             self.say(f"The draft was saved, but history was not updated: {failure}")
         else:
+            remaining = len(self._unrecorded_indexes(session))
             self.say(
-                "Recorded as posted."
+                (f"Recorded as posted. {remaining} still unrecorded."
+                 if remaining else "Recorded as posted. All caught up.")
                 if added else "That posting event was already recorded."
             )
         self.refresh()
 
     @staticmethod
     def _record_available(session: Any) -> bool:
-        accepted = list(getattr(session, "accepted", ()) or ())
-        return bool(
-            accepted
-            and not getattr(accepted[-1], "posted_recorded", False)
-        )
+        return bool(PacketWindow._unrecorded_indexes(session))
 
     def _update_record_button(self, session: Any) -> None:
         accepted = list(getattr(session, "accepted", ()) or ())
-        recorded = bool(
-            accepted and getattr(accepted[-1], "posted_recorded", False)
-        )
-        self.record_button.configure(
-            text="Posting recorded" if recorded else "Record as posted"
-        )
+        pending = self._unrecorded_indexes(session)
+        if not accepted:
+            label = "Record as posted"
+        elif not pending:
+            label = "Postings recorded"
+        elif len(accepted) > 1:
+            label = (f"Record {pending[0] + 1} of {len(accepted)} as posted")
+        else:
+            label = "Record as posted"
+        self.record_button.configure(text=label)
 
     def go_back(self) -> None:
         order = list(Step)
@@ -2391,6 +2820,14 @@ class PacketWindow:
             self.say("Skipping triage; working through everyone.")
             self._start_person()
         else:
+            # The session keeps the skipped ledger the review file prints;
+            # skipping only the rail hid every GUI skip from that record.
+            session = getattr(self, "session", None)
+            if session is not None and self.sequence.step is Step.PEOPLE:
+                try:
+                    session.skip_person()
+                except Exception as refusal:  # noqa: BLE001 - reported
+                    self.say(str(refusal))
             self.sequence.next_person()
             if self.sequence.step is Step.PEOPLE:
                 self._start_person()

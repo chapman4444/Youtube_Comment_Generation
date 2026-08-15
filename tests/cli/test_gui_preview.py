@@ -136,14 +136,20 @@ def test_a_whole_run_works_on_the_invented_queue():
     controller.submit(Intent.NEXT_PERSON)
     controller.submit(Intent.COPY_CURRENT_PACKET)
 
-    assert "### Hardened final" in clipboard.read(), "no real packet was built"
+    assert "# Copy/Paste Replies" in clipboard.read(), "no real packet was built"
 
-    clipboard.write("### Hardened final\nthe reply I would send\n")
+    clipboard.write(
+        "# Copy/Paste Replies\n\n"
+        "**Post beneath comment ID:** preview-reply-1\n\n"
+        "```text\nthe reply I would send\n```\n\n"
+        "**Post beneath comment ID:** preview-reply-2\n\n"
+        "```text\nthe other reply I would send\n```\n"
+    )
     controller.submit(Intent.SUBMIT_PERSON_ANSWER)
     view = controller.submit(Intent.SAVE)
 
     assert view.phase is Phase.COMPLETE
-    assert len(session.accepted) == 1
+    assert len(session.accepted) == 2
 
 
 # -- the in-memory store keeps the real contract ---------------------------

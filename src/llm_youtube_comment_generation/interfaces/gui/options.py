@@ -270,15 +270,41 @@ class PacketOptionsModel:
         # library, so there is one function rather than two that could drift.
         return variation_keys(chosen)
 
-    def dial_values(self) -> dict[str, str]:
+    def dial_values(self, mode: str = "") -> dict[str, str]:
         """Every dial, including the ones left alone.
 
         Named in full rather than only the changed ones, because the run
         record has to say what the packet was built with and "absent" and "at
         its default" are indistinguishable afterwards.
+
+        In reply mode the values the batch contract cannot represent fall
+        back to their defaults instead of refusing the build. A preset is a
+        convenience bundle, not a per-run instruction — "Evidence first"
+        carries grounding=summary for comments, and a window that refused
+        to build a reply because of it would strand the operator with no
+        way to see why. A typed `--dial` on the CLI still refuses, which is
+        the same split `parse_registers` already makes between a settings
+        file and an argument.
         """
 
-        return {name: dial_choice(name, self.dials) for name in DIALS}
+        chosen = {name: dial_choice(name, self.dials) for name in DIALS}
+        if mode != "reply":
+            return chosen
+        from ...domain.reply_packet import UNSUPPORTED_REPLY_DIALS
+        for name, value in list(chosen.items()):
+            if (name, value) in UNSUPPORTED_REPLY_DIALS:
+                chosen[name] = DIALS[name].default
+        return chosen
+
+    def unsupported_reply_dials(self) -> list[tuple[str, str]]:
+        """Which chosen dial values reply mode will fall back on."""
+
+        from ...domain.reply_packet import UNSUPPORTED_REPLY_DIALS
+        return [
+            (name, dial_choice(name, self.dials))
+            for name in DIALS
+            if (name, dial_choice(name, self.dials)) in UNSUPPORTED_REPLY_DIALS
+        ]
 
     def explicit_length(self) -> tuple[int, int] | None:
         """A word range from the custom field, or None to use the radio.

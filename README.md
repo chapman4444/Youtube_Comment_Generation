@@ -234,8 +234,12 @@ Review it before attaching it to a bug report or posting it publicly.
 ### Reply workflow
 
 Open reply mode and identify your YouTube handle. The application scans your
-threads, can build a triage packet, and then walks through each selected person.
-Every accepted draft is saved immediately. Nothing is posted to YouTube.
+threads, can build a triage packet, and then walks through each selected
+thread. One packet covers a whole thread: it asks for an independent reply to
+every response in it, and the model returns them as one copy/paste sheet with
+a separate block per person. Selecting one person therefore selects their
+thread, and every reply in the sheet is accepted or refused together. Every
+accepted draft is saved immediately. Nothing is posted to YouTube.
 
 Accepted and posted are deliberately different states. After you manually
 post a saved draft, use **Record as posted** in the GUI so the scoreboard may
