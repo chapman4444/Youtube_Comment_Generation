@@ -2436,13 +2436,16 @@ class PacketWindow:
                 for d in drafts
             ))
         self._clear_answer()
-        self.say(
+        saved = (
             f"Saved {len(drafts)} repl{'ies' if len(drafts) != 1 else 'y'} "
             f"for this thread; {len(session.accepted)} in total."
         )
+        self.say(saved)
         self.sequence.next_person()
         if self.sequence.step is Step.PEOPLE:
-            self._start_person()
+            # Copy first, announce after: a failed copy's message stays.
+            if self._start_person():
+                self.say("The next packet is on the clipboard. " + saved)
         else:
             session.finish()
         self.refresh()
@@ -2644,8 +2647,7 @@ class PacketWindow:
             return
 
         self.sequence.advance_to(Step.PEOPLE)
-        self._start_person()
-        self._copy_current_packet(auto=True)
+        self._start_person()               # copies the packet itself
 
     def take_triage(self) -> None:
         """Narrow the queue to the people the model picked out.
@@ -2714,32 +2716,43 @@ class PacketWindow:
                 " A thread is answered whole, so this also covers "
                 + ", ".join(extras) + "."
             )
-        self.say(message)
-        self._start_person()
+        # Copy first, announce after: a failed copy says so and that
+        # honest message must not be painted over by this happier one.
+        # The clipboard fact leads because the status line clips at 120
+        # characters and the tail lives only in the log.
+        if self._start_person():
+            self.say("The first packet is on the clipboard. " + message)
 
-    def _start_person(self) -> None:
+    def _start_person(self) -> bool:
         """Move the session to the thread the rail is showing.
 
         The rail advances only when the session does. At exhaustion the
         stale packet is cleared — the review reproduced a window that showed
         the next name while copying the previous thread's packet.
+
+        Returns whether the thread's packet is verified on the clipboard.
+        The copy is automatic because it is a fill, not an advance — the
+        operator's standing rule: nothing moves to the next step without a
+        press, but a packet that exists lands on the clipboard by itself.
+        He caught this path breaking that rule: after the triage paste he
+        had to press Copy before the clipboard held anything.
         """
 
         session = getattr(self, "session", None)
         if session is None:
-            return
+            return False
         try:
             if session.state.phase.value == "idle":
                 session.start()
             person = session.next_person()
         except Exception as refusal:        # noqa: BLE001 - reported, not raised
             self.say(str(refusal))
-            return
+            return False
         if person is None:
             self.last_packet = ""
             self.sequence.advance_to(Step.FINISH)
             self.say("Every thread in the queue is done.")
-            return
+            return False
         self.last_packet = session.current_packet
         self._show_what_they_said(getattr(session, "current_targets", ()))
         # The bundle-so-far, the moment this thread's packet exists. The
@@ -2748,6 +2761,7 @@ class PacketWindow:
         # read as the checkbox doing nothing at all.
         if getattr(session, "debug_build", False):
             self._set_debug_view(session.debug_bundle(), complete=False)
+        return self._copy_current_packet(auto=True)
 
     def _copy_current_packet(self, *, auto: bool = False) -> bool:
         """Copy the packet in front of you.

@@ -1704,7 +1704,7 @@ def test_triage_keeps_the_whole_thread_of_a_chosen_person(window):
             "reply_final_check.md":
                 prompt_resources.load("reply_final_check.md").text,
         },
-        artifacts=FakeArtifactStore(), clipboard=FakeClipboard(),
+        artifacts=FakeArtifactStore(), clipboard=window.clipboard,
         events=FakeEventSink(),
     )
     window.mode.set("reply")
@@ -1718,6 +1718,13 @@ def test_triage_keeps_the_whole_thread_of_a_chosen_person(window):
     assert {t.author for t in window.session.targets} == {"@alice", "@bob"}
     assert "answered whole" in window.status.get() \
         or "covering 2 people" in window.status.get()
+
+    # The fill he asked to keep: after the triage paste, the first
+    # thread's packet is already on the clipboard — a fill, not an
+    # advance. He caught this path demanding a Copy press first.
+    assert window.clipboard.read() == window.session.current_packet
+    assert window.clipboard.read() != ""
+    assert "on the clipboard" in window.status.get()
 
 
 def test_an_all_skip_triage_answer_does_not_strand_the_run(window):
@@ -1760,7 +1767,7 @@ def test_an_all_skip_triage_answer_does_not_strand_the_run(window):
             "reply_final_check.md":
                 prompt_resources.load("reply_final_check.md").text,
         },
-        artifacts=FakeArtifactStore(), clipboard=FakeClipboard(),
+        artifacts=FakeArtifactStore(), clipboard=window.clipboard,
         events=FakeEventSink(),
     )
     window.mode.set("reply")
@@ -1840,7 +1847,7 @@ def test_a_debug_reply_run_fills_the_debug_tab_when_the_packet_builds(window):
             "reply_final_check.md":
                 prompt_resources.load("reply_final_check.md").text,
         },
-        artifacts=FakeArtifactStore(), clipboard=FakeClipboard(),
+        artifacts=FakeArtifactStore(), clipboard=window.clipboard,
         events=FakeEventSink(),
         debug_build=True,
         debug_settings={"mode": "reply"},
