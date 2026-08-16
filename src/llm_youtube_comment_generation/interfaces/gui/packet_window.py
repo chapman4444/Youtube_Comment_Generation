@@ -672,8 +672,15 @@ class PacketWindow:
             self._tip(button, tip)
 
         one = step_row(0, "1.")
+        # The same words wherever the same action lives. This button, the
+        # manual row's copy of it, and the top bar's Build all called
+        # build_packet under three different names, and the operator read
+        # them as three different features ("the Build button does
+        # something different than the Build and find who needs a reply").
+        # In reply mode the top-bar Build is hidden and both remaining
+        # buttons say exactly this.
         step_button(
-            one, "build", "Build and find who needs a reply",
+            one, "build", "Find who needs a reply",
             self.build_packet,
             "Scan this video for your comments and everyone still owed a "
             "reply, then prepare the triage template.",
@@ -757,7 +764,9 @@ class PacketWindow:
             manual, text="Find who needs a reply", command=self.build_packet)
         find_button.grid(row=1, column=0, sticky="w", padx=4, pady=2)
         self.reply_step_buttons["find"] = find_button
-        self._tip(find_button, "The same scan as step 1.")
+        self._tip(find_button,
+                  "Identical to step 1. It lives here too so the list "
+                  "beside it can be refilled without leaving this panel.")
         self.reply_people_box = ttk.Combobox(manual, state="readonly")
         self.reply_people_box.grid(row=1, column=1, columnspan=3,
                                    sticky="ew", padx=(4, 4), pady=2)
@@ -818,7 +827,7 @@ class PacketWindow:
         self.include_answered_var = tk.BooleanVar(
             value=bool(getattr(self.options, "include_answered", False)))
         include_answered = ttk.Checkbutton(
-            manual, text="Include people I already answered",
+            manual, text="Also include replies I already answered",
             variable=self.include_answered_var,
             command=lambda: setattr(
                 self.options, "include_answered",
@@ -827,8 +836,9 @@ class PacketWindow:
         include_answered.grid(row=4, column=0, columnspan=4, sticky="w",
                               padx=4, pady=(0, 4))
         self._tip(include_answered,
-                  "Step 1 also lists people whose replies you already "
-                  "answered.")
+                  "The scan normally lists only replies still waiting for "
+                  "an answer from you. Checked: replies on this video you "
+                  "already answered are listed too.")
 
         if self.mode.get() != "reply":
             face.grid_remove()
@@ -1732,6 +1742,16 @@ class PacketWindow:
                 face.grid()
             else:
                 face.grid_remove()
+        # One name per action. The top-bar Build runs the very same scan
+        # step 1 runs, and two differently-worded buttons for one function
+        # read as two features. In reply mode the face's own button is the
+        # entry point; Stop, Reset, and Debug build stay.
+        build = getattr(self, "build_button", None)
+        if build is not None:
+            if self.mode.get() == "reply":
+                build.pack_forget()
+            elif not build.winfo_manager():
+                build.pack(side="left", before=self.stop_button)
         self.refresh()
 
     def _store_approaches(self, mode: str | None = None) -> None:

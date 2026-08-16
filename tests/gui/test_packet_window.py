@@ -1501,10 +1501,31 @@ def test_the_reply_face_shows_the_numbered_steps(window):
                 "open_so_far", "open_packet", "find"):
         assert key in window.reply_step_buttons, key
     assert window.reply_step_buttons["build"].cget("text") \
-        == "Build and find who needs a reply"
+        == "Find who needs a reply"
     assert window.reply_step_buttons["open_finished"].cget("text") \
         == "Open the finished replies"
     assert "Press 1 to begin." in window.reply_face_hint.get()
+
+
+def test_one_scan_action_carries_one_name_everywhere(window):
+    """The operator read three labels as three features: top-bar 'Build',
+    step 1 'Build and find who needs a reply', and the manual row's 'Find
+    who needs a reply' all called build_packet. Identical actions carry
+    identical words now, and the top-bar duplicate leaves reply mode."""
+
+    window.mode.set("reply")
+    window._mode_changed()
+
+    assert window.reply_step_buttons["build"].cget("text") \
+        == window.reply_step_buttons["find"].cget("text")
+    assert not window.build_button.winfo_manager()   # hidden in reply mode
+    assert window.stop_button.winfo_manager()        # Stop and Reset stay
+    assert window.reset_button.winfo_manager()
+
+    window.mode.set("comment")
+    window._mode_changed()
+
+    assert window.build_button.winfo_manager()       # and it comes back
 
 
 def test_the_reply_face_appears_only_in_reply_mode(window):
