@@ -352,7 +352,10 @@ class ReplySequence:
             view.primary_enabled = offer.offered
             view.copy_label = "Copy triage template"
             view.copy_enabled = True
-            view.progress = f"{len(self.people)} people found"
+            view.progress = (
+                f"{len(self.people)} "
+                f"{'person' if len(self.people) == 1 else 'people'} found"
+            )
         elif self.step is Step.PEOPLE:
             view.primary_label = "Use the answer on the clipboard"
             view.primary_enabled = offer.offered

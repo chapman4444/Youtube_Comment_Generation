@@ -141,7 +141,7 @@ def test_an_empty_packet_says_which_kind_of_empty_it_is(tmp_path):
     assert record["candidates_waiting"] == 1
     assert packet.count("**[") == 0
 
-    assert "--limit held back all 1 people still waiting" in out
+    assert "--limit held back all 1 person still waiting" in out
     assert "Nobody in this scan is waiting" not in packet
     assert "do not read it as nobody being owed an answer" in packet
 

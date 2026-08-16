@@ -377,7 +377,8 @@ def prepare_replies(
     job.check_cancelled()
 
     job.say(
-        f"{len(found.waiting)} of {found.total} people are waiting.", 0.6,
+        f"{len(found.waiting)} of {found.total} "
+        f"{'person is' if found.total == 1 else 'people are'} waiting.", 0.6,
     )
 
     transcript = ports["transcripts"].fetch(found.video_id)
@@ -445,7 +446,8 @@ def prepare_replies(
         )
 
     job.say(
-        f"Ready: {len(selected)} of {len(found.waiting)} people.", 1.0,
+        f"Ready: {len(selected)} of {len(found.waiting)} "
+        f"{'person' if len(found.waiting) == 1 else 'people'}.", 1.0,
     )
     return ReplyRun(
         session=session,

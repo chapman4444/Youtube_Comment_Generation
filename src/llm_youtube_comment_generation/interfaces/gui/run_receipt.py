@@ -116,7 +116,9 @@ def reply_receipt(receipt: Mapping[str, Any]) -> str:
     lines = [
         title,
         (
-            f"{int(receipt.get('total') or 0):,} people found; "
+            f"{int(receipt.get('total') or 0):,} "
+            f"{'person' if int(receipt.get('total') or 0) == 1 else 'people'}"
+            " found; "
             f"{int(receipt.get('waiting') or 0):,} waiting; "
             f"transcript: {source}{f' ({language})' if language else ''}; "
             f"{int(receipt.get('api_operations_used') or 0):,} logical "

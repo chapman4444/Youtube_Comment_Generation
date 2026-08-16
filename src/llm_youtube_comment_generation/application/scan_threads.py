@@ -175,7 +175,12 @@ def handle(
 
     events.emit(ProgressEvent(
         EventKind.FINISHED, step="scan",
-        message=f"{len(candidates)} people found across {len(threads)} threads",
+        message=(
+            f"{len(candidates)} "
+            f"{'person' if len(candidates) == 1 else 'people'} found "
+            f"across {len(threads)} "
+            f"thread{'' if len(threads) == 1 else 's'}"
+        ),
     ))
 
     result.value = ThreadScan(

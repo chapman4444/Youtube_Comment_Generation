@@ -1029,7 +1029,9 @@ def render_reply_report(
             "",
             "## Still owed a reply",
             "",
-            f"_{len(candidates):,} people replied. You answered "
+            f"_{len(candidates):,} "
+            f"{'person' if len(candidates) == 1 else 'people'} replied. "
+            "You answered "
             f"{sum(1 for c in candidates if c.answered):,}. "
             f"{sum(1 for c in candidates if c.replied_again):,} came back at "
             f"you after your answer._",
@@ -1140,7 +1142,8 @@ def build_triage_packet(
         # packet invites the answer "SKIP: none" for people who are owed one.
         held_back = sum(1 for c in candidates if c.outstanding)
         lines.extend([
-            f"_The limit of {limit} left out all {held_back} people still "
+            f"_The limit of {limit} left out all {held_back} "
+            f"{'person' if held_back == 1 else 'people'} still "
             "waiting. This packet lists nobody; do not read it as nobody "
             "being owed an answer._"
             if held_back else

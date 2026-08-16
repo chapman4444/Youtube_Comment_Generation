@@ -2617,7 +2617,8 @@ class PacketWindow:
                 )
             else:
                 self.say(
-                    f"@{wanted} is not among the {len(people)} people "
+                    f"@{wanted} is not among the {len(people)} "
+                    f"{'person' if len(people) == 1 else 'people'} "
                     "waiting, so everyone is shown."
                 )
 
@@ -2641,8 +2642,9 @@ class PacketWindow:
             copied = self._copy_current_packet(auto=True)
             if not copied:
                 self.say(
-                    f"{len(people)} people found. The triage template is "
-                    "ready; use Copy again."
+                    f"{len(people)} "
+                    f"{'person' if len(people) == 1 else 'people'} found. "
+                    "The triage template is ready; use Copy again."
                 )
             return
 
@@ -2709,7 +2711,7 @@ class PacketWindow:
         message = (
             f"Working through {len(chosen_threads)} "
             f"thread{'s' if len(chosen_threads) != 1 else ''} covering "
-            f"{len(kept)} people."
+            f"{len(kept)} {'person' if len(kept) == 1 else 'people'}."
         )
         if extras:
             message += (

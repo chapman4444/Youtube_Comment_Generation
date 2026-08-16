@@ -228,7 +228,7 @@ def test_top_repliers_narrows_the_queue_by_likes(tmp_path, ports):
         tmp_path, ports,
     )
 
-    assert "1 threads to work through" in out
+    assert "1 thread to work through" in out
 
 
 def test_the_limit_caps_how_many_people_are_offered(tmp_path, ports):
@@ -239,7 +239,7 @@ def test_the_limit_caps_how_many_people_are_offered(tmp_path, ports):
         tmp_path, ports)
     _, record, _ = artifacts(tmp_path)
 
-    assert "1 threads to work through, covering 1 people" in out
+    assert "1 thread to work through, covering 1 person" in out
     assert record["targets_offered"] == 1
 
 

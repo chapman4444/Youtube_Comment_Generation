@@ -249,7 +249,8 @@ def render_scan(result: OperationResult, only_unanswered: bool = True) -> str:
 
     lines = [
         f"{len(scan.threads)} of your comments, "
-        f"{len(scan.candidates)} people, "
+        f"{len(scan.candidates)} "
+        f"{'person' if len(scan.candidates) == 1 else 'people'}, "
         f"{sum(1 for c in scan.candidates if c.outstanding)} still owed a reply",
         "",
     ]

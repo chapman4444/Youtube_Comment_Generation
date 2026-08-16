@@ -845,10 +845,15 @@ def describe_triage_selection(found, waiting, listed) -> str:
             # Saying "nobody is waiting" here would be false: --limit held
             # them back. An empty packet has two very different causes.
             return (f"nobody — --limit held back all "
-                    f"{len(waiting):,} people still waiting")
+                    f"{len(waiting):,} "
+                    f"{'person' if len(waiting) == 1 else 'people'} "
+                    "still waiting")
         return "nobody — no one in this scan is waiting for an answer"
 
-    sentence = f"{len(listed):,} of {len(found):,} people found"
+    sentence = (
+        f"{len(listed):,} of {len(found):,} "
+        f"{'person' if len(found) == 1 else 'people'} found"
+    )
     answered = len(found) - len(waiting)
     held_back = len(waiting) - len(listed)
 
@@ -2009,7 +2014,9 @@ def run_gui(
         else:
             print(
                 f"No window opened: {who} has {len(scan.threads)} thread(s) "
-                f"here and {len(scan.candidates)} people in them, none waiting "
+                f"here and {len(scan.candidates)} "
+                f"{'person' if len(scan.candidates) == 1 else 'people'} "
+                "in them, none waiting "
                 "for an answer. You are caught up on this video.\n"
                 "  To see them anyway: ytcomment reply scan-mine --all",
                 file=stdout,
@@ -2306,8 +2313,10 @@ def run_guided(
 
     session.start()
     print(
-        f"{len(session.thread_queue())} threads to work through, covering "
-        f"{len(session.targets)} people.\n",
+        f"{len(session.thread_queue())} "
+        f"thread{'' if len(session.thread_queue()) == 1 else 's'} to work "
+        f"through, covering {len(session.targets)} "
+        f"{'person' if len(session.targets) == 1 else 'people'}.\n",
         file=stdout,
     )
 
@@ -2317,7 +2326,9 @@ def run_guided(
         packet = session.copy_packet()
         print(f"[{session.state.current_index}/{len(session.thread_queue())}] "
               f"thread of {person.author}, "
-              f"{len(session.current_targets)} responses", file=stdout)
+              f"{len(session.current_targets)} "
+              f"response{'' if len(session.current_targets) == 1 else 's'}",
+              file=stdout)
         print(f"    {person.reason}", file=stdout)
 
         if not answers:
