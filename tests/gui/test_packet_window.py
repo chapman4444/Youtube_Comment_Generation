@@ -1758,6 +1758,26 @@ def test_an_all_skip_triage_answer_does_not_strand_the_run(window):
     assert "Skip this person" in window.status.get()
     assert "No handles were found" not in window.status.get()
 
+    # The operator's actual flow: nothing typed, the verdict on the
+    # clipboard. The classifier called it "something else", offer.offered
+    # stayed False, and the button exited at its first guard demanding a
+    # triage answer — with that very answer on the clipboard.
+    from llm_youtube_comment_generation.interfaces.gui.sequence import (
+        read_clipboard,
+    )
+
+    window._clear_answer()
+    window._offer = read_clipboard(
+        "SKIP: @alice (both replies)", step=Step.TRIAGE
+    )
+
+    window.take_triage()
+
+    assert [t.author for t in window.session.targets] == ["@alice"]
+    assert window.sequence.step is Step.TRIAGE
+    assert "skips everyone" in window.status.get()
+    assert "Paste a triage answer" not in window.status.get()
+
 
 def test_a_debug_reply_run_fills_the_debug_tab_when_the_packet_builds(window):
     """The live report of 2026-08-15: Debug build checked, Reply mode, and

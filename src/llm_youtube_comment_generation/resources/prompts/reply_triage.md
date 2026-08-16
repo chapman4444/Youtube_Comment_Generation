@@ -9,8 +9,9 @@ the comments and replies.
 
 ## What you are looking at
 
-One comment written by the packet owner, followed by every reply addressed to
-that comment which the owner has not already answered. Replies aimed at other
+The packet owner's comments on this video — one group per comment, each
+group headed by the comment it answers — with every reply addressed to that
+comment which the owner has not already answered. Replies aimed at other
 commenters have already been excluded. Each entry shows its like count and
 whether the person came back after a previous answer.
 
@@ -27,11 +28,16 @@ Rank a reply higher when it does any of these:
 
 Rank a reply lower, or skip it, when it is:
 
-- Agreement with nothing added, or a one-line reaction.
 - A joke, insult, or bait with no argument inside it.
 - An attack on how the comment was written rather than on what it said.
 - A point already made better by someone else in the same list.
 - Something the owner cannot answer without inventing facts.
+
+Agreement with nothing added ranks last; it is not skipped. The owner's
+goal is presence, and a supporter who is ignored stops replying. Rank such
+a reply after everything substantive and say in its one sentence that a
+short warm acknowledgment is enough. Reserve SKIP for insults, bait, and
+replies the owner could not answer without inventing facts.
 
 ## Output
 

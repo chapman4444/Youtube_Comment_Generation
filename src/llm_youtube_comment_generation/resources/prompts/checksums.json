@@ -42,9 +42,11 @@
     "source_module": "youtube_video_reply"
   },
   "reply_triage.md": {
-    "characters": 1799,
-    "lines": 46,
-    "sha256": "e5a8ec55d32f7ad7c3e79093ea48d7599a594391e94c81089089fef75a3fcdf9",
+    "changed": "2026-08-16, at the operator's direction after his first live runs: the model skipped his only two repliers as 'agreement with nothing added' and the run had nobody to answer. Agreement now ranks last instead of being skipped - the owner's goal is presence, and an ignored supporter stops replying; SKIP is reserved for insults, bait, and the unanswerable. Also corrected 'One comment written by the packet owner': the scan groups several of his comments into one packet and the description now says so.",
+    "characters": 2161,
+    "lines": 52,
+    "migrated_sha256": "e5a8ec55d32f7ad7c3e79093ea48d7599a594391e94c81089089fef75a3fcdf9",
+    "sha256": "38b4da219b501f285f3c9e2674722946da199c409d67174b26447803fb00feec",
     "source_constant": "TRIAGE_PROMPT",
     "source_module": "youtube_video_reply"
   },

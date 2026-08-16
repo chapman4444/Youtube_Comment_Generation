@@ -150,6 +150,30 @@ def test_the_chip_counts_the_people_the_triage_answer_named():
     assert "2 people chosen" in two.label
 
 
+def test_an_all_skip_triage_answer_is_still_offered_as_the_answer():
+    """The second half of the 2026-08-15 strand. The verdict parses to
+    nobody by design, but classifying it as "something else" left the
+    paste button demanding a triage answer while that very answer sat on
+    the clipboard — so the honest message downstream was unreachable."""
+
+    verbatim = "SKIP: @TotalAFOL (both replies)"
+
+    offer = read_clipboard(verbatim, step=Step.TRIAGE)
+
+    assert offer.holding is Holding.TRIAGE_ANSWER
+    assert offer.offered
+    assert "skips everyone" in offer.label
+    assert offer.raw == verbatim
+
+
+def test_an_all_skip_answer_is_not_offered_outside_triage():
+    """The same gate every triage answer obeys: only where it is wanted."""
+
+    offer = read_clipboard("SKIP: @TotalAFOL", step=Step.PEOPLE)
+
+    assert offer.holding is not Holding.TRIAGE_ANSWER
+
+
 def test_a_comment_answer_is_still_recognised():
     """A comment answer carries a Hardened final, not Post-beneath lines.
     The batch change dropped this branch and the chip called a perfectly

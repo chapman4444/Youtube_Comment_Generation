@@ -31,6 +31,7 @@ from ...domain.extraction import (
     looks_like_batch_reply_sheet,
     looks_like_packet_text,
     parse_triage_selection,
+    triage_skips_everyone,
 )
 from ...domain.ids import find_video_reference
 
@@ -179,6 +180,22 @@ def read_clipboard(text: str, *, step: Step, packet: str = "") -> ClipboardOffer
                 label=(f"Clipboard: {len(chosen)} "
                        f"{'person' if len(chosen) == 1 else 'people'} chosen"),
                 payload=", ".join(chosen),
+                raw=held,
+            )
+        if triage_skips_everyone(held):
+            # An all-skip verdict parses to nobody by design, but it is
+            # still the triage answer. Classifying it as "something else"
+            # left offer.offered False, so the paste button exited at its
+            # first guard saying "Paste a triage answer into the box or
+            # copy one" — with that very answer on the clipboard. That is
+            # the second half of the 2026-08-15 strand: the honest
+            # message downstream is unreachable if the gate here never
+            # lets the verdict through.
+            return ClipboardOffer(
+                Holding.TRIAGE_ANSWER,
+                usable=True,
+                label="Clipboard: a triage answer that skips everyone",
+                payload=held,
                 raw=held,
             )
 
