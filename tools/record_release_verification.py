@@ -52,6 +52,10 @@ EXCLUDED_TOP_LEVEL_DIRECTORIES = {
     "local_notes",
     "ab_compare",
     "previous_runs",
+    # Local agent-harness settings, the same class of machine-local state
+    # as .venv: never a release input, and its presence failed the 0.2.0
+    # identity gate as "unmanifested".
+    ".claude",
 }
 EXCLUDED_DIRECTORY_NAMES = {
     "__pycache__",
