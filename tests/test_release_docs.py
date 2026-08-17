@@ -57,22 +57,28 @@ def test_clean_install_frontend_is_declared_and_documented():
         assert dependency in tool
 
 
-def test_review_prompt_separates_the_three_evidence_layers():
-    prompt = text("REVIEW_PROMPT.md")
-    readme = text("README.md")
-    normalized = " ".join(prompt.split())
+def test_the_readme_separates_the_three_evidence_layers():
+    """The evidence-layer contract lived in REVIEW_PROMPT.md until the
+    operator had that file removed (2026-08-17); the contract itself is
+    load-bearing — reviews have been marked down for collapsing the
+    layers — so it moved into the README's Review package section rather
+    than leaving with the file."""
 
-    assert "Layer 1: Source and tests in this snapshot" in prompt
-    assert "Layer 2: Recorded verification for this staged snapshot" in prompt
-    assert "Layer 3: Separate release gates" in prompt
-    assert "its presence is not proof that a test ran or passed" in normalized
-    assert "not a fresh execution performed by the reviewer" in prompt
-    assert "If validated `RELEASE_VERIFICATION.json`" in prompt
-    assert "If the validated companion evidence is absent" in normalized
-    assert "not claimed by this review snapshot" not in prompt
-    assert "REVIEW_PROMPT.md" in readme
-    assert "validated companion release evidence is included" in readme
-    assert "those release gates remain unverified" in readme
+    readme = text("README.md")
+    normalized = " ".join(readme.split())
+
+    assert not (ROOT / "REVIEW_PROMPT.md").exists(), (
+        "REVIEW_PROMPT.md was removed at the operator's direction; its "
+        "evidence-layer contract lives in the README now"
+    )
+    assert "Source and tests in the snapshot" in readme
+    assert "Recorded staged verification" in readme
+    assert "Separately recorded release gates" in readme
+    assert "is not proof that a test ran or passed" in normalized
+    assert "not a fresh execution performed by the reviewer" in normalized
+    assert "validated companion release evidence is included" in normalized
+    assert "those release gates remain unverified" in normalized
+    assert "not an independent reviewer rerun" in normalized
     assert "explicitly does not claim" not in readme
 
 

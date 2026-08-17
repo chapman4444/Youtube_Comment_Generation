@@ -86,6 +86,30 @@ ReplyTargetResolution
 
 Unresolvable targeting must remain visible.
 
+## Batch Reply Targets
+
+One reply packet answers a whole owner thread. Every non-owner response is an
+independent target; the owner's own replies are context only.
+
+```text
+ReplyTarget
+    response_number
+    comment_id
+    author_display_name
+    author_channel_id or UNAVAILABLE
+    thread_parent_comment_id
+    relationship: direct | nested | unresolved
+    inferred_responds_to_display_name or UNAVAILABLE
+    text
+```
+
+The model returns one Copy/Paste Replies sheet keyed by comment id. The sheet
+is accepted whole or refused whole: accepting the parseable half would post
+some people's replies and silently drop the rest. The owner comment and every
+target body are carried exactly at any budget; only context replies and the
+transcript shrink, and a truncated retrieval refuses rather than presenting
+itself as complete.
+
 ## Candidate Status
 
 ```text

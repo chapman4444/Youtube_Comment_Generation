@@ -74,13 +74,15 @@ Pure business rules:
 Use-case orchestration:
 
 - build a comment packet;
-- target a public comment;
-- target a specific reply;
+- build a thread-level batch reply packet;
+- engage a stranger's thread;
+- triage a whole comment section;
 - scan the operator’s threads;
 - run triage;
 - run a guided drafting session;
 - build a scoreboard;
-- inspect a run.
+- inspect and validate runs;
+- render debug bundles.
 
 ### Ports
 
@@ -100,11 +102,12 @@ Interfaces required by the application:
 Real implementations:
 
 - YouTube Data API adapter;
-- transcript API adapter;
-- system clipboard;
-- filesystem artifact store;
-- JSON or SQLite history repository;
-- OS-specific settings store;
+- three caption adapters (transcript API, yt-dlp, local Whisper) behind a
+  chained provider with saved-transcript reuse;
+- system clipboard (Win32, so the contents outlive the process);
+- filesystem artifact store with staged atomic commit;
+- SQLite history store with one-time JSON migration;
+- system clock and event sinks (text, JSONL, null);
 - structured logging.
 
 ### Interfaces

@@ -43,12 +43,14 @@ Use the imperative shell for:
 Organize application behavior around real operations:
 
 - build comment packet;
-- target public comment;
-- target specific reply;
+- build thread-level batch reply packet;
+- engage a stranger's thread;
+- triage a whole comment section;
 - scan operator threads;
 - run triage;
 - run guided session;
-- build scoreboard.
+- build scoreboard;
+- inspect and validate runs.
 
 ## Command Pattern
 

@@ -43,6 +43,28 @@ writes the new completion manifest last, and restores the prior files after
 a caught failure. Validators reject version-two runs whose manifest is
 absent, incomplete, or does not match the published bytes.
 
+## Reply, engage, and section-triage builds
+
+A reply build assembles one packet per owner thread, enumerating every
+non-owner response as an independent target with identity and relationship
+fields. The exact-body guarantee inverts the comment path's measure-first
+rule deliberately: the owner comment and target bodies are never truncated,
+so the builder shrinks only the context replies, re-rendering the thread at
+stepped context sizes until it fits — a bounded number of extra renders,
+traded for exact bodies. A thread that cannot fit even with no context
+refuses rather than truncating a target.
+
+`reply engage` stages a stranger's comment as the first target of a
+synthetic owner thread through the same builder, so budgeting, defanging,
+identity, and validation have one implementation. `reply section-triage`
+packages the whole retrieved section with ids, marking the operator's own
+threads as non-targets.
+
+Reply and triage runs commit six artifacts (packet, `evidence.json`,
+transcript, `replies_to_me.csv`, `report.md`, `run.json`); engage and
+section-triage runs commit their own smaller sets, and `run validate`
+recognises every kind its producers write.
+
 ## Transcript policy
 
 Remote caption sources run in preference order. A published caption ends the

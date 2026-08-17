@@ -25,8 +25,9 @@ The application supports Python 3.10 through 3.12.
   reports what was included, shortened, and left out.
 - Carries transcript source, language, generated-caption status, and supporting
   artifact names into the model-facing packet.
-- Provides 44 writing approaches, eight writing dials, length controls, twelve
-  built-in presets, and user-saved custom presets.
+- Provides 47 writing approaches, eight writing dials, length controls,
+  nineteen built-in presets with separate comment and reply register sets,
+  and user-saved custom presets.
 - Validates returned answers before saving the final draft.
 - Preserves accepted drafts separately from the manual **Record as posted** step.
 - Saves complete, inspectable run artifacts rather than hiding the work behind
@@ -206,10 +207,14 @@ state and clears the working tabs.
 
 ### Writing presets
 
-The twelve built-in presets are **Default**, **Concise and direct**,
+The nineteen built-in presets are **Default**, **Concise and direct**,
 **Evidence first**, **Constructive**, **Dry and sharp**, **Balanced**,
 **Skeptical**, **Questions and gaps**, **Direct rebuttal**,
-**Creative angles**, **Human impact**, and **Full analysis**.
+**Creative angles**, **Human impact**, **Full analysis**,
+**Keep them talking**, **Answer the question**, **Angry and specific**,
+**Cold and dissenting**, **From experience**, **Read the room**, and
+**Take their side**. A preset carries separate register sets for comment
+and reply mode, so one name writes differently in each.
 
 **Save preset...** captures the current approaches, dials, and length as a
 custom preset. Presets deliberately exclude videos, handles, local paths,
@@ -273,11 +278,19 @@ Metadata, description, transcript, comments, and replies each have a separate
 tab and Copy button. Selected text in every text view can also be copied from
 its right-click menu.
 
+Beyond your own threads, `reply engage` builds a packet answering somebody
+else's thread — chosen by any comment id in it — and `reply section-triage`
+packages the whole comment section with ids so the model can say where
+engaging is worth it. Both run the same builder, budgeting, and validation
+as the ordinary reply packet.
+
 The CLI exposes the same core workflows:
 
 ```powershell
 ytcomment comment build URL_OR_ID
 ytcomment reply guided URL_OR_ID --my-handle @name
+ytcomment reply engage URL_OR_ID --comment-id COMMENT_ID --my-handle @name
+ytcomment reply section-triage URL_OR_ID --my-handle @name
 ytcomment doctor
 ```
 
@@ -394,15 +407,26 @@ bytes to the delivered package.
 
 ## Review package
 
-`make_review_zip.bat` creates a privacy-checked source-review archive.
-`REVIEW_PROMPT.md` tells the reviewer to keep three evidence layers separate:
-the source and test files present in the snapshot, the verification recorded
-while staging that exact snapshot, and separately recorded release gates. When
-validated companion release evidence is included, it records the Python
-3.10-3.12 matrix, two-run determinism, clean-wheel installation, distribution
-hashes, and final exact source identity for that manifest. Without that
-companion evidence, those release gates remain unverified. Recorded evidence
-is not an independent reviewer rerun.
+`make_review_zip.bat` creates a privacy-checked source-review archive staged
+from the committed tree. A reviewer must keep three evidence layers separate:
+
+1. **Source and tests in the snapshot.** Direct evidence of what the
+   snapshot contains. Test source shows intended coverage, and its presence
+   is not proof that a test ran or passed.
+2. **Recorded staged verification.** `REVIEW_FILE_MANIFEST.sha256`
+   identifies the staged files, and `REVIEW_VERIFICATION.md` records the
+   commands, exit codes, and results produced while building that exact
+   archive. It is recorded evidence, not a fresh execution performed by the
+   reviewer.
+3. **Separately recorded release gates.** When validated companion release
+   evidence is included, it records the Python 3.10-3.12 matrix, two-run
+   determinism, clean-wheel installation, distribution hashes, and final
+   exact source identity for that manifest. Without that companion
+   evidence, those release gates remain unverified. Recorded evidence
+   is not an independent reviewer rerun.
+
+Do not collapse "ready for code review", "recorded checks passed", and
+"ready for release" into one verdict.
 
 ## Safety boundary
 

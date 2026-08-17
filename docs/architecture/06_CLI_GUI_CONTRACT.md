@@ -57,6 +57,22 @@ The former Open files with and generic overwrite controls were removed because
 no tested execution action consumed them. Unique run-directory creation,
 foreign-file refusal, and publication rollback remain authoritative.
 
+## Reply-mode parity
+
+Selection has one rule, shared verbatim by the CLI and the window: naming
+anybody keeps their whole thread. `--reply-to` (a comma list or a pasted
+triage answer), `--top-repliers`, `--per-thread`, and the guided limit all
+count threads, never people, because one packet answers a thread whole. A
+triage answer that skips everyone is recognised as a verdict — the queue is
+left intact and the work-through-everyone path is named — never reported as
+a failed paste.
+
+GUI automation splits into advances and fills. Nothing advances a step
+without a press. Fills are automatic: a copied video link lands in an empty
+video slot, and each thread's packet is copied to the clipboard the moment
+it is in front of the operator, verified by read-back before the window
+claims it. The username is one shared setting across comment and reply mode.
+
 ## Writing presets
 
 A `WritingPreset` contains only reusable prose choices:

@@ -230,10 +230,10 @@ def test_review_zip_records_snapshot_verification_evidence():
     assert "WinRAR.exe" in text
     assert "Youtube_Comment_Generation_review.new.zip" in text
     assert '"%WINRAR_EXE%" t -y "%TEMP_ARCHIVE%"' in text
-    # The staged tree is the committed tree. REVIEW_PROMPT.md and constraints
-    # were named here while staging was an allowlist; they arrive now because
-    # they are committed, so what has to be asserted is the export itself and
-    # the check that the result is not a partial tree.
+    # The staged tree is the committed tree. Individual files were named
+    # here while staging was an allowlist; they arrive now because they are
+    # committed, so what has to be asserted is the export itself and the
+    # check that the result is not a partial tree.
     assert "archive --format=tar HEAD" in text
     assert '"constraints"' in text
     assert "RELEASE_VERIFICATION.md" in text

@@ -145,8 +145,8 @@ committed. Uncommitted work never reaches it.
 
 ## Evidence vocabulary — keep these distinct
 
-`REVIEW_PROMPT.md` requires reviewers to separate three layers, and reviews
-have been marked down for collapsing them:
+The README's Review package section requires reviewers to separate three
+layers, and reviews have been marked down for collapsing them:
 
 1. **Source and tests in the snapshot** — test source proves intent, not that
    a test ran.
