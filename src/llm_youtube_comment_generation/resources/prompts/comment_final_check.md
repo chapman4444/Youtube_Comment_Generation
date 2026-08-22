@@ -9,8 +9,9 @@ sections above, then send.
    register.
 3. Length: every finished comment obeys the length rule above.
 4. Substance: {check_substance} and disputed claims are attributed.
-5. Fingerprints: no machine formula from the style section survives, and no
-   stacked hedges.
+5. Fingerprints: zero em dashes and zero semicolons in every finished
+   comment, no other item from the AI-fingerprint scrub list survives, and
+   no stacked hedges. One em dash is a failed check, not a style note.
 6. Plain text: no headings, citation apparatus, notes, placeholders, or
    forced line breaks inside a finished comment.
 7. {critique_check}

@@ -211,6 +211,53 @@ def test_the_comment_template_declares_resolved_structural_contracts():
     assert "### Harsh critique" not in workflow
 
 
+FINISHED_TEXT_WORKFLOWS = [
+    "comment_workflow.md", "reply_workflow.md",
+    "engage_workflow.md", "acknowledge_workflow.md",
+]
+
+SOFTENED_FINGERPRINT_WORDING = (
+    "em-dash-heavy",
+    "Avoid recurring machine formulas",
+    "allowed when they read naturally",
+)
+
+
+@pytest.mark.parametrize("name", FINISHED_TEXT_WORKFLOWS)
+def test_every_workflow_that_writes_finished_text_bans_em_dashes_outright(name):
+    """A hard invariant, pinned so it cannot soften into a preference again.
+
+    The legacy comment prompt banned em dashes and semicolons in an
+    AI-fingerprint scrub list from 2026-07-20. The register/dial rewrite of
+    2026-07-25 replaced that list in the comment prompt with "Avoid recurring
+    machine formulas: em-dash-heavy prose ... semicolons ... allowed when they
+    read naturally", the migration carried the softened text byte for byte,
+    and on 2026-08-22 a live answer shipped an em dash under the literal
+    reading of "heavy". The reply family never softened. Every workflow that
+    produces finished text now carries the same banned list, and none carries
+    the frequency wording.
+    """
+
+    text = load(name).text
+
+    assert "## AI-fingerprint scrub" in text
+    assert "banned inside every finished" in text
+    assert "- Em dashes. Use commas, periods, or parentheses instead." in text
+    assert "- Semicolons." in text
+    for softened in SOFTENED_FINGERPRINT_WORDING:
+        assert softened not in text, f"{name} softened the fingerprint rule: {softened!r}"
+
+
+def test_the_comment_final_check_counts_em_dashes_and_semicolons_to_zero():
+    """"No machine formula from the style section survives" was only as
+    strong as the section it pointed at. The check names the count now."""
+
+    text = load("comment_final_check.md").text
+
+    assert "zero em dashes and zero semicolons" in text
+    assert "AI-fingerprint scrub list" in text
+
+
 def test_comment_templates_reject_duplicate_angles_and_wrapped_urls():
     workflow = load("comment_workflow.md").text
     final_check = load("comment_final_check.md").text

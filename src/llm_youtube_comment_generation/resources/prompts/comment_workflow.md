@@ -82,13 +82,29 @@ corruption, or legal violations without reliable support.
 
 Write like an intelligent viewer: direct, conversational, specific, and
 focused on one idea. Match the supplied comment sample's natural register
-without copying it. Avoid legal lectures, press-release language, generic
-outrage, empty praise, hashtags, promotional language, and whole-video recap.
+without copying it. Do not write legal lectures, press-release language,
+generic outrage, empty praise, hashtags, promotional language, or whole-video
+recap.
 
-Avoid recurring machine formulas: em-dash-heavy prose, stock pivots such as
-"It isn't X, it's Y," stock essay openers, mirrored sentence pairs, and
-cadence-driven lists. Normal contrast, parallelism, semicolons, and lists are
-allowed when they read naturally rather than formulaically.
+## AI-fingerprint scrub
+
+Finished comments must read as typed by a human viewer. The following are
+known machine-writing fingerprints and are banned inside every finished
+comment. This is a hard rule, not a frequency guideline: real comment
+sections measure em dashes at roughly zero percent, which makes one em dash
+the loudest machine tell available, and one instance fails the comment.
+
+- Em dashes. Use commas, periods, or parentheses instead.
+- Semicolons.
+- "It isn't X, it's Y", "not X but Y", and similar pivot constructions.
+- "Two things can be true at once" and other stock essay openers.
+- Matched parallel sentence pairs and mirrored clause rhythm.
+- Three-item lists built for cadence rather than content.
+- Uniform sentence lengths and perfectly balanced paragraphs.
+
+Deliberate human texture is allowed where the supplied comment sample
+supports it: comma splices, sentence fragments, occasional capitals for
+emphasis, and uneven sentence lengths.
 
 {length_rule}
 

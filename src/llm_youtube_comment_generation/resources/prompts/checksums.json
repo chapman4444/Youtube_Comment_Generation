@@ -6,22 +6,22 @@
     "sha256": "1f6fb684c2c6368a29fca6d89fec684084e6ddcdb8fdd639420ee877c1c53980"
   },
   "comment_final_check.md": {
-    "changed": "2026-07-30, after a measured packet response: added explicit diversity and plain-URL checks.",
-    "characters": 1076,
-    "lines": 25,
+    "changed": "2026-07-30, after a measured packet response: added explicit diversity and plain-URL checks. 2026-08-22, with the workflow restoration: check 5 counts em dashes and semicolons to zero by name instead of deferring to 'no machine formula from the style section', which the softened section no longer defined. The legacy check 11 read 'No finished comment contains an em dash, semicolon, pivot construction, stock opener, mirrored sentence pair, or cadence-driven three-item list.'",
+    "characters": 1197,
+    "lines": 26,
     "migrated_characters": 1027,
     "migrated_sha256": "203267bb036bbae8f7dc638326f74ae471b4dec1b53e6bf477ec520890fa3cf5",
-    "sha256": "53476d89ee99282f0a78419550859e8c501f552d71d0bcf811f442e4bfd4e3d5",
+    "sha256": "42385e98d4498efcb18363c8f015adfeb8799bb92f5d7f0511d00263733a5dca",
     "source_constant": "FINAL_OUTPUT_CHECK_TEMPLATE",
     "source_module": "youtube_video_comment"
   },
   "comment_workflow.md": {
-    "changed": "2026-07-30, after a measured packet response: required distinct inferences across variations and one unwrapped metadata URL.",
-    "characters": 7203,
-    "lines": 164,
+    "changed": "2026-07-30, after a measured packet response: required distinct inferences across variations and one unwrapped metadata URL. 2026-08-22, at the operator's direction after a live GPT answer shipped an em dash: restored the hard AI-fingerprint scrub. The legacy mainline prompt (youtube_video_comment_old.py 2026-07-20 through youtube_video_comment3.py 2026-07-25 04:45) banned em dashes and semicolons outright in a scrub list; the register/dial rewrite of 2026-07-25 08:16 replaced that with 'Avoid recurring machine formulas: em-dash-heavy prose ... semicolons ... allowed when they read naturally', and the migration carried the softened text. The scrub list now matches the one reply_workflow.md, engage_workflow.md and acknowledge_workflow.md kept, and the adjacent 'Avoid legal lectures...' sentence is 'Do not write' again.",
+    "characters": 7887,
+    "lines": 180,
     "migrated_characters": 10369,
     "migrated_sha256": "a686a38153fe0e02eddbc52f50314d568ecd5c879b4063c4c766f0c4c4b5fd2b",
-    "sha256": "06a0e1443a12b3e4c1888066e675847651f0f37f19e4a32bac782a39fde7d4d6",
+    "sha256": "4b22aa780b9342fff1a57cab6e99f36e743b577c83819c6767e5011c3279c638",
     "source_constant": "COMMENT_WORKFLOW_TEMPLATE",
     "source_module": "youtube_video_comment"
   },

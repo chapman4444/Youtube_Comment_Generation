@@ -964,9 +964,11 @@ because the drafts all depend on it.
 
 Then, for each, identify its main writing weakness and whether it should be
 repaired or discarded. Check stance, repetition, attribution, qualification,
-register, generated phrasing, openings, and closings. Say whether a stranger
-would press like and rank all {check_count} from most to least likely to be
-liked. Where repair is possible inside the same approach, write it under the
+register, generated phrasing, openings, and closings. Run a fingerprint pass:
+quote every em dash, semicolon, pivot construction, stock opener, mirrored
+sentence pair, or cadence-driven list found in any variation, and name the
+variation that reads most machine-written. Say whether a stranger would press
+like and rank all {check_count} from most to least likely to be liked. Where repair is possible inside the same approach, write it under the
 critique labelled "Repaired:". Be adversarial toward the writing, but do not
 invent faults."""
 

@@ -331,6 +331,20 @@ def test_critique_and_final_reject_unsupported_repeated_analysis():
     assert "inside the preferred band" in spec.final_contract
 
 
+def test_the_full_critique_runs_a_fingerprint_pass_and_quotes_what_it_finds():
+    """The legacy mainline critique (youtube_video_comment_old.py, 2026-07-20)
+    said "quote every em dash, semicolon, pivot construction, stock opener,
+    mirrored sentence pair, or cadence-driven list". The 2026-07-25 rewrite
+    reduced that to "check generated phrasing", and a live answer on
+    2026-08-22 shipped an em dash nobody was made to quote. Restored."""
+
+    spec = resolve_prompt_spec(selections={"critique": "full"})
+
+    assert "Run a fingerprint pass:" in spec.critique_contract
+    assert "quote every em dash, semicolon, pivot construction" in spec.critique_contract
+    assert "reads most machine-written" in spec.critique_contract
+
+
 def test_reply_specs_use_the_same_dimension_semantics_as_comments():
     specs = reply_variation_specs(None)
 
